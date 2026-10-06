@@ -19,8 +19,14 @@ test('providers keep credentials server-side and normalize responses', async () 
     });
     try {
       let status = 200;
+      let expectedModel = configModel(provider);
       global.fetch = async (url, options) => {
+        if (url.endsWith("/models")) return { ok: true, json: async () => ({ data: [
+          { id: "openai/test-model", name: "Test", type: "language" },
+          { id: "openai/embedding", type: "embedding" }
+        ] }) };
         const body = JSON.parse(options.body);
+        assert.equal(body.model, expectedModel);
         assert.equal(body.messages.at(-1).content, 'Hello');
         if (provider === 'ai-gateway') {
           assert.equal(url, 'https://ai-gateway.vercel.sh/v1/chat/completions');
@@ -38,6 +44,15 @@ test('providers keep credentials server-side and normalize responses', async () 
       const result = await request('POST', '/api/generate', { prompt: 'Hello' });
       assert.equal(result.body.text, 'Draft'); assert.equal(result.body.truncated, true);
       assert.equal((await request('POST', '/api/generate', { prompt: '' })).status, 400);
+      if (provider === 'ai-gateway') {
+        const catalog = await request('GET', '/api/models');
+        assert.equal(catalog.body.models.length, 1);
+        expectedModel = 'openai/test-model';
+        assert.equal((await request('POST', '/api/generate', { prompt: 'Hello', model: expectedModel })).body.text, 'Draft');
+        assert.equal((await request('POST', '/api/generate', { prompt: 'Hello', model: 'openai/embedding' })).status, 400);
+        assert.equal((await request('POST', '/api/generate', { prompt: 'Hello', model: 'https://evil.test' })).status, 400);
+        expectedModel = configModel(provider);
+      }
       status = 401;
       assert.equal((await request('POST', '/api/generate', { prompt: 'Hello' })).status, 502);
       if (provider === 'ai-gateway') {
@@ -50,3 +65,5 @@ test('providers keep credentials server-side and normalize responses', async () 
     } finally { global.fetch = originalFetch; await new Promise(resolve => server.close(resolve)); }
   }
 });
+
+function configModel(provider) { return provider === "ai-gateway" ? "anthropic/claude-sonnet-4.5" : "claude-sonnet-5-5"; }

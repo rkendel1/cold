@@ -60,26 +60,56 @@ function readBody(req, limit = 512 * 1024) {
   });
 }
 
-function apiErrorMessage(status, data) {
+function apiErrorMessage(status, data, model = MODEL) {
   const msg = data && data.error && data.error.message;
   if (status === 401) return `Authentication was rejected. Check ${KEY_SETTING}.`;
-  if (status === 404) return `Model "${MODEL}" wasn't found. Check ${MODEL_SETTING}.`;
+  if (status === 404) return `Model "${model}" wasn't found. Check ${MODEL_SETTING}.`;
   if (status === 429) return "Rate limited by the API. Wait a minute and try again.";
   if (status === 529 || status >= 500) return "The API is overloaded or unavailable right now. Try again shortly.";
   return msg ? `API error: ${msg}` : `API error (${status}).`;
 }
 
+let modelCache = null;
+let modelCacheUntil = 0;
+async function gatewayModels() {
+  if (modelCache && Date.now() < modelCacheUntil) return modelCache;
+  const response = await fetch("https://ai-gateway.vercel.sh/v1/models", { signal: AbortSignal.timeout(10000) });
+  if (!response.ok) throw new Error("Model catalog unavailable");
+  const data = await response.json();
+  if (!Array.isArray(data.data)) throw new Error("Invalid model catalog");
+  const models = data.data.filter(m => m.type === "language" && typeof m.id === "string")
+    .map(m => ({ id: m.id, name: m.name || m.id, provider: m.id.split("/")[0] }))
+    .sort((a, b) => a.id.localeCompare(b.id));
+  if (!models.length) throw new Error("Empty model catalog");
+  modelCache = models;
+  modelCacheUntil = Date.now() + 5 * 60 * 1000;
+  return models;
+}
+
 async function generate(req, res) {
   if (!credential()) return send(res, 400, { error: { message: `Missing ${KEY_SETTING}.` } });
-  let prompt;
+  let prompt, model = MODEL;
   try {
     const body = JSON.parse(await readBody(req));
     prompt = String(body.prompt || "");
+    if (IS_GATEWAY && body.model != null) {
+      if (typeof body.model !== "string" || !/^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._:-]+$/.test(body.model) || body.model.length > 200)
+        return send(res, 400, { error: { message: "Invalid AI Gateway model." } });
+      model = body.model;
+    }
   } catch (e) {
     return send(res, e.status || 400, { error: { message: e.status === 413 ? "Prompt too large." : "Bad request." } });
   }
   if (!prompt.trim()) return send(res, 400, { error: { message: "Empty prompt." } });
 
+  if (IS_GATEWAY && model !== MODEL) {
+    try {
+      if (!(await gatewayModels()).some(m => m.id === model))
+        return send(res, 400, { error: { message: "Select a language model from the AI Gateway catalog." } });
+    } catch {
+      return send(res, 503, { error: { message: "Model catalog unavailable. Retry or use the server default model." } });
+    }
+  }
   const ctl = new AbortController();
   res.on("close", () => { if (!res.writableEnded) ctl.abort(); });
 
@@ -92,7 +122,7 @@ async function generate(req, res) {
         ...(IS_GATEWAY ? { authorization: `Bearer ${credential()}` } : { "x-api-key": credential(), "anthropic-version": "2023-06-01" }),
       },
       body: JSON.stringify({
-        model: MODEL,
+        model,
         max_tokens: MAX_TOKENS,
         ...(IS_GATEWAY
           ? { messages: [{ role: "system", content: SYSTEM }, { role: "user", content: prompt }], stream: false }
@@ -100,7 +130,7 @@ async function generate(req, res) {
       }),
     });
     const data = await r.json().catch(() => ({}));
-    if (!r.ok) return send(res, 502, { error: { message: apiErrorMessage(r.status, data) } });
+    if (!r.ok) return send(res, 502, { error: { message: apiErrorMessage(r.status, data, model) } });
     const choice = data.choices && data.choices[0];
     const text = IS_GATEWAY ? choice?.message?.content : (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
     if (typeof text !== "string" || !text.trim()) return send(res, 502, { error: { message: "The provider returned no text. Try again." } });
@@ -116,6 +146,11 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === "GET" && url.pathname === "/api/config") {
       return send(res, 200, { app: "cold", ready: !!credential(), model: MODEL, provider: PROVIDER, keySetting: KEY_SETTING });
+    }
+    if (req.method === "GET" && url.pathname === "/api/models") {
+      if (!IS_GATEWAY) return send(res, 200, { models: [] });
+      try { return send(res, 200, { models: await gatewayModels() }); }
+      catch { return send(res, 503, { error: { message: "Could not load AI Gateway models. The server default is still available." } }); }
     }
     if (req.method === "POST" && url.pathname === "/api/generate") return generate(req, res);
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {

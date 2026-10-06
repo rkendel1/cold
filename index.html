@@ -246,6 +246,11 @@ dialog::backdrop{background:rgb(0 0 0 / .35)}
             <textarea id="rConvey" rows="2" placeholder="We've solved the portability problem at the execution layer."></textarea>
           </label>
         </div>
+        <div class="group" id="gatewayModelGroup" hidden>
+          <label class="f" for="gatewayModel"><span class="q">AI Gateway provider / model</span></label>
+          <select id="gatewayModel" aria-describedby="gatewayModelHint"></select>
+          <div class="small muted" id="gatewayModelHint" role="status">Loading available models…</div>
+        </div>
         <div class="gen">
           <button class="btn primary" id="genBtn" type="submit">Generate</button>
           <button class="btn ghost" id="clearBtn" type="button">Clear</button>
@@ -413,7 +418,7 @@ function parseLooseJson(text) {
 async function apiSample(prompt, opts = {}) {
   let r;
   try {
-    r = await fetch("api/generate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt }), signal: opts.signal });
+    r = await fetch("api/generate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt, model: S.server?.provider === "ai-gateway" ? document.getElementById("gatewayModel").value || undefined : undefined }), signal: opts.signal });
   } catch (e) {
     if (e && e.name === "AbortError") throw { code: "cancelled" };
     throw { code: "api_error", message: "Couldn't reach the Cold server. Is it still running?" };
@@ -423,6 +428,39 @@ async function apiSample(prompt, opts = {}) {
   return { text: data.text || "", truncated: !!data.truncated };
 }
 apiSample.json = async (prompt, opts) => parseLooseJson((await apiSample(prompt, opts)).text);
+
+async function initGatewayModels(server) {
+  if (server?.provider !== "ai-gateway") return;
+  const group = document.getElementById("gatewayModelGroup");
+  const select = document.getElementById("gatewayModel");
+  const hint = document.getElementById("gatewayModelHint");
+  group.hidden = false;
+  select.add(new Option(`Server default — ${server.model}`, server.model));
+  select.onchange = () => {
+    try { localStorage.setItem("cold.gatewayModel", select.value); } catch {}
+    hint.textContent = `Selected: ${select.value}. Used for drafting, editing and improving. Model pricing varies.`;
+  };
+  try {
+    const response = await fetch("api/models");
+    if (!response.ok) throw new Error();
+    const { models } = await response.json();
+    const groups = new Map();
+    for (const model of models) {
+      if (model.id === server.model) continue;
+      if (!groups.has(model.provider)) {
+        const optgroup = document.createElement("optgroup");
+        optgroup.label = model.provider;
+        groups.set(model.provider, optgroup); select.append(optgroup);
+      }
+      groups.get(model.provider).append(new Option(`${model.name} — ${model.id}`, model.id));
+    }
+    let saved; try { saved = localStorage.getItem("cold.gatewayModel"); } catch {}
+    if ([...select.options].some(o => o.value === saved)) select.value = saved;
+    select.onchange();
+  } catch {
+    hint.textContent = "Could not load the model catalog. Using the server default; reload to retry.";
+  }
+}
 
 const store = {
   db: null,
@@ -438,6 +476,7 @@ const store = {
     }
     S.sample = sample; S.sampleState = sample ? "ready" : server ? "noconfig" : "none";
     S.server = server;
+    initGatewayModels(server);
     if (user && typeof user.isOwner === "function" && !user.isOwner()) {
       showBanner("Cold is a personal tool. This copy belongs to someone else, so their knowledge base and drafts stay private to them.");
     }
