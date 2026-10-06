@@ -1,5 +1,4 @@
-// Cold: local server for API-key mode.
-// Serves index.html and calls the Anthropic Messages API with the key and model from .env.
+// Cold: server-side LLM generation via AI Gateway or Anthropic.
 // No dependencies. Requires Node 18+ (built-in fetch).
 
 const http = require("node:http");
@@ -24,9 +23,18 @@ function loadEnv(file) {
 }
 loadEnv(path.join(ROOT, ".env"));
 
-const API_KEY = process.env.ANTHROPIC_API_KEY || "";
-const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5";
-const MAX_TOKENS = parseInt(process.env.ANTHROPIC_MAX_TOKENS || "2000", 10);
+const PROVIDER = process.env.LLM_PROVIDER || "ai-gateway";
+if (!["ai-gateway", "anthropic"].includes(PROVIDER)) throw new Error("LLM_PROVIDER must be ai-gateway or anthropic");
+const IS_GATEWAY = PROVIDER === "ai-gateway";
+const credential = () => IS_GATEWAY
+  ? process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN || ""
+  : process.env.ANTHROPIC_API_KEY || "";
+const MODEL = IS_GATEWAY
+  ? process.env.AI_GATEWAY_MODEL || "anthropic/claude-sonnet-4.5"
+  : process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5";
+const MAX_TOKENS = parseInt(process.env.LLM_MAX_TOKENS || process.env.ANTHROPIC_MAX_TOKENS || "2000", 10);
+const KEY_SETTING = IS_GATEWAY ? "AI_GATEWAY_API_KEY (or Vercel OIDC authentication)" : "ANTHROPIC_API_KEY";
+const MODEL_SETTING = IS_GATEWAY ? "AI_GATEWAY_MODEL" : "ANTHROPIC_MODEL";
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const HOST = process.env.HOST || "127.0.0.1";
 const API_URL = process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com";
@@ -54,15 +62,15 @@ function readBody(req, limit = 512 * 1024) {
 
 function apiErrorMessage(status, data) {
   const msg = data && data.error && data.error.message;
-  if (status === 401) return "The API key in .env was rejected. Check ANTHROPIC_API_KEY.";
-  if (status === 404) return `Model "${MODEL}" wasn't found. Check ANTHROPIC_MODEL in .env.`;
+  if (status === 401) return `Authentication was rejected. Check ${KEY_SETTING}.`;
+  if (status === 404) return `Model "${MODEL}" wasn't found. Check ${MODEL_SETTING}.`;
   if (status === 429) return "Rate limited by the API. Wait a minute and try again.";
   if (status === 529 || status >= 500) return "The API is overloaded or unavailable right now. Try again shortly.";
   return msg ? `API error: ${msg}` : `API error (${status}).`;
 }
 
 async function generate(req, res) {
-  if (!API_KEY) return send(res, 400, { error: { message: "ANTHROPIC_API_KEY is missing from .env." } });
+  if (!credential()) return send(res, 400, { error: { message: `Missing ${KEY_SETTING}.` } });
   let prompt;
   try {
     const body = JSON.parse(await readBody(req));
@@ -76,28 +84,30 @@ async function generate(req, res) {
   res.on("close", () => { if (!res.writableEnded) ctl.abort(); });
 
   try {
-    const r = await fetch(`${API_URL}/v1/messages`, {
+    const r = await fetch(IS_GATEWAY ? "https://ai-gateway.vercel.sh/v1/chat/completions" : `${API_URL}/v1/messages`, {
       method: "POST",
       signal: ctl.signal,
       headers: {
         "content-type": "application/json",
-        "x-api-key": API_KEY,
-        "anthropic-version": "2023-06-01",
+        ...(IS_GATEWAY ? { authorization: `Bearer ${credential()}` } : { "x-api-key": credential(), "anthropic-version": "2023-06-01" }),
       },
       body: JSON.stringify({
         model: MODEL,
         max_tokens: MAX_TOKENS,
-        system: SYSTEM,
-        messages: [{ role: "user", content: prompt }],
+        ...(IS_GATEWAY
+          ? { messages: [{ role: "system", content: SYSTEM }, { role: "user", content: prompt }], stream: false }
+          : { system: SYSTEM, messages: [{ role: "user", content: prompt }] }),
       }),
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) return send(res, 502, { error: { message: apiErrorMessage(r.status, data) } });
-    const text = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
-    send(res, 200, { text, truncated: data.stop_reason === "max_tokens", model: data.model });
+    const choice = data.choices && data.choices[0];
+    const text = IS_GATEWAY ? choice?.message?.content : (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+    if (typeof text !== "string" || !text.trim()) return send(res, 502, { error: { message: "The provider returned no text. Try again." } });
+    send(res, 200, { text, truncated: IS_GATEWAY ? choice.finish_reason === "length" : data.stop_reason === "max_tokens", model: data.model });
   } catch (e) {
     if (ctl.signal.aborted) return;
-    send(res, 502, { error: { message: "Couldn't reach the Anthropic API from the server." } });
+    send(res, 502, { error: { message: `Couldn't reach ${PROVIDER} from the server.` } });
   }
 }
 
@@ -105,7 +115,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   try {
     if (req.method === "GET" && url.pathname === "/api/config") {
-      return send(res, 200, { app: "cold", ready: !!API_KEY, model: MODEL });
+      return send(res, 200, { app: "cold", ready: !!credential(), model: MODEL, provider: PROVIDER, keySetting: KEY_SETTING });
     }
     if (req.method === "POST" && url.pathname === "/api/generate") return generate(req, res);
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
@@ -117,7 +127,9 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, HOST, () => {
+if (require.main === module) server.listen(PORT, HOST, () => {
   console.log(`Cold is running at http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${PORT}`);
-  console.log(API_KEY ? `Generating with ${MODEL}` : "No ANTHROPIC_API_KEY in .env: generation is off until you add one and restart.");
+  console.log(credential() ? `Generating via ${PROVIDER} with ${MODEL}` : `Missing ${KEY_SETTING}: generation is off.`);
 });
+
+module.exports = server;

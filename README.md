@@ -31,13 +31,23 @@ npm start               # http://127.0.0.1:3000
 
 | Variable | Required | Default | |
 |---|---|---|---|
-| `ANTHROPIC_API_KEY` | yes | | Your Anthropic API key |
+| `ANTHROPIC_API_KEY` | for Anthropic | | Your Anthropic API key (only with `LLM_PROVIDER=anthropic`) |
+| `LLM_PROVIDER` | no | `ai-gateway` | `ai-gateway` or `anthropic` |
+| `AI_GATEWAY_API_KEY` | locally | | AI Gateway key; on Vercel, falls back to `VERCEL_OIDC_TOKEN` |
+| `AI_GATEWAY_MODEL` | no | `anthropic/claude-sonnet-4.5` | Gateway model ID (`provider/model`) |
+| `LLM_MAX_TOKENS` | no | `2000` | Per call, overrides `ANTHROPIC_MAX_TOKENS` |
 | `ANTHROPIC_MODEL` | no | `claude-sonnet-5-5` | Any Messages API model, e.g. `claude-opus-5-5` or `claude-haiku-4-5-20251001` |
 | `ANTHROPIC_MAX_TOKENS` | no | `2000` | Per call |
 | `PORT` | no | `3000` | |
 | `HOST` | no | `127.0.0.1` | Set `0.0.0.0` to expose it on your network |
 
-The key stays on the server: the page calls `/api/generate`, and `server.js` calls the Messages API. Each email takes two calls, a draft and an editor pass. In this mode, products and drafts are saved in the browser's localStorage. `.env` is git-ignored.
+The key stays on the server: the page calls `/api/generate`, and `server.js` calls AI Gateway’s Chat Completions API by default (or the Anthropic Messages API). Each email takes two calls, a draft and an editor pass. In this mode, products and drafts are saved in the browser's localStorage. `.env` is git-ignored.
+
+### Vercel
+
+AI Gateway uses server-side `VERCEL_OIDC_TOKEN` on Vercel, or `AI_GATEWAY_API_KEY` if configured in project environment variables. Never put either credential in browser code. Configure `AI_GATEWAY_MODEL` to change models. Gateway usage requires available credits; generation is not an unlimited free service.
+
+See [AI Gateway authentication and API](https://vercel.com/docs/ai-gateway/sdks-and-apis/openai-chat-completions). This personal app has no application-level authentication: protect the deployment before sharing access, since visitors can call the generation endpoint and consume credits.
 
 ### Claude artifact mode
 
