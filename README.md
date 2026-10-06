@@ -62,3 +62,11 @@ Published as a Claude artifact on claude.ai, the same `index.html` uses the arti
 - `user` to check ownership
 
 Opened as a plain file with neither, knowledge editing and history still work, but generation stays off.
+
+## Tweets and replies
+
+Select **Tweet reply** or **Original tweet** in Writing mode. Paste the source tweet text (for replies) or your topic (for original tweets). An optional X/Twitter status link is saved as a reference. Links are not fetched automatically: a reply requires pasted content. Knowledge is optional in social modes.
+
+Drafts use X's weighted 280-character limit via `twitter-text`, including URL and Unicode weighting. Overlong model results get one shortening attempt; editable drafts show a live counter and disable the copy button when invalid. Drafts are saved in History. Nothing posts automatically: copy/paste and submit on X yourself. Email mode is unchanged.
+
+`npm install` installs dependencies. `npm run build:tweet-counter` rebuilds the checked-in browser character counter after dependency changes.

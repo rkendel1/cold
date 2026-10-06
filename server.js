@@ -153,6 +153,9 @@ const server = http.createServer(async (req, res) => {
       catch { return send(res, 503, { error: { message: "Could not load AI Gateway models. The server default is still available." } }); }
     }
     if (req.method === "POST" && url.pathname === "/api/generate") return generate(req, res);
+    if (req.method === "GET" && url.pathname === "/tweet-counter.js") {
+      return send(res, 200, fs.readFileSync(path.join(ROOT, "public/tweet-counter.js")), "application/javascript; charset=utf-8");
+    }
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
       return send(res, 200, fs.readFileSync(path.join(ROOT, "index.html")), "text/html; charset=utf-8");
     }
