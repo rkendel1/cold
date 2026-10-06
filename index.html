@@ -391,15 +391,53 @@ const S = {
 /* ---------- storage: private db, else this browser ---------- */
 const chains = {};
 const serial = (key, fn) => (chains[key] = (chains[key] || Promise.resolve()).catch(() => {}).then(fn));
+/* ---------- API-key mode: same interface as Claude's sample, via the local server ---------- */
+async function serverConfig() {
+  if (!/^https?:$/.test(location.protocol)) return null;
+  try {
+    const r = await fetch("api/config", { headers: { accept: "application/json" } });
+    if (!r.ok) return null;
+    const c = await r.json();
+    return c && c.app === "cold" ? c : null;
+  } catch { return null; }
+}
+function parseLooseJson(text) {
+  const t = String(text || "").trim();
+  try { return JSON.parse(t); } catch {}
+  const fence = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) { try { return JSON.parse(fence[1]); } catch {} }
+  const a = t.indexOf("{"), b = t.lastIndexOf("}");
+  if (a >= 0 && b > a) { try { return JSON.parse(t.slice(a, b + 1)); } catch {} }
+  throw { code: "invalid_json", message: "No JSON in reply", text: t };
+}
+async function apiSample(prompt, opts = {}) {
+  let r;
+  try {
+    r = await fetch("api/generate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt }), signal: opts.signal });
+  } catch (e) {
+    if (e && e.name === "AbortError") throw { code: "cancelled" };
+    throw { code: "api_error", message: "Couldn't reach the Cold server. Is it still running?" };
+  }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw { code: "api_error", message: (data.error && data.error.message) || `The server returned ${r.status}.` };
+  return { text: data.text || "", truncated: !!data.truncated };
+}
+apiSample.json = async (prompt, opts) => parseLooseJson((await apiSample(prompt, opts)).text);
+
 const store = {
   db: null,
   async start() {
     const cl = window.claude;
     let db = null, user = null, sample = null;
+    let server = null;
     if (cl && cl.use) {
       [db, user, sample] = await Promise.all([cl.use("db").catch(() => null), cl.use("user").catch(() => null), cl.use("sample").catch(() => null)]);
+    } else {
+      server = await serverConfig();
+      if (server && server.ready) sample = apiSample;
     }
-    S.sample = sample; S.sampleState = sample ? "ready" : "none";
+    S.sample = sample; S.sampleState = sample ? "ready" : server ? "noconfig" : "none";
+    S.server = server;
     if (user && typeof user.isOwner === "function" && !user.isOwner()) {
       showBanner("Cold is a personal tool. This copy belongs to someone else, so their knowledge base and drafts stay private to them.");
     }
@@ -418,7 +456,9 @@ const store = {
       S.mode = "local"; S.loaded = true;
       S.products = lsGet("cold.products", []); S.emails = lsGet("cold.emails", []);
       S.settings = { ...S.settings, ...lsGet("cold.settings", {}) };
-      showBanner("Saving to this browser only. Open Cold in the Claude app, signed in, to keep your knowledge base and drafts with your account.");
+      if (server && server.ready) showBanner(`Running on your API key with ${server.model}. Products and drafts are saved in this browser.`);
+      else if (server) showBanner("Add ANTHROPIC_API_KEY to your .env file, then restart the server to turn on generation.");
+      else showBanner("Saving to this browser only. Run Cold with its server (npm start) or open it in the Claude app to generate emails.");
       onProducts(); renderHistory(); renderSigner();
     }
     renderGenHint();
@@ -545,10 +585,11 @@ function renderProductWarn() {
 function renderGenHint() {
   const h = $("#genHint");
   if (S.sampleState === "pending") h.textContent = "Connecting to Claude…";
-  else if (S.sampleState === "none") h.textContent = "Generation needs Claude. Open this page in the Claude app, signed in.";
+  else if (S.sampleState === "none") h.textContent = "Generation needs Claude: run the Cold server (npm start) or open this page in the Claude app.";
+  else if (S.sampleState === "noconfig") h.textContent = "Add ANTHROPIC_API_KEY to .env and restart the server to generate.";
   else if (S.sampleState === "blocked") h.textContent = "Claude access was declined for this page. Reload to allow it.";
   else h.textContent = "Takes about a minute: a draft, then an editor pass.";
-  $("#genBtn").disabled = S.busy || S.sampleState === "none" || S.sampleState === "blocked";
+  $("#genBtn").disabled = S.busy || ["none","blocked","noconfig"].includes(S.sampleState);
 }
 
 /* ---------- knowledge context (retrieval) ---------- */
@@ -729,6 +770,7 @@ function errCopy(e) {
     case "refused": return "Claude declined this request. Adjust the inputs and try again.";
     case "prompt_too_large": return "This product's knowledge is too long. Trim the long description and try again.";
     case "cancelled": return "";
+    case "api_error": return e.message || "The API call failed. Try again.";
     default: return "Generation stopped partway. Try again.";
   }
 }
@@ -744,7 +786,7 @@ async function generate(focus) {
   }
   if (!p) { S.error = "Pick a product from your knowledge base."; renderOut(); return; }
   if (!p.what) { S.error = `Add what ${p.name} does in Knowledge first. Cold only writes from facts you've recorded.`; renderOut(); return; }
-  if (!S.sample) { S.error = "Generation needs Claude. Open this page in the Claude app, signed in."; renderOut(); return; }
+  if (!S.sample) { S.error = S.sampleState === "noconfig" ? "Add ANTHROPIC_API_KEY to your .env file and restart the server." : "Generation needs Claude: run the Cold server (npm start) or open this page in the Claude app."; renderOut(); return; }
 
   const k = buildKnowledge(p);
   S.busy = true; S.step = improving ? 2 : 1; ctl = new AbortController(); renderGenHint(); renderOut();
@@ -802,7 +844,7 @@ function renderOut() {
     ];
     out.innerHTML = `<div class="progress"><div class="eyebrow">Working</div><ol>${items.map(([t, n]) =>
       `<li class="${S.step > n ? "done" : S.step === n ? "on" : ""}"><span class="dot"></span>${esc(t)}</li>`).join("")}</ol>
-      <div class="small muted">The first time, Claude asks to allow this page. Each step usually takes 10–40 seconds.</div>
+      <div class="small muted">${S.server ? "" : "The first time, Claude asks to allow this page. "}Each step usually takes 10–40 seconds.</div>
       <div><button class="btn" id="stopBtn" type="button">Stop</button></div></div>`;
     $("#stopBtn").onclick = () => ctl && ctl.abort();
     return;

@@ -1,0 +1,13 @@
+{
+  "name": "cold",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A focused cold-email generator. Give it five facts; it gives you an email worth sending.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

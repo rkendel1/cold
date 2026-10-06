@@ -16,10 +16,35 @@ Cold never sends anything. Generate with AI, send yourself.
 
 ## Running it
 
-`index.html` is a single self-contained page. It is built to run as a Claude artifact on claude.ai, where it uses the artifact runtime (`window.claude`) for:
+Cold runs in two modes. The page picks the right one on its own.
+
+### API-key mode (run it yourself)
+
+Needs Node 18 or newer. No dependencies to install.
+
+```sh
+cp .env.example .env    # then put your key in .env
+npm start               # http://127.0.0.1:3000
+```
+
+`.env` settings:
+
+| Variable | Required | Default | |
+|---|---|---|---|
+| `ANTHROPIC_API_KEY` | yes | | Your Anthropic API key |
+| `ANTHROPIC_MODEL` | no | `claude-sonnet-5-5` | Any Messages API model, e.g. `claude-opus-5-5` or `claude-haiku-4-5-20251001` |
+| `ANTHROPIC_MAX_TOKENS` | no | `2000` | Per call |
+| `PORT` | no | `3000` | |
+| `HOST` | no | `127.0.0.1` | Set `0.0.0.0` to expose it on your network |
+
+The key stays on the server: the page calls `/api/generate`, and `server.js` calls the Messages API. Each email takes two calls, a draft and an editor pass. In this mode, products and drafts are saved in the browser's localStorage. `.env` is git-ignored.
+
+### Claude artifact mode
+
+Published as a Claude artifact on claude.ai, the same `index.html` uses the artifact runtime (`window.claude`) instead:
 
 - `sample` to generate with Claude, on the viewer's own account
 - `db` to keep the knowledge base and drafts private to the owner
 - `user` to check ownership
 
-Opened anywhere else, the page still works for knowledge editing and history (saved to the browser's localStorage), but generation is disabled until it runs inside Claude.
+Opened as a plain file with neither, knowledge editing and history still work, but generation stays off.
