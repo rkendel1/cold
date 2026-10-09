@@ -6,6 +6,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "test:hf-ssh": "node scripts/hf-ssh-smoke.cjs",
     "build:tweet-counter": "esbuild scripts/tweet-counter.cjs --bundle --minify --outfile=public/tweet-counter.js"
   },
   "engines": {
