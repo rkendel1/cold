@@ -8,7 +8,7 @@ This is a protocol experiment, not a working/verified Hugging Face integration. 
 2. Have OpenSSH available. Independently verify the service's host key through a trusted operator channel, then place its OpenSSH known-hosts entry in `hf-ssh-known-hosts` at the repository root. Do not blindly trust ssh-keyscan output. No API key is used; public-key/password authentication are explicitly disabled.
 3. Run `npm start` and POST a fictional `{ "prompt": "Write a fictional cold email" }` to `http://127.0.0.1:3000/api/generate` with JSON content type.
 
-The config endpoint intentionally reports `ready: false` for this experimental provider, so the ordinary UI will not advertise validated generation. Use the local endpoint directly for the experiment.
+The config endpoint reports `ready: true` to permit an experimental attempt, and `experimental: true` to show a warning. Readiness is NOT proof of SSH availability or inference success. `previewProvider` enables HF only when Vercel’s built-in `VERCEL_ENV` is `preview`; no user-configured environment variables or API keys are needed. Production keeps `provider: null` and its existing provider.
 
 ## Protocol hypothesis
 

@@ -24,7 +24,7 @@ function loadEnv(file) {
 loadEnv(path.join(ROOT, ".env"));
 
 const prototypeConfig = require("./provider-config.json");
-const PROVIDER = prototypeConfig.provider || process.env.LLM_PROVIDER || "ai-gateway";
+const PROVIDER = (process.env.VERCEL_ENV === "preview" ? prototypeConfig.previewProvider : null) || prototypeConfig.provider || process.env.LLM_PROVIDER || "ai-gateway";
 if (!["ai-gateway", "anthropic", "hf-ssh"].includes(PROVIDER)) throw new Error("Provider must be ai-gateway, anthropic, or hf-ssh");
 const IS_HF = PROVIDER === "hf-ssh";
 const IS_GATEWAY = PROVIDER === "ai-gateway";
@@ -159,7 +159,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   try {
     if (req.method === "GET" && url.pathname === "/api/config") {
-      return send(res, 200, { app: "cold", ready: IS_HF ? false : !!credential(), model: IS_HF ? "hf-ssh/unknown" : MODEL, provider: PROVIDER, keySetting: IS_HF ? "Experimental: SSH client, verified host key, and live protocol validation required (no API key)" : KEY_SETTING });
+      return send(res, 200, { app: "cold", ready: IS_HF ? true : !!credential(), experimental: IS_HF, model: IS_HF ? "hf-ssh/unknown" : MODEL, provider: PROVIDER, keySetting: IS_HF ? "Experimental: SSH client, verified host key, and live protocol validation required (no API key)" : KEY_SETTING });
     }
     if (req.method === "GET" && url.pathname === "/api/models") {
       if (!IS_GATEWAY) return send(res, 200, { models: [] });

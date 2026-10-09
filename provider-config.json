@@ -1,3 +1,4 @@
 {
-  "provider": null
+  "provider": null,
+  "previewProvider": "hf-ssh"
 }
