@@ -23,8 +23,10 @@ function loadEnv(file) {
 }
 loadEnv(path.join(ROOT, ".env"));
 
-const PROVIDER = process.env.LLM_PROVIDER || "ai-gateway";
-if (!["ai-gateway", "anthropic"].includes(PROVIDER)) throw new Error("LLM_PROVIDER must be ai-gateway or anthropic");
+const prototypeConfig = require("./provider-config.json");
+const PROVIDER = (process.env.VERCEL_ENV === "preview" ? prototypeConfig.previewProvider : null) || prototypeConfig.provider || process.env.LLM_PROVIDER || "ai-gateway";
+if (!["ai-gateway", "anthropic", "hf-ssh"].includes(PROVIDER)) throw new Error("Provider must be ai-gateway, anthropic, or hf-ssh");
+const IS_HF = PROVIDER === "hf-ssh";
 const IS_GATEWAY = PROVIDER === "ai-gateway";
 const credential = () => IS_GATEWAY
   ? process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN || ""
@@ -87,7 +89,7 @@ async function gatewayModels() {
 }
 
 async function generate(req, res) {
-  if (!credential()) return send(res, 400, { error: { message: `Missing ${KEY_SETTING}.` } });
+  if (!IS_HF && !credential()) return send(res, 400, { error: { message: `Missing ${KEY_SETTING}.` } });
   let prompt, model = MODEL;
   try {
     const body = JSON.parse(await readBody(req));
@@ -101,6 +103,18 @@ async function generate(req, res) {
     return send(res, e.status || 400, { error: { message: e.status === 413 ? "Prompt too large." : "Bad request." } });
   }
   if (!prompt.trim()) return send(res, 400, { error: { message: "Empty prompt." } });
+
+  if (IS_HF) {
+    const ctl = new AbortController();
+    res.on("close", () => { if (!res.writableEnded) ctl.abort(); });
+    try {
+      const text = await require("./scripts/hf-ssh-provider.cjs").generate(`${SYSTEM}\n${prompt}`, { signal: ctl.signal });
+      return send(res, 200, { text, truncated: false, model: "hf-ssh/unknown" });
+    } catch (e) {
+      if (!ctl.signal.aborted) return send(res, 503, { error: { message: e.message } });
+      return;
+    }
+  }
 
   if (IS_GATEWAY && model !== MODEL) {
     try {
@@ -145,7 +159,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   try {
     if (req.method === "GET" && url.pathname === "/api/config") {
-      return send(res, 200, { app: "cold", ready: !!credential(), model: MODEL, provider: PROVIDER, keySetting: KEY_SETTING });
+      return send(res, 200, { app: "cold", ready: IS_HF ? true : !!credential(), experimental: IS_HF, model: IS_HF ? "hf-ssh/unknown" : MODEL, provider: PROVIDER, keySetting: IS_HF ? "Experimental: SSH client, verified host key, and live protocol validation required (no API key)" : KEY_SETTING });
     }
     if (req.method === "GET" && url.pathname === "/api/models") {
       if (!IS_GATEWAY) return send(res, 200, { models: [] });

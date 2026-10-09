@@ -502,7 +502,8 @@ const store = {
       S.mode = "local"; S.loaded = true;
       S.products = lsGet("cold.products", []); S.emails = lsGet("cold.emails", []);
       S.settings = { ...S.settings, ...lsGet("cold.settings", {}) };
-      if (server && server.ready) showBanner(`Running via ${server.provider || "anthropic"} with ${server.model}. Products and drafts are saved in this browser.`);
+      if (server?.experimental) showBanner("Experimental HF SSH: no API key required. Live compatibility is unverified; generation may fail. No paid-provider fallback.");
+      else if (server && server.ready) showBanner(`Running via ${server.provider || "anthropic"} with ${server.model}. Products and drafts are saved in this browser.`);
       else if (server) showBanner(`Configure ${server.keySetting || "AI_GATEWAY_API_KEY"} on the server to turn on generation.`);
       else showBanner("Saving to this browser only. Run Cold with its server (npm start) or open it in the Claude app to generate emails.");
       onProducts(); renderHistory(); renderSigner();
