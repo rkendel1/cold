@@ -1,0 +1,12 @@
+stage,target,actual,notes
+messages_sent,25,0,not attempted
+replies_received,,0,not attempted
+interviews_scheduled,,0,not attempted
+interviews_completed,10,0,not attempted
+qualified_interviews,8,0,not attempted
+offers_shown,,0,not attempted
+paid,,0,not attempted
+committed_unpaid,,0,not attempted
+concrete_next_step,,0,not attempted
+declined,,0,not attempted
+no_decision_or_response,,0,not attempted
