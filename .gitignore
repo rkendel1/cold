@@ -1,3 +1,5 @@
 .env
 node_modules/
 .DS_Store
+docs/validation/tracker/contacts.private.csv
+docs/validation/tracker/*.private.*
