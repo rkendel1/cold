@@ -195,4 +195,5 @@ npm ci
 node --test test/*.test.js
 PLAYWRIGHT_MODULE=<path to playwright> CHROMIUM=<chrome binary> node docs/evaluation/e2e-mock-check.cjs
 ```
+_Correction (UX redesign PR): that script targets the pre-redesign UI and only works at commit `922a3da` or earlier. Use `npm test` (`test/e2e.test.js`) on the current code._
 The E2E script uses a mock LLM and no real credentials.

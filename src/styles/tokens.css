@@ -1,0 +1,19 @@
+/* Design tokens. System fonts only: no external font request. Contrast pairs were checked with axe-core in test/e2e.test.js. */
+:root {
+  --bg: #F3F5F4; --surface: #FFFFFF; --sunk: #E8EDEB; --ink: #17201D; --muted: #4A5753; --line: #BFC9C5; --line-soft: #D8DFDC;
+  --accent: #0A5463; --accent-ink: #FFFFFF; --accent-soft: #DCEDF0;
+  --good: #14653A; --good-soft: #E0F1E7; --warn: #7A4D00; --warn-soft: #FBF0D9; --bad: #9E2D22; --bad-soft: #F9E4E0;
+  --f-body: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --f-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --r: 8px; --gap: 16px;
+  --fs-sm: 0.875rem; --fs-base: 1rem; --fs-lg: 1.125rem; --fs-xl: 1.5rem;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0F1413; --surface: #161D1B; --sunk: #0B0F0E; --ink: #E8EFEC; --muted: #A3B0AB; --line: #3B4944; --line-soft: #29332F;
+    --accent: #7CC8D6; --accent-ink: #061A1E; --accent-soft: #15313A;
+    --good: #6FD39C; --good-soft: #14291E; --warn: #E8BB68; --warn-soft: #2D2411; --bad: #F29A8F; --bad-soft: #331A16;
+    color-scheme: dark;
+  }
+}

@@ -1,3 +1,5 @@
+// NOTE (2026-10-10): this script drives the pre-redesign UI (element ids such as #tab-knowledge). It no longer matches the app;
+// the maintained equivalent is test/e2e.test.js. Kept unchanged as the record of how the first evaluation was run (commit 922a3da).
 // Reproducible end-to-end check of Cold's UI -> /api/generate -> persistence path.
 // Uses a MOCK Anthropic endpoint, so it proves plumbing, NOT output quality.
 // Run: node docs/evaluation/e2e-mock-check.cjs   (needs playwright resolvable; Chromium via PLAYWRIGHT_BROWSERS_PATH)

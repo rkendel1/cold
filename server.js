@@ -4,6 +4,7 @@
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 
 const ROOT = __dirname;
 
@@ -43,23 +44,63 @@ const API_URL = process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com";
 
 const SYSTEM = "You are the writing engine inside Cold, a cold-email generator. Follow the instructions in the user message exactly. When asked for JSON, reply with only the JSON value: no preamble, no code fence.";
 
-function send(res, status, body, type = "application/json; charset=utf-8") {
-  res.writeHead(status, { "content-type": type, "cache-control": "no-store" });
+const SECURITY_HEADERS = {
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "no-referrer",
+  "x-frame-options": "DENY",
+};
+const HTML_CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
+function send(res, status, body, type = "application/json; charset=utf-8", extra = {}) {
+  res.writeHead(status, { "content-type": type, "cache-control": "no-store", ...SECURITY_HEADERS, ...extra });
   res.end(typeof body === "string" || Buffer.isBuffer(body) ? body : JSON.stringify(body));
 }
 
 function readBody(req, limit = 512 * 1024) {
   return new Promise((resolve, reject) => {
-    let size = 0;
+    let size = 0, tooBig = false;
     const chunks = [];
     req.on("data", c => {
       size += c.length;
-      if (size > limit) { reject(Object.assign(new Error("Request too large"), { status: 413 })); req.destroy(); return; }
+      if (size > limit) { tooBig = true; chunks.length = 0; return; }   // keep draining so the 413 reply can be delivered
       chunks.push(c);
     });
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("end", () => tooBig ? reject(Object.assign(new Error("Request too large"), { status: 413 })) : resolve(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
+}
+
+// ---- Abuse and cost controls for /api/generate -------------------------------------------------
+// COLD_ACCESS_TOKEN (optional): when set, requests must send it in the x-cold-access header. This is a shared secret
+// checked ON THE SERVER; it is the only control here that stops a determined caller. When it is NOT set the endpoint
+// stays open exactly as before: set it before sharing the URL. The checks below it are best-effort extras.
+const MAX_BODY = 128 * 1024;
+const rateBuckets = new Map();   // per server instance: serverless instances do not share this
+function accessToken() { return process.env.COLD_ACCESS_TOKEN || ""; }
+function rateLimitPerMinute() { const n = parseInt(process.env.COLD_RATE_LIMIT_PER_MIN || "30", 10); return Number.isFinite(n) && n > 0 ? n : 30; }
+
+function tokenMatches(given) {
+  const want = accessToken();
+  const a = Buffer.from(String(given || "")), b = Buffer.from(want);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+/** Returns an error response descriptor, or null when the request may proceed. */
+function guardGenerate(req) {
+  // Browsers always send Origin on cross-site POSTs. A mismatch means another website is driving the request.
+  const origin = req.headers.origin;
+  if (origin && origin !== "null") {
+    let host = ""; try { host = new URL(origin).host; } catch {}
+    if (host !== req.headers.host) return { status: 403, code: "bad_origin", message: "Cross-site requests are not allowed." };
+  } else if (origin === "null") return { status: 403, code: "bad_origin", message: "Cross-site requests are not allowed." };
+  if (accessToken() && !tokenMatches(req.headers["x-cold-access"])) return { status: 401, code: "access_required", message: "This server requires an access code." };
+  const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown").split(",")[0].trim();
+  const now = Date.now(), win = 60 * 1000, limit = rateLimitPerMinute();
+  const hits = (rateBuckets.get(ip) || []).filter(t => now - t < win);
+  if (hits.length >= limit) { rateBuckets.set(ip, hits); return { status: 429, code: "rate_limited", message: "Too many requests from this address. Wait a minute and try again." }; }
+  hits.push(now); rateBuckets.set(ip, hits);
+  if (rateBuckets.size > 5000) for (const [k, v] of rateBuckets) if (!v.some(t => now - t < win)) rateBuckets.delete(k);
+  return null;
 }
 
 function apiErrorMessage(status, data, model = MODEL) {
@@ -89,10 +130,12 @@ async function gatewayModels() {
 }
 
 async function generate(req, res) {
+  const denied = guardGenerate(req);
+  if (denied) return send(res, denied.status, { error: { code: denied.code, message: denied.message } });
   if (!IS_HF && !credential()) return send(res, 400, { error: { message: `Missing ${KEY_SETTING}.` } });
   let prompt, model = MODEL;
   try {
-    const body = JSON.parse(await readBody(req));
+    const body = JSON.parse(await readBody(req, MAX_BODY));
     prompt = String(body.prompt || "");
     if (IS_GATEWAY && body.model != null) {
       if (typeof body.model !== "string" || !/^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._:-]+$/.test(body.model) || body.model.length > 200)
@@ -159,7 +202,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   try {
     if (req.method === "GET" && url.pathname === "/api/config") {
-      return send(res, 200, { app: "cold", ready: IS_HF ? true : !!credential(), experimental: IS_HF, model: IS_HF ? "hf-ssh/unknown" : MODEL, provider: PROVIDER, keySetting: IS_HF ? "Experimental: SSH client, verified host key, and live protocol validation required (no API key)" : KEY_SETTING });
+      return send(res, 200, { app: "cold", ready: IS_HF ? true : !!credential(), experimental: IS_HF, model: IS_HF ? "hf-ssh/unknown" : MODEL, provider: PROVIDER, accessRequired: !!accessToken(), keySetting: IS_HF ? "Experimental: SSH client, verified host key, and live protocol validation required (no API key)" : KEY_SETTING });
     }
     if (req.method === "GET" && url.pathname === "/api/models") {
       if (!IS_GATEWAY) return send(res, 200, { models: [] });
@@ -170,8 +213,15 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/tweet-counter.js") {
       return send(res, 200, fs.readFileSync(path.join(ROOT, "public/tweet-counter.js")), "application/javascript; charset=utf-8");
     }
+    if (req.method === "GET" && url.pathname === "/app.js") {
+      return send(res, 200, fs.readFileSync(path.join(ROOT, "public/app.js")), "application/javascript; charset=utf-8");
+    }
+    if (req.method === "GET" && url.pathname === "/app.css") {
+      return send(res, 200, fs.readFileSync(path.join(ROOT, "public/app.css")), "text/css; charset=utf-8");
+    }
+    if (req.method === "GET" && url.pathname === "/favicon.ico") return send(res, 204, "", "image/x-icon");
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
-      return send(res, 200, fs.readFileSync(path.join(ROOT, "index.html")), "text/html; charset=utf-8");
+      return send(res, 200, fs.readFileSync(path.join(ROOT, "index.html")), "text/html; charset=utf-8", { "content-security-policy": HTML_CSP });
     }
     send(res, 404, { error: { message: "Not found" } });
   } catch (e) {
@@ -182,6 +232,7 @@ const server = http.createServer(async (req, res) => {
 if (require.main === module) server.listen(PORT, HOST, () => {
   console.log(`Cold is running at http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${PORT}`);
   console.log(credential() ? `Generating via ${PROVIDER} with ${MODEL}` : `Missing ${KEY_SETTING}: generation is off.`);
+  if (!accessToken() && HOST !== "127.0.0.1") console.warn("WARNING: COLD_ACCESS_TOKEN is not set and the server is reachable beyond localhost: anyone who can reach it can spend your AI credits.");
 });
 
 module.exports = server;
