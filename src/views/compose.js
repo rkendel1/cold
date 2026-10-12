@@ -81,7 +81,7 @@ export function mountCompose(root, { store, platform, navigate }) {
     genHint);
 
   const pane = createDraftPane({
-    store,
+    store, platform,
     handlers: {
       stop: () => ctl && ctl.abort(),
       retry: () => submit(),
@@ -175,7 +175,7 @@ export function mountCompose(root, { store, platform, navigate }) {
   function renderConnection() {
     clear(connection);
     const srv = S.server;
-    connection.append(h("p", { class: "hint" }, srv ? (srv.ready ? `Generating through ${srv.providerLabel || srv.provider} with ${srv.model}. ${S.backend === "sqlite" ? "Products and drafts are stored in the Cold app's database on this computer." : "Products and drafts are saved in this browser only; they are not backed up or synced."}` : (srv.settingsEnabled ? "Generation is off: add an API key or pick a provider in Settings." : `Generation is off: configure ${srv.keySetting || "the provider key"} on the server.`)) : S.backend === "db" ? "Running in the Claude app." : "No Cold server found. Run it with npm start, or open Cold in the Claude app, to generate drafts."));
+    connection.append(h("p", { class: "hint" }, srv ? (srv.ready ? `Generating through ${srv.providerLabel || srv.provider} with ${srv.model}. Products and drafts ${store.keptNote()}` : (srv.settingsEnabled ? "Generation is off: add an API key or pick a provider in Settings." : `Generation is off: configure ${srv.keySetting || "the provider key"} on the server.`)) : S.backend === "db" ? "Running in the Claude app." : "No Cold server found. Run it with npm start, or open Cold in the Claude app, to generate drafts."));
     if (srv && srv.settingsEnabled) connection.append(h("p", { class: "hint" }, "Change the provider, model or API keys in ", h("a", { href: "#/settings" }, "Settings"), "."));
     if (srv && srv.provider === "ai-gateway" && !srv.settingsEnabled) connection.append(h("div", { class: "field" }, h("label", { for: "gatewayModel" }, "AI Gateway model"), modelSelect, modelHint));
     if (srv && srv.accessRequired) connection.append(h("div", { class: "field" }, h("label", { for: "accessCode" }, "Access code ", h("span", { class: "req" }, "Required by this server")), h("p", { class: "hint", id: "accessHint" }, "The server checks this code before it will generate. It's kept for this browser tab only."), accessInput));
@@ -330,6 +330,11 @@ export function mountCompose(root, { store, platform, navigate }) {
       store.set({ current: JSON.parse(JSON.stringify(rec)), error: null, undo: null }, "current");
       fillForm(formFromRecord(rec)); persistForm(); pane.invalidate(); renderAll();
     },
+    /** Set some of the form's values (used by the extension's "Read this page"); anything not given is kept. */
+    /** The form as it is right now (so a caller can avoid overwriting what the user typed). */
+    read: () => readForm(),
+    fill(patch) { fillForm({ ...readForm(), ...patch }); persistForm(); },
+    suggestReasons() { return assist.suggest({ auto: true }); },
     selectProduct(id) { if (id && S.products.some(p => p.id === id)) { productSelect.value = id; renderProduct(); persistForm(); } },
     focus() { f.name.input.focus(); },
     refreshProducts: renderProduct,

@@ -3,24 +3,46 @@ import { createApi } from "./api.js";
 import { STORAGE_KEYS } from "../domain/constants.js";
 import { createRemoteDb } from "./sqliteDb.js";
 import { loadAll } from "../state/storage.js";
+import { createReplica } from "./replica.js";
+import { localReplicaStorage } from "./replicaStorage.js";
+import { createLink } from "./hubLink.js";
+import { createBackend } from "./backend.js";
+import { localHubStore, verifyHub } from "./hub.js";
 
 const safeGet = (area, key) => { try { return area.getItem(key) || ""; } catch { return ""; } };
 const safeSet = (area, key, v) => { try { v ? area.setItem(key, v) : area.removeItem(key); } catch {} };
 
+const PREFER_KEY = "cold.prefer";
+
 export function createPlatform() {
   const settings = { model: "", access: safeGet(globalThis.sessionStorage || {}, STORAGE_KEYS.access) };
   const api = createApi({ getAccess: () => settings.access, getModel: () => settings.model });
+  let server = null, backend = null, hub = null;
+  const subs = new Set();
+  const notify = () => subs.forEach(fn => fn());
+  /** What the rest of the app needs to know right now: the server's config, whether anything can generate, and the sync state. */
+  function snapshot() {
+    const sample = backend ? (backend.describe() ? backend.sample : null) : (server && server.ready ? api.sample : null);
+    return { server, sample, sampleState: sample ? "ready" : server ? "noconfig" : "none" };
+  }
   return {
     api, settings,
+    /** Fires when generation becomes available/unavailable or the desktop app connects/disconnects. */
+    subscribe(fn) { subs.add(fn); return () => subs.delete(fn); },
+    snapshot,
+    get hub() { return hub; },
+    get backend() { return backend; },
+    /** Settings for the model section: only a server that owns provider settings (desktop / local) offers editing. */
+    get settingsApi() { return server && server.settingsEnabled ? { getSettings: api.getSettings, saveSettings: api.saveSettings, providerModels: api.providerModels, keyNote: null } : null; },
     setAccess(v) { settings.access = v.trim(); safeSet(globalThis.sessionStorage, STORAGE_KEYS.access, settings.access); },
     setModel(v) { settings.model = v; try { localStorage.setItem(STORAGE_KEYS.gatewayModel, v); } catch {} },
     savedModel() { return safeGet(globalThis.localStorage || {}, STORAGE_KEYS.gatewayModel); },
 
     /** Re-reads the server's config after Settings changed it. */
     async refresh() {
-      const server = await api.config();
-      const sample = server && server.ready ? api.sample : null;
-      return { server, sample, sampleState: sample ? "ready" : server ? "noconfig" : "none" };
+      server = await api.config();
+      notify();
+      return snapshot();
     },
 
     /** Resolves { db, user, sample, server, sampleState }. */
@@ -30,8 +52,7 @@ export function createPlatform() {
         const [db, user, sample] = await Promise.all([cl.use("db").catch(() => null), cl.use("user").catch(() => null), cl.use("sample").catch(() => null)]);
         return { db, user, sample, server: null, sampleState: sample ? "ready" : "none" };
       }
-      const server = await api.config();
-      const sample = server && server.ready ? api.sample : null;
+      server = await api.config();
       let db = null, warning = "";
       if (server && server.dbEnabled) {
         // Desktop app: products and drafts live in SQLite. Anything already in this browser's storage is copied in once.
@@ -40,7 +61,30 @@ export function createPlatform() {
           await db.load();
         } catch (e) { db = null; warning = "Couldn't open the Cold database, so this window is using browser storage. Restart the app; if it keeps happening, check the app's data folder."; }
       }
-      return { db, user: null, sample, server, warning, sampleState: sample ? "ready" : server ? "noconfig" : "none" };
+      if (!db && server && !server.dbEnabled) {
+        // Web: a full local copy that needs nothing else running. If the Cold desktop app is paired and reachable, the copy syncs with
+        // it (changes made here while it was closed are sent when it returns), and its model can be used when this server has none.
+        const replica = createReplica({ storage: localReplicaStorage() });
+        await replica.load();
+        const link = createLink({ replica });
+        const store = localHubStore();
+        let prefer = safeGet(globalThis.localStorage || {}, PREFER_KEY) || "app";
+        backend = createBackend({ link, getConfig: () => ({ prefer }),
+          own: { ready: () => !!(server && server.ready), sample: api.sample, label: () => `${server.providerLabel || server.provider} · ${server.model}`, lookups: { tweet: api.tweet, profile: api.profile } } });
+        hub = {
+          link, replica, store, kind: "web", origin: globalThis.location ? globalThis.location.origin : "",
+          get prefer() { return prefer; },
+          setPrefer(v) { prefer = v === "own" ? "own" : "app"; safeSet(globalThis.localStorage, PREFER_KEY, prefer); notify(); },
+          async connect(addr, code) { const conn = await verifyHub(addr, code, { who: "web" }); await store.set(conn); await link.connect(conn); notify(); },
+          async disconnect() { await store.clear(); link.disconnect(); notify(); },
+        };
+        link.subscribe(notify);
+        const saved = await store.get();
+        if (saved) link.connect(saved).catch(() => {});    // don't hold the page up if the app is closed
+        link.start();
+        db = replica;
+      }
+      return { db, user: null, ...snapshot(), warning };
     },
   };
 }

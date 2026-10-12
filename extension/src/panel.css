@@ -16,3 +16,9 @@ body.ext { margin: 0; padding: 14px 16px 28px; background: var(--bg); min-width:
 .x-status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .x-status strong { font-size: 1.15rem; }
 .x-stack > .x-card { margin: 0; }
+
+/* The shared app inside a narrow side panel */
+.ext .app-header { flex-wrap: wrap; gap: 6px 12px; padding-bottom: 8px; }
+.ext .primary-nav { flex-wrap: wrap; }
+.ext main { padding: 0; }
+.ext .app-footer { font-size: var(--fs-sm); }

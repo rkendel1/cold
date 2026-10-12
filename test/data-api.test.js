@@ -97,3 +97,34 @@ test('extension: needs the pairing token, gets only data/generate/lookups, never
     assert.equal((await t.call('GET', '/api/data', undefined, auth)).status, 403);
   } finally { await t.close(); }
 });
+
+test('approved web pages can sync with the hub (CORS + pairing code); unapproved ones and wildcards cannot', async () => {
+  const t = await boot();
+  try {
+    const WEB = 'https://cold.example.com';
+    const token = (await t.call('GET', '/api/settings/extension')).body.token;
+    const auth = { origin: WEB, authorization: `Bearer ${token}` };
+    // not approved yet: no CORS headers, so a browser would not let the page read anything
+    assert.equal((await t.call('OPTIONS', '/api/data', undefined, { origin: WEB })).headers['access-control-allow-origin'], undefined);
+    // approving: only plain origins; wildcards, paths, credentials and other schemes are refused
+    for (const bad of ['*', 'https://*.example.com', 'https://cold.example.com/app', 'ftp://x.test', 'javascript:alert(1)', 'https://u:p@x.test', 'chrome-extension://abc'])
+      assert.equal((await t.call('PUT', '/api/settings/web-origins', { origins: [bad] })).status, 400, bad);
+    assert.deepEqual((await t.call('PUT', '/api/settings/web-origins', { origins: [WEB + '/', 'http://127.0.0.1:3000'] })).body.webOrigins, [WEB, 'http://127.0.0.1:3000']);
+    assert.deepEqual((await t.call('GET', '/api/settings/extension')).body.webOrigins, [WEB, 'http://127.0.0.1:3000']);
+    // Chrome's local-network preflight is answered for approved origins
+    const pre = await t.call('OPTIONS', '/api/data', undefined, { origin: WEB, 'access-control-request-private-network': 'true', 'access-control-request-method': 'PUT' });
+    assert.deepEqual([pre.status, pre.headers['access-control-allow-origin'], pre.headers['access-control-allow-private-network']], [204, WEB, 'true']);
+    // data needs the code as well: approval alone is not access
+    assert.equal((await t.call('GET', '/api/data', undefined, { origin: WEB })).status, 403);
+    assert.equal((await t.call('GET', '/api/data', undefined, { origin: WEB, authorization: 'Bearer wrong' })).status, 403);
+    const put = await t.call('PUT', '/api/data/emails/e1', { createdAt: 1, what: 'from web' }, auth);
+    assert.deepEqual([put.status, put.headers['access-control-allow-origin']], [200, WEB]);
+    // an origin that was never approved still gets nothing, even with the code; and settings stay unreachable from approved pages
+    assert.equal((await t.call('GET', '/api/data', undefined, { origin: 'https://evil.test', authorization: `Bearer ${token}` })).headers['access-control-allow-origin'], undefined);
+    assert.equal((await t.call('GET', '/api/settings', undefined, auth)).status, 403);
+    assert.equal((await t.call('PUT', '/api/settings/web-origins', { origins: [] }, auth)).status, 403, 'an approved page cannot approve more pages');
+    // removing an origin takes effect immediately
+    await t.call('PUT', '/api/settings/web-origins', { origins: [] });
+    assert.equal((await t.call('OPTIONS', '/api/data', undefined, { origin: WEB })).headers['access-control-allow-origin'], undefined);
+  } finally { await t.close(); }
+});

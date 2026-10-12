@@ -1,7 +1,7 @@
-// The (optional) link to the Cold desktop app. The extension works without it; when the app is running and paired, the link
+// The (optional) link to the Cold desktop app. Web and the extension work without it; when the app is running and paired, the link
 // attaches it to the local copy so changes sync both ways, and the app's model can be used.
-import { createApi } from "../../src/services/api.js";
-import { appFetch } from "./connection.js";
+import { createApi } from "./api.js";
+import { hubFetch } from "./hub.js";
 
 const CHECK_MS = 4000;
 
@@ -12,7 +12,7 @@ export function createLink({ replica }) {
   const emit = () => subs.forEach(fn => fn(state));
 
   function appData(conn) {
-    const f = appFetch(conn);
+    const f = hubFetch(conn);
     const call = async (path, init) => { const r = await f(path, { ...init, headers: { "content-type": "application/json", ...(init && init.headers) } }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); };
     return { get: p => call(p), put: (p, b) => call(p, { method: "PUT", body: JSON.stringify(b) }), del: p => call(p, { method: "DELETE" }) };
   }
@@ -20,7 +20,7 @@ export function createLink({ replica }) {
   function set(online, config, rejected = false) {
     const changed = online !== state.online || rejected !== state.rejected || (online && config && state.config && config.model !== state.config.model);
     state.online = online; state.config = config; state.rejected = rejected;
-    if (online && !api) { api = createApi({ fetchImpl: appFetch(state.conn), remote: true }); replica.attach(appData(state.conn)); }
+    if (online && !api) { api = createApi({ fetchImpl: hubFetch(state.conn), remote: true }); replica.attach(appData(state.conn)); }
     if (!online && api) { api = null; replica.attach(null); }
     if (changed) emit();
   }

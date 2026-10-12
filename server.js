@@ -60,7 +60,8 @@ const SECURITY_HEADERS = {
   "referrer-policy": "no-referrer",
   "x-frame-options": "DENY",
 };
-const HTML_CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+// connect-src also allows the loopback address, so a page can reach the Cold desktop app on this computer (paired, with its code).
+const HTML_CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 function send(res, status, body, type = "application/json; charset=utf-8", extra = {}) {
   res.writeHead(status, { "content-type": type, "cache-control": "no-store", ...SECURITY_HEADERS, ...extra });
@@ -101,6 +102,8 @@ function tokenMatches(given) {
 // generate, and look up profiles/tweets. It can never reach /api/settings (keys, provider choice, the token itself).
 const EXT_ORIGIN = /^(chrome-extension|moz-extension|safari-web-extension):\/\/[A-Za-z0-9._-]+$/;
 const EXT_PATHS = /^\/api\/(config|data(\/.*)?|generate|profile|tweet)$/;
+/** A browser extension, or a web page the user approved in Settings, may be given CORS access (it still needs the pairing code). */
+const pairedOrigin = origin => EXT_ORIGIN.test(origin) || !!(appDb && appDb.webOrigins().includes(origin));
 function extensionAuthorized(req) {
   const want = appDb && appDb.peekExtensionToken();
   const m = /^Bearer (\S+)$/.exec(req.headers.authorization || "");
@@ -305,7 +308,12 @@ async function settingsRoute(req, res, url) {
   }
   if (url.pathname === "/api/settings/extension" && (req.method === "GET" || req.method === "POST")) {
     if (!appDb) return send(res, 404, { error: { message: "Browser extension pairing needs the desktop app's database." } });
-    return send(res, 200, { token: appDb.extensionToken(req.method === "POST"), origin: `http://${req.headers.host}`, dbFile: appDb.file });
+    return send(res, 200, { token: appDb.extensionToken(req.method === "POST"), origin: `http://${req.headers.host}`, dbFile: appDb.file, webOrigins: appDb.webOrigins() });
+  }
+  if (url.pathname === "/api/settings/web-origins" && req.method === "PUT") {
+    if (!appDb) return send(res, 404, { error: { message: "Needs the desktop app's database." } });
+    try { return send(res, 200, { webOrigins: appDb.setWebOrigins(JSON.parse(await readBody(req, 16 * 1024)).origins) }); }
+    catch (e) { return send(res, e.status || 400, { error: { message: e.status ? e.message : "Bad request." } }); }
   }
   if (req.method === "GET" && url.pathname === "/api/settings/models") {
     const id = url.searchParams.get("provider") || "";
@@ -323,10 +331,12 @@ async function settingsRoute(req, res, url) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   try {
-    const extOrigin = req.headers.origin && EXT_ORIGIN.test(req.headers.origin) && EXT_PATHS.test(url.pathname) ? req.headers.origin : "";
+    const extOrigin = req.headers.origin && EXT_PATHS.test(url.pathname) && pairedOrigin(req.headers.origin) ? req.headers.origin : "";
     if (extOrigin) {
       res.setHeader("access-control-allow-origin", extOrigin); res.setHeader("vary", "Origin");
-      res.setHeader("access-control-allow-headers", "authorization, content-type"); res.setHeader("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS"); res.setHeader("access-control-max-age", "600");
+      res.setHeader("access-control-allow-headers", "authorization, content-type");
+      if (req.headers["access-control-request-private-network"]) res.setHeader("access-control-allow-private-network", "true");   // Chrome asks before a public page may reach localhost
+      res.setHeader("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS"); res.setHeader("access-control-max-age", "600");
       if (req.method === "OPTIONS") { res.writeHead(204, SECURITY_HEADERS); return res.end(); }
     }
     if (url.pathname === "/api/settings" || url.pathname.startsWith("/api/settings/")) return settingsRoute(req, res, url);

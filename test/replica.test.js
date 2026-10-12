@@ -21,7 +21,7 @@ async function appOn() {
 }
 
 test('works with no app, then catches the app up when it appears', async () => {
-  const { createReplica } = await load('extension/src/replica.js');
+  const { createReplica } = await load('src/services/replica.js');
   const { createStore } = await load('src/state/store.js');
   const a = await appOn();
   try {
@@ -50,7 +50,7 @@ test('works with no app, then catches the app up when it appears', async () => {
 });
 
 test('conflicts: a newer change in the app is never overwritten; deletions in the app propagate', async () => {
-  const { createReplica } = await load('extension/src/replica.js');
+  const { createReplica } = await load('src/services/replica.js');
   const a = await appOn();
   try {
     a.db.put('products', 'p1', { name: 'Original', order: 0, updatedAt: 100 });
@@ -72,7 +72,7 @@ test('conflicts: a newer change in the app is never overwritten; deletions in th
 });
 
 test('a failed push is kept and retried; edits to the same draft collapse to one change', async () => {
-  const { createReplica } = await load('extension/src/replica.js');
+  const { createReplica } = await load('src/services/replica.js');
   const a = await appOn();
   try {
     const replica = createReplica({ storage: memory() }); await replica.load();
@@ -89,7 +89,7 @@ test('a failed push is kept and retried; edits to the same draft collapse to one
 });
 
 test('outreach records marked in the app reach the extension intact, and the extension never alters them', async () => {
-  const { createReplica } = await load('extension/src/replica.js');
+  const { createReplica } = await load('src/services/replica.js');
   const { createStore } = await load('src/state/store.js');
   const a = await appOn();
   try {
@@ -104,4 +104,45 @@ test('outreach records marked in the app reach the extension intact, and the ext
     assert.equal(replica.pending, 0, 'merely reading records queues nothing to send back');
     assert.equal(a.db.snapshot().emails.find(e => e.id === 'e1').status, 'sent');
   } finally { await a.close(); }
+});
+
+test('first contact pushes what exists only here, keeps the newer copy of anything in both, and a failed save is undone and reported', async () => {
+  const { createReplica } = await load('src/services/replica.js');
+  const a = await appOn();
+  try {
+    a.db.put('products', 'both', { id: 'both', name: 'Hub newer', order: 0, updatedAt: 900 });
+    a.db.put('products', 'both2', { id: 'both2', name: 'Hub older', order: 1, updatedAt: 100 });
+    const storage = memory();
+    await storage.set({ products: { both: { id: 'both', name: 'Local older', updatedAt: 200 }, both2: { id: 'both2', name: 'Local newer', updatedAt: 500 }, only: { id: 'only', name: 'Only here', updatedAt: 300 } }, emails: { e: { id: 'e', createdAt: 1, status: 'sent', sentAt: 5, note: 'n' } }, outbox: [], lastSync: 0 });
+    const replica = createReplica({ storage }); await replica.load();
+    replica.attach(a.link); await replica.sync();
+    const names = Object.fromEntries(a.db.snapshot().products.map(p => [p.id, p.name]));
+    assert.deepEqual(names, { both: 'Hub newer', both2: 'Local newer', only: 'Only here' });
+    assert.deepEqual([a.db.snapshot().emails[0].status, a.db.snapshot().emails[0].note], ['sent', 'n']);   // existing records arrive with their status and notes
+    assert.equal(replica.pending, 0);
+
+    // storage that refuses a write: the change is undone, the caller is told, and nothing is queued for the hub
+    let full = false; const flaky = { get: storage.get, set: async d => { if (full) throw { code: 'quota_exceeded' }; return storage.set(d); } };
+    const r2 = createReplica({ storage: flaky }); await r2.load();
+    full = true;
+    await assert.rejects(r2.doc('emails/e2').set({ id: 'e2', createdAt: 2, what: 'x' }), e => e.code === 'quota_exceeded');
+    const seen = []; r2.collection('emails').onSnapshot(s => { seen.length = 0; seen.push(...s.docs.map(d => d.id)); });
+    assert.deepEqual([seen.includes('e2'), r2.pending], [false, 0]);
+  } finally { await a.close(); }
+});
+
+test('the web storage adapter reads and writes the same localStorage keys the web app always used', async () => {
+  const { localReplicaStorage } = await load('src/services/replicaStorage.js');
+  const { createReplica } = await load('src/services/replica.js');
+  const ls = {}; const storage = { getItem: k => (k in ls ? ls[k] : null), setItem: (k, v) => { ls[k] = String(v); }, removeItem: k => { delete ls[k]; } };
+  ls['cold.products'] = JSON.stringify([{ id: 'p1', name: 'Acme', what: 'x', order: 0 }]);
+  ls['cold.emails'] = JSON.stringify([{ id: 'old', createdAt: 5, status: 'sent', sentAt: 9, recipient: { name: 'Bo' }, subject: 's', what: 'w', why: '', ask: '' }]);
+  const replica = createReplica({ storage: localReplicaStorage(storage) }); await replica.load();
+  await replica.doc('emails/new').set({ id: 'new', createdAt: 50, status: 'draft', recipient: { name: 'Sam' }, subject: 'n', what: 'w', why: '', ask: '' });
+  const written = JSON.parse(ls['cold.emails']);
+  assert.deepEqual(written.map(e => e.id), ['new', 'old']);                          // newest first, as before
+  assert.deepEqual([written[1].status, written[1].sentAt], ['sent', 9]);             // older records keep their status and dates
+  assert.equal(JSON.parse(ls['cold.products'])[0].name, 'Acme');
+  assert.equal(JSON.parse(ls['cold.sync']).outbox.length, 1);                        // the one change waiting for the hub
+  assert.equal(replica.pending, 1);
 });

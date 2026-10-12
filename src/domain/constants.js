@@ -6,6 +6,8 @@ export const STORAGE_KEYS = {
   settings: "cold.settings",
   compose: "cold.compose",
   gatewayModel: "cold.gatewayModel",
+  sync: "cold.sync",       // what is waiting to reach the desktop app, and when it last synced
+  hub: "cold.hub",         // this page's pairing with the desktop app
   access: "cold.access",
 };
 

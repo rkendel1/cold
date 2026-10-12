@@ -172,3 +172,8 @@ details.panel .in { padding: 0 16px 16px; display: grid; gap: 10px; font-size: v
 .hrow .ctl .btn { min-height: 38px; padding: 5px 12px; }
 .hrow .hdetails .field-error:empty { display: none; }
 .hfilters input[type=search] { flex: 1 1 260px; max-width: 380px; }
+
+/* Settings sections (same on every surface) */
+.set-section { display: grid; gap: 14px; margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--line); }
+.set-section:first-of-type { margin-top: 0; padding-top: 0; border-top: 0; }
+.set-section h2 { margin: 0; font-size: 1.15rem; }

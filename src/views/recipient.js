@@ -110,7 +110,7 @@ export function createRecipientAssist({ f, S, platform, readForm, persist: persi
   const renderStatus = msg => { clear(reasonHost); if (msg) reasonHost.append(h("p", { class: "hint" }, msg)); };
 
   return {
-    profileBlock, reasonEl,
+    profileBlock, reasonEl, suggest,
     /** Empties the helper and cancels anything it is still doing. */
     reset() {
       epoch++; if (profileCtl) profileCtl.abort(); if (reasonCtl) reasonCtl.abort();

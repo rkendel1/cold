@@ -9,9 +9,11 @@ import { mountKnowledge } from "./views/knowledge.js";
 import { mountHistory } from "./views/history.js";
 import { mountSettings } from "./views/settings.js";
 
-export async function startApp(rootEl = document.getElementById("app")) {
-  const store = createStore();
-  const platform = createPlatform();
+/**
+ * Builds the shell and every screen. The extension runs this same function with its own storage and platform, so Write, Knowledge,
+ * History and Settings are one implementation on every surface. `runtime` only changes wording that is about where data lives.
+ */
+export async function startApp(rootEl = document.getElementById("app"), { store = createStore(), platform = createPlatform() } = {}) {
   const S = store.state;
 
   const views = {
@@ -21,8 +23,6 @@ export async function startApp(rootEl = document.getElementById("app")) {
     settings: h("section", { id: "view-settings", "aria-labelledby": "settings-title", hidden: true }),
   };
   const links = [["compose", "Write"], ["knowledge", "Knowledge"], ["history", "History"], ["settings", "Settings"]].map(([r, label]) => h("a", { href: `#/${r}`, dataset: { route: r }, id: `nav-${r}` }, label));
-  const settingsLink = links.find(a => a.dataset.route === "settings");
-  settingsLink.hidden = true;   // shown once the server reports that Settings are enabled
   const footer = h("footer", { class: "app-footer" });
   const notices = h("div", { id: "notices", class: "notices" });
   rootEl.append(
@@ -44,20 +44,24 @@ export async function startApp(rootEl = document.getElementById("app")) {
   const history = mountHistory(views.history, { store, openRecord: rec => { if (rec) compose.open(rec); navigate("compose"); } });
 
   const settings = mountSettings(views.settings, { store, platform });
+  const paintFooter = () => { footer.textContent = `Cold writes drafts; you send them. Products and drafts ${store.keptNote()}`; };
+  const syncSurface = () => store.set({ surface: platform.hub ? platform.hub.kind : S.backend === "sqlite" ? "desktop" : "web", paired: !!(platform.hub && platform.hub.link.state.conn) }, "surface");
 
   const renderNotices = () => {
     while (notices.firstChild) notices.removeChild(notices.firstChild);
     S.warnings.forEach(w => notices.append(notice("warn", h("strong", {}, "Some saved data couldn't be read"), h("p", {}, w))));
     if (S.notice) notices.append(notice("info", S.notice));
   };
-  store.subscribe(t => { if (t === "ready" || t === "notice") renderNotices(); if (t === "ready") footer.textContent = `Cold writes drafts; you send them. Products and drafts ${S.backend === "sqlite" ? "are stored in the Cold app's database on this computer and are not synced to other devices." : "are saved in this browser only and are not backed up or synced to other devices."}`; });
+  store.subscribe(t => { if (t === "ready" || t === "notice") renderNotices(); if (t === "ready" || t === "server" || t === "surface") paintFooter(); });
 
   const boot = await platform.detect();
   store.start({ db: boot.db });
+  syncSurface();
   if (boot.warning) store.set({ notice: boot.warning }, "notice");
   store.set({ server: boot.server, sample: boot.sample, sampleState: boot.sampleState }, "server");
-  settingsLink.hidden = !(boot.server && boot.server.settingsEnabled);
+  // Generation or the desktop app's availability can change while the page is open: keep every screen in step.
+  platform.subscribe(() => { const s = platform.snapshot(); store.set({ server: s.server, sample: s.sample, sampleState: s.sampleState }, "server"); syncSurface(); });
   compose.init(); knowledge.init(); history.init(); settings.init();
   router.start();
-  return { store, platform, router };
+  return { store, platform, router, compose, knowledge, history, views, navigate };
 }

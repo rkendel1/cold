@@ -12,7 +12,7 @@ import { GOALS, STATUSES, STATUS_COPY } from "../domain/constants.js";
 
 const STEPS = ["Reading your saved product facts", "Drafting three sentences", "Editor pass against the 20 rules", "Running local checks"];
 
-export function createDraftPane({ store, handlers }) {
+export function createDraftPane({ store, handlers, platform = null }) {
   const S = store.state;
   const el = h("div", { class: "out", id: "out" });
   let renderedKey = null;
@@ -103,7 +103,7 @@ export function createDraftPane({ store, handlers }) {
         h("li", {}, "Say who you're writing to and why they should care."),
         h("li", {}, "Choose what you want from them, and what you're offering."),
         h("li", {}, "Generate, edit the text, then copy it into your own email.")),
-      h("p", { class: "hint" }, S.backend === "sqlite" ? "Drafts are stored in the Cold app's database on this computer and are not synced to other devices." : "Drafts are saved in this browser only. They are not backed up or synced to other devices."));
+      h("p", { class: "hint" }, `Drafts ${store.keptNote()}`));
   }
 
   function progressCard() {
@@ -238,7 +238,10 @@ export function createDraftPane({ store, handlers }) {
       h("div", { class: "draft-head" }, h("h2", { id: "draft-title", tabindex: "-1" }, rec.mode === "reply" ? "Your tweet reply" : "Your tweet"), statusSelect(rec)),
       h("div", { class: "field" }, h("label", { for: "tweetDraft" }, "Draft"), ta), count,
       (rec.warnings || []).length ? notice("warn", h("strong", {}, "Check before posting"), h("ul", {}, rec.warnings.map(w => h("li", {}, w)))) : null,
-      h("div", { class: "actions" }, copyBtn, button("Regenerate", { kind: "ghost", onclick: () => handlers.regenerate(rec) }), saveStatus),
+      h("div", { class: "actions" }, copyBtn,
+        // Only where the surface can reach the page (the extension): type the draft into X's own box. The user still presses Post.
+        platform && platform.pageActions ? button("Put it in the tweet box", { id: "insertTweet", onclick: async () => { const r = await platform.pageActions.insertTweet(rec.what); toast(r.message); announce(r.message); } }) : null,
+        button("Regenerate", { kind: "ghost", onclick: () => handlers.regenerate(rec) }), saveStatus),
       h("p", { class: "next-step" }, h("strong", {}, "Next: "), "paste it into X and post it yourself. Cold never posts."));
   }
 

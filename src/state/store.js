@@ -23,6 +23,8 @@ export function createStore({ storage = globalThis.localStorage, platform = null
     sampleState: "pending",  // pending | ready | noconfig | none | blocked
     warnings: [],
     notice: "",
+    surface: "web",          // web | desktop | extension: only used for wording about where data lives
+    paired: false,           // is the Cold desktop app paired (web and extension)
   };
   const subscribe = fn => { listeners.add(fn); return () => listeners.delete(fn); };
   const emit = topic => listeners.forEach(fn => fn(topic, state));
@@ -44,7 +46,8 @@ export function createStore({ storage = globalThis.localStorage, platform = null
     start(boot) {
       if (boot.db) {
         db = boot.db; state.backend = db.kind || "db";
-        if (db.kind === "sqlite") state.compose = db.initialCompose;
+        if (db.initialCompose !== undefined) state.compose = db.initialCompose;   // stores that keep the form (SQLite, web replica)
+        if (db.warnings && db.warnings.length) state.warnings = db.warnings;
         const fail = e => { if (e && e.code === "revoked") set({ notice: "Access to saved data ended. Reload to reconnect." }, "notice"); };
         db.collection("products").onSnapshot(snap => {
           const items = snap.docs.map(d => normalizeProduct({ ...d.data(), id: d.id })).filter(Boolean).sort((a, b) => (a.order ?? 99) - (b.order ?? 99) || String(a.name).localeCompare(b.name));
@@ -62,8 +65,12 @@ export function createStore({ storage = globalThis.localStorage, platform = null
     },
 
     /** Where saved data lives, in the words the UI uses. */
-    where: () => (state.backend === "sqlite" ? "on this computer" : "in this browser"),
-    whereFrom: () => (state.backend === "sqlite" ? "this computer" : "this browser"),
+    where: () => (state.backend === "sqlite" ? "on this computer" : state.surface === "extension" ? "in this extension" : "in this browser"),
+    whereFrom: () => (state.backend === "sqlite" ? "this computer" : state.surface === "extension" ? "this extension" : "this browser"),
+    /** One sentence fragment, "Products and drafts ___", used by every surface so the wording can't drift. */
+    keptNote: () => (state.backend === "sqlite" ? "are stored in the Cold desktop app's database on this computer and are not synced to other devices."
+      : state.paired ? `are saved ${api.where()} and sync with the Cold desktop app whenever it is running.`
+      : `are saved ${api.where()} only and are not backed up or synced to other devices${state.surface === "extension" ? " until you connect the Cold desktop app" : ""}.`),
 
     productById: id => state.products.find(p => p.id === id),
 
@@ -106,9 +113,9 @@ export function createStore({ storage = globalThis.localStorage, platform = null
     /** Compose form values are a convenience; failing to save them must never interrupt the user. */
     saveCompose(form) {
       state.compose = form;
-      if (db && db.kind === "sqlite") {
+      if (db && (db.kind === "sqlite" || db.saveCompose)) {
         clearTimeout(composeTimer);
-        composeTimer = setTimeout(() => { db.doc("compose/me").set(form).catch(() => {}); }, 600);
+        composeTimer = setTimeout(() => { (db.saveCompose ? Promise.resolve(db.saveCompose(form)) : db.doc("compose/me").set(form)).catch(() => {}); }, 600);
         return;
       }
       try { writeJson(STORAGE_KEYS.compose, form, storage); } catch {}

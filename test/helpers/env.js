@@ -32,6 +32,7 @@ function startMock(behavior = {}) {
   Object.assign(mock, behavior);
   mock.server = http.createServer((req, res) => {
     let b = ""; req.on("data", c => b += c); req.on("end", () => {
+      if (req.method !== "POST") { res.writeHead(200, { "content-type": "application/json" }); return res.end('{"data":[]}'); }   // the model list Settings asks for
       const prompt = JSON.parse(b).messages[0].content; mock.prompts.push(prompt);
       const respond = () => {
         if (mock.failNext > 0) { mock.failNext--; res.writeHead(529, { "content-type": "application/json" }); return res.end("{}"); }
@@ -49,8 +50,8 @@ function startMock(behavior = {}) {
   return new Promise(r => mock.server.listen(0, "127.0.0.1", () => { mock.url = `http://127.0.0.1:${mock.server.address().port}`; r(mock); }));
 }
 
-async function startColdServer({ mockUrl, env = {} }) {
-  const port = 3300 + Math.floor(Math.random() * 600);
+async function startColdServer({ mockUrl, env = {}, port: fixedPort }) {
+  const port = fixedPort || 3300 + Math.floor(Math.random() * 600);
   const child = spawn("node", ["server.js"], { cwd: ROOT, stdio: "ignore", env: { ...process.env, LLM_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "mock-key", ANTHROPIC_BASE_URL: mockUrl, PORT: String(port), HOST: "127.0.0.1", COLD_ACCESS_TOKEN: "", COLD_RATE_LIMIT_PER_MIN: "100000", ...env } });
   const base = `http://127.0.0.1:${port}`;
   for (let i = 0; i < 50; i++) { try { await fetch(base + "/api/config"); break; } catch { await new Promise(r => setTimeout(r, 100)); } }

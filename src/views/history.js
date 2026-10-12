@@ -20,10 +20,13 @@ export function mountHistory(root, { store, openRecord }) {
   const search = h("input", { type: "search", id: "histSearch", "aria-label": "Search outreach", placeholder: "Search name, company, email, subject, notes" });
   const listHost = h("ul", { class: "hist", "aria-label": "Outreach" });
   search.addEventListener("input", () => { query = search.value.trim(); render(); });
+  const lede = h("p", { class: "lede" });
+  const paintLede = () => { lede.textContent = `Your outreach, as you've recorded it. Cold doesn't send email and can't see your inbox, so “Marked sent” and “Reply recorded” appear only when you set them: open a draft in your email app, send it yourself, then come back and mark it sent. History ${store.keptNote()}`; };
+  paintLede();
   root.append(
     h("div", { class: "view-head" },
       h("h1", { id: "history-title", tabindex: "-1" }, "History"),
-      h("p", { class: "lede" }, `Your outreach, as you've recorded it. Cold doesn't send email and can't see your inbox, so “Marked sent” and “Reply recorded” appear only when you set them: open a draft in your email app, send it yourself, then come back and mark it sent. History is stored ${store.where()}; it isn't synced to other devices.`)),
+      lede),
     h("div", { class: "hfilters" }, filters, search), listHost);
 
   const latest = id => S.emails.find(x => x.id === id);
@@ -34,7 +37,9 @@ export function mountHistory(root, { store, openRecord }) {
     const next = typeof change === "function" ? change(cur) : { ...cur, ...change };
     try {
       await store.saveEmail(next);
-      if (S.current?.id === id) Object.assign(S.current, { status: next.status, sentAt: next.sentAt, repliedAt: next.repliedAt, sentCopy: next.sentCopy, note: next.note, recipient: next.recipient });
+      // Keep the draft open in Write in step, but only with what THIS change altered: it may hold text (a note, an edit) that is still
+      // waiting to be saved, and a stale copy from here must never overwrite it.
+      if (S.current?.id === id) for (const k of Object.keys(next)) if (JSON.stringify(next[k]) !== JSON.stringify(cur[k])) S.current[k] = next[k];
       return true;
     } catch { toast(failMsg || "Couldn't save that change."); render(); return false; }
   }
@@ -112,6 +117,7 @@ export function mountHistory(root, { store, openRecord }) {
 
   function render() {
     const all = [...S.emails].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    paintLede();
     const counts = countByStatus(all);
     clear(filters);
     ["all", ...STATUSES].forEach(s => filters.append(h("button", { type: "button", class: "btn", "aria-pressed": String(filter === s), onclick: () => { filter = s; render(); } }, s === "all" ? "All" : STATUS_COPY[s].label, h("span", { class: "mono" }, ` ${counts[s]}`))));

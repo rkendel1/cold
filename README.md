@@ -140,9 +140,28 @@ On first launch, anything already saved in the app's browser storage (the old lo
 
 Outside the desktop app, Cold still uses browser storage unless you set `COLD_DB_FILE=/path/to/cold.db` (needs Node 22.13+). Hosted deployments never set it.
 
+## One product, three surfaces
+
+Web, the desktop app and the browser extension run the **same screens** (Write, Knowledge, History, Settings), the same domain rules (outreach status, notes, the sent copy) and the same words. Where a surface can't do something it says so in place instead of hiding it.
+
+| | Web | Desktop app | Extension |
+|---|---|---|---|
+| Write, Knowledge, History | same | same | same |
+| Where records live | this browser | SQLite (the **hub**) | extension storage |
+| Provider keys | stay on the server (hosted site: not editable) | editable, OS keychain | editable, browser storage (not encrypted, labelled) |
+| Works with nothing else running | yes | yes | yes |
+| Syncs with the desktop app | optional | is the hub | optional |
+| Read the open tweet or profile ("This page") | no | no | yes |
+| Put a draft in X's tweet box | no | no | yes |
+| Pairing code, allowed web apps | no | yes | no |
+
+**How the surfaces share data.** The desktop app is the hub. Web and the extension each keep a full local copy, work with the app closed, and sync with it whenever it is running: changes made while it was closed are sent when it returns, the hub's newer copy of anything wins, and deletes sync too. While the desktop app is closed, web and the extension cannot sync *with each other*; each catches up when the app is back. There is no cloud service.
+
+**Connect the web app:** in the desktop app, Settings > Browser extension & web apps, add the web app's address under *Allowed web apps* (shown on the web app's own Settings page) and copy the pairing code. In the web app, Settings > Cold desktop app, paste the app's address and the code. If the hub isn't reachable you can still use everything; **Settings > Sync now** retries. When both the web server and the desktop app have a model, Settings lets you pick which one Write uses; if the chosen one disappears, the other is used automatically. Only the prompt goes to the desktop app; provider keys never leave where they are stored.
+
 ## Browser extension
 
-The extension writes replies, tweets and cold emails from the page you are on. **It works on its own, with the Cold app closed**, and it syncs with the app whenever the app is running.
+The extension is the same app in Chrome's side panel, plus a **This page** card on Write.
 
 ```
 npm run build:extension      # bundles extension/dist
@@ -150,17 +169,8 @@ npm run build:extension      # bundles extension/dist
 
 Then in Chrome, Edge or Brave: `chrome://extensions` > turn on Developer mode > **Load unpacked** > choose the `extension/` folder. Click the Cold icon to open the side panel.
 
-**On its own:**
-- **Settings > Model for this extension:** pick a provider (Ollama, Anthropic, OpenAI, Gemini, OpenRouter, Groq, Mistral, AI Gateway, or any OpenAI-compatible server), add a key if it needs one, choose a model. The extension calls the provider directly. Keys saved here live in the browser profile's extension storage and are *not* encrypted (the desktop app keeps its keys in the OS keychain).
-- **Products:** add and edit products in the panel (name, what it does, who it's for, problem, website, X handle, links). Proof points and do-not-say rules are edited in the app.
-- **Write:** Reply, Tweet or Email. Drafts and products are saved in the extension.
-- Local Ollama needs no setup: the extension removes the browser-extension `Origin` header from its own requests to the Ollama address you configure, since Ollama otherwise answers 403.
+- **On its own:** Settings > Model works like the desktop app's: pick a provider (Ollama, Anthropic, OpenAI, Gemini, OpenRouter, Groq, Mistral, AI Gateway, or any OpenAI-compatible server), add a key if it needs one, choose a model. The extension calls the provider directly. Keys saved here live in the browser profile's extension storage and are *not* encrypted. Local Ollama needs no setup: the extension removes the browser-extension `Origin` header from its own requests to the Ollama address you configure, since Ollama otherwise answers 403.
+- **With the desktop app:** Settings > Cold desktop app, paste the address and pairing code. Products, drafts, statuses, notes and sent copies sync both ways automatically.
+- **This page:** open a tweet and click *Read this page* to reply (optionally say what you want to say back); on a LinkedIn or X profile it fills in who they are and suggests reasons they'd care. *Put it in the tweet box* types the draft into X's reply box and you press Reply yourself. Pages are read only when you click.
+- **Security:** with the app, the extension authenticates with the pairing code and can only read and write products and drafts, generate, and look up public profiles and tweets. It cannot read or change the app's provider keys, the provider choice, the allowed web apps or the code. Creating a new code in the app disconnects every paired surface. The extension reads x.com, twitter.com and linkedin.com pages only when you click *Read this page*, and talks only to `127.0.0.1` / `localhost` for the app.
 
-**With the app:** in the app, open **Settings > Browser extension**, then paste the address and pairing code into the extension's **Settings > Cold app**.
-- Products and drafts sync both ways, automatically. Anything you did while the app was closed is sent when it starts. If the same item was changed in the app after your version, the app's newer copy wins; the extension never overwrites it.
-- If you choose "the Cold app's model, when it's running" (the default), the app's provider and model are used while it runs, and the extension falls back to its own model the moment the app closes, including mid-use.
-- Deletes happen in the app and are copied to the extension. The extension doesn't delete.
-
-**On a page:** open a tweet and click *Read this page* for a reply (optionally say what you want to say back); *Put it in the tweet box* types the draft into X's reply box and you press Reply yourself. On a LinkedIn or X profile, *Read this page* fills in who they are and suggests reasons they'd care.
-
-**Security:** with the app, the extension authenticates with the pairing code and can only read and write products and drafts, generate, and look up public profiles and tweets. It cannot read or change the app's provider keys, the provider choice, or the code. Creating a new code in the app disconnects the extension. The extension reads x.com, twitter.com and linkedin.com pages only when you click *Read this page*. Other websites and other browser extensions get nothing from the app's local server without the code.

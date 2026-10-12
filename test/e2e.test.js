@@ -321,7 +321,8 @@ test("history: Open in email from a row never changes status; a missing address 
   const strip = e => ({ ...e, recipient: { ...e.recipient, email: undefined }, updatedAt: undefined });
   // (saving any record re-writes the list with normalised defaults, so an unknown or missing status reads back as "draft")
   const known = x => (["draft", "sent", "replied"].includes(x) ? x : "draft");
-  assert.deepEqual(after.map(e => [e.id, e.status, e.sentAt ?? null, e.repliedAt ?? null]), before.map(e => [e.id, known(e.status), e.sentAt ?? null, e.repliedAt ?? null]), "no status or timestamp changed");
+  const byId = (x, y) => x[0].localeCompare(y[0]);
+  assert.deepEqual(after.map(e => [e.id, e.status, e.sentAt ?? null, e.repliedAt ?? null]).sort(byId), before.map(e => [e.id, known(e.status), e.sentAt ?? null, e.repliedAt ?? null]).sort(byId), "no status or timestamp changed");
   assert.equal(after.find(e => e.id === "withmail").updatedAt, 111, "a handoff does not even re-save the record");
   // copy is also inert
   await row(page, "Ada Park").locator("button:text-is('Copy')").click();
@@ -342,6 +343,70 @@ test("history: the outreach status survives in the shared record that the extens
   for (const k of ["sentAt", "sentCopy", "updatedAt"]) assert.ok(added.includes(k), `${k} is recorded`);
   assert.equal(rec.repliedAt, undefined, "marking sent does not imply a reply");
   await t.close();
+});
+
+/** The desktop app as its own process (own database file), so it can be stopped and started while the web page stays open. */
+const hubDir = () => require("node:fs").mkdtempSync(path.join(require("node:os").tmpdir(), "cold-hub-"));
+const startHub = (dir, port) => env.startColdServer({ mockUrl: mock.url, port, env: { COLD_DB_FILE: path.join(dir, "cold.db"), COLD_SETTINGS_FILE: path.join(dir, "settings.json") } });
+const freePort = () => new Promise(r => { const s = require("node:net").createServer(); s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => r(p)); }); });
+const until = async (fn, ms = 20000) => { const t = Date.now(); for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t > ms) throw new Error("timed out waiting for: " + fn); await new Promise(r => setTimeout(r, 150)); } };
+
+test("web: works on its own, syncs both ways with the desktop app when it is running, keeps working when it stops, and catches up when it returns", { skip: SKIP, timeout: 120000 }, async () => {
+  const { createDb } = require("../lib/db");
+  const dir = hubDir(), port = await freePort();
+  let hub = await startHub(dir, port);
+  const hubDb = createDb(path.join(dir, "cold.db"));
+  hubDb.put("products", "p-hub", { id: "p-hub", name: "Hub Product", order: 5, what: "Lives in the desktop app.", proof: [], techFacts: [], approved: [], dontSay: [], updatedAt: Date.now() });
+  hubDb.put("emails", "e-hub", { id: "e-hub", createdAt: Date.now() - 1000, status: "sent", sentAt: Date.now() - 500, note: "from the desktop app", recipient: { name: "Hub Person", company: "HubCo" }, subject: "hub subject", what: "w", why: "y", ask: "a", updatedAt: Date.now() - 500 });
+  const t = await open({ seed: { "cold.products": [P1], "cold.emails": [EMAIL({ id: "e-web", recipient: { name: "Web Person", company: "WebCo" } })] } }); const { page } = t;
+  try {
+    // ---- on its own: everything works, and Settings says the desktop app is optional
+    await go(page, "history"); assert.equal(await page.locator(".hrow").count(), 1);
+    await go(page, "settings");
+    assert.deepEqual(await page.$$eval("#view-settings .set-section h2", h => h.map(x => x.textContent)), ["Model", "Cold desktop app", "Your data"]);
+    assert.match(await page.textContent("#view-settings"), /This site writes with/);                    // a hosted web page shows what the server uses; keys are not editable here
+    assert.equal(await page.locator("#setKey").count(), 0, "a hosted site has no key field: keys never reach the browser");
+    // ---- a page the desktop app hasn't approved is told how to fix that
+    const webOrigin = new URL(srv.base).origin;
+    await page.fill("#hubAddress", `127.0.0.1:${port}`); await page.fill("#hubCode", hubDb.extensionToken()); await page.click("#hubConnect");
+    await page.waitForSelector(`#hubMsg :text("allowed web apps")`);
+    assert.match(await page.textContent("#view-settings"), new RegExp(webOrigin.replace(/[.:/]/g, "\\$&")));
+    // ---- approved: a wrong code is refused, the right one connects
+    hubDb.setWebOrigins([webOrigin]);
+    await page.fill("#hubCode", "wrong"); await page.click("#hubConnect");
+    await page.waitForSelector(`#hubMsg :text("rejected that pairing code")`);
+    await page.fill("#hubCode", hubDb.extensionToken()); await page.click("#hubConnect");
+    await page.waitForSelector("#hubDisconnect");
+    // ---- both ways: what only the web had reaches the desktop app, and what only it had reaches the web
+    await until(() => hubDb.snapshot().emails.some(e => e.id === "e-web") && hubDb.snapshot().products.some(p => p.id === "p1"));
+    await go(page, "history"); await page.waitForFunction(() => document.querySelectorAll(".hrow").length === 2);
+    const hubRow = row(page, "Hub Person");
+    assert.match(await hubRow.locator(".chip").textContent(), /Marked sent/); assert.match(await hubRow.locator(".hnote").textContent(), /from the desktop app/);   // status and notes arrive intact
+    await go(page, "compose"); assert.ok((await page.$$eval("#rProduct option", o => o.map(x => x.textContent))).includes("Hub Product"));
+    // ---- the desktop app closes mid-use: the web keeps working, and says so
+    hub.stop(); await page.waitForTimeout(300);
+    await go(page, "history"); await row(page, "Web Person").locator(".hMarkSent").click();
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.emails")).find(e => e.id === "e-web").status === "sent");
+    await go(page, "compose"); await fillCompose(page, { name: "Offline Person", company: "OffCo" }); await generate(page);
+    await go(page, "settings"); await page.waitForSelector("text=The Cold desktop app isn't running", { timeout: 15000 });
+    assert.match(await page.textContent("#syncLine"), /\d+ changes? waiting to sync/);
+    assert.equal(hubDb.snapshot().emails.find(e => e.id === "e-web").status, "draft", "the closed app has not heard yet");
+    // a page reload while it is closed still shows everything
+    await page.reload(); await page.waitForSelector("#genBtn", { state: "attached" }); await go(page, "history");
+    assert.equal(await page.locator(".hrow").count(), 3);
+    // ---- the app returns: the changes made while it was closed arrive without any action
+    hub = await startHub(dir, port);
+    await until(() => { const e = hubDb.snapshot().emails; return e.find(x => x.id === "e-web")?.status === "sent" && e.some(x => x.recipient?.name === "Offline Person"); }, 25000);
+    const synced = hubDb.snapshot().emails.find(e => e.id === "e-web");
+    assert.equal(typeof synced.sentAt, "number"); assert.ok(synced.sentCopy && synced.sentCopy.text, "the sent copy travelled too");
+    await go(page, "settings"); await page.waitForSelector("text=Connected.", { timeout: 15000 });
+    assert.match(await page.textContent("#syncLine"), /Nothing waiting to sync/);
+    // ---- disconnecting keeps the local copy
+    await page.click("#hubDisconnect"); await page.waitForSelector("#hubCode"); await go(page, "history");
+    assert.equal(await page.locator(".hrow").count(), 3);
+    // the only console noise allowed is the network failures this test causes on purpose (unapproved page, app stopped)
+    assert.deepEqual(t.errors.filter(e => !/ERR_CONNECTION_REFUSED|ERR_FAILED|CORS policy|status of 403/.test(e)), []);
+  } finally { await t.close(); hub.stop(); hubDb.close(); }
 });
 
 test("sentence boxes always show all their text, including after the window is resized or the view was hidden", { skip: SKIP }, async () => {
@@ -704,4 +769,44 @@ test("keyboard: skip link, nav, form submit with Enter, visible focus, reduced m
   await page.waitForSelector("#eSubject");
   assert.equal(mock.prompts.length, 2);
   await t.close();
+});
+
+test("a note typed on the draft is not lost when the user marks it sent from History straight away", { skip: SKIP }, async () => {
+  const t = await open({ seed: SEED }); const { page } = t;
+  await fillCompose(page); await generate(page);
+  const id = (await ls(page, "cold.emails"))[0].id;
+  await page.fill("#eNote", "Typed just before leaving");
+  await go(page, "history");                                                        // well inside the 700 ms save delay
+  await row(page, "Sam Ortiz").locator(".hMarkSent").click();
+  await page.waitForFunction(i => { const e = JSON.parse(localStorage.getItem("cold.emails")).find(x => x.id === i); return e.status === "sent" && e.note === "Typed just before leaving"; }, id, { timeout: 8000 });
+  const rec = await stored(page, id);
+  assert.deepEqual([rec.status, rec.note, typeof rec.sentCopy.text], ["sent", "Typed just before leaving", "string"]);
+  await t.close();
+});
+
+test("desktop UI: the hub's Settings shows the model form, the pairing code, and lets the user choose which web pages may sync", { skip: SKIP }, async () => {
+  const { createDb } = require("../lib/db");
+  const dir = hubDir(), port = await freePort(), hub = await startHub(dir, port);
+  const db = createDb(path.join(dir, "cold.db"));
+  const t = await open({ server: hub }); const { page } = t;
+  try {
+    await go(page, "settings"); await page.waitForSelector("#extCode");
+    assert.deepEqual(await page.$$eval("#view-settings .set-section h2", h => h.map(x => x.textContent)), ["Model", "Browser extension & web apps", "Your data"]);
+    assert.ok(await page.isVisible("#setProvider") && await page.locator("#setKey").count() === 1, "the desktop app owns provider keys, so it offers them");
+    assert.equal(await page.inputValue("#extCode"), db.extensionToken());
+    assert.equal(await page.locator("#hubConnect").count(), 0, "the hub does not connect to itself");
+    // approving pages: invalid entries are refused with a reason; valid ones take effect on the hub immediately
+    await page.fill("#webOrigins", "https://*.example.com"); await page.click("#saveOrigins");
+    await page.waitForFunction(() => /web address|Each entry/.test(document.querySelector("#saveOrigins").closest(".field").innerText));
+    assert.deepEqual(db.webOrigins(), []);
+    await page.fill("#webOrigins", "https://cold.example.com/\nhttp://127.0.0.1:3000"); await page.click("#saveOrigins");
+    await page.waitForFunction(() => /2 allowed/.test(document.querySelector("#saveOrigins").closest(".field").innerText));
+    assert.deepEqual(db.webOrigins(), ["https://cold.example.com", "http://127.0.0.1:3000"]);
+    assert.equal(await page.inputValue("#webOrigins"), "https://cold.example.com\nhttp://127.0.0.1:3000");
+    // the code can be replaced, which cuts every paired surface off until it is re-entered
+    const old = db.extensionToken();
+    await page.click("text=Create a new code"); await page.click("button:has-text('Create new code')");
+    await page.waitForFunction(o => document.querySelector("#extCode").value !== o, old);
+    assert.notEqual(db.extensionToken(), old);
+  } finally { await t.close(); hub.stop(); db.close(); }
 });

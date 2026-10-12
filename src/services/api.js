@@ -32,6 +32,7 @@ export function createApi({ fetchImpl = (...a) => globalThis.fetch(...a), getAcc
   }
   const profile = url => settingsCall("api/profile", { method: "POST", body: JSON.stringify({ url }) });
   const tweet = url => settingsCall("api/tweet", { method: "POST", body: JSON.stringify({ url }) });
+  const setWebOrigins = origins => settingsCall("api/settings/web-origins", { method: "PUT", body: JSON.stringify({ origins }) });
   const getExtension = () => settingsCall("api/settings/extension");
   const rotateExtension = () => settingsCall("api/settings/extension", { method: "POST" });
   const getSettings = () => settingsCall("api/settings");
@@ -52,5 +53,5 @@ export function createApi({ fetchImpl = (...a) => globalThis.fetch(...a), getAcc
   }
   sample.json = async (prompt, opts) => parseLooseJson((await sample(prompt, opts)).text);
 
-  return { config, models, sample, profile, tweet, getExtension, rotateExtension, getSettings, saveSettings, providerModels };
+  return { config, models, sample, profile, tweet, getExtension, rotateExtension, setWebOrigins, getSettings, saveSettings, providerModels };
 }

@@ -31,6 +31,7 @@ function mockModel() {
   const prompts = [];
   const server = http.createServer((req, res) => {
     let b = ''; req.on('data', c => b += c); req.on('end', () => {
+      if (req.method !== 'POST') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{"data":[],"models":[]}'); }   // model-list requests from Settings
       const prompt = JSON.parse(b).messages.at(-1).content; prompts.push(prompt);
       const answer = /Extract facts about one person/.test(prompt) ? { name: 'Priya Nair', role: 'Head of Platform', company: 'Northwind Logistics', notes: 'Writes about moving batch workloads to the edge.' }
         : /You help a sender decide why/.test(prompt) ? { who: 'Platform lead at Northwind.', suggestions: [{ why: 'They write about moving batch workloads to the edge.', basis: 'moving batch workloads to the edge', signal: 'shared technical domain' }] }
@@ -65,71 +66,83 @@ async function launch(dir) {
   await ctx.route('https://www.linkedin.com/**', r => r.fulfill({ contentType: 'text/html', body: PROFILE_PAGE }));
   let [sw] = ctx.serviceWorkers(); if (!sw) sw = await ctx.waitForEvent('serviceworker');
   const panel = await ctx.newPage();
+  const errors = []; panel.on('pageerror', e => errors.push(String(e)));
   await panel.goto(`chrome-extension://${new URL(sw.url()).host}/panel.html`);
-  await panel.waitForSelector('.x-status');
-  return { ctx, panel };
+  await panel.waitForSelector('#genBtn', { state: 'attached' });
+  return { ctx, panel, errors };
 }
-const tab = (panel, name) => panel.click(`label:has-text("${name}")`);
-const chipText = panel => panel.textContent('.x-status');
+const nav = (panel, v) => panel.click(`#nav-${v === 'write' ? 'compose' : v}`);
 const until = async (fn, ms = 20000) => { const t = Date.now(); for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t > ms) throw new Error('timed out waiting for condition: ' + fn); await new Promise(r => setTimeout(r, 150)); } };
+const hubOnline = panel => panel.evaluate(() => __cold.platform.hub.link.state.online);
+const model = panel => panel.evaluate(() => (__cold.platform.backend.describe() || {}).label || null);
+const saveCustomModel = async (panel, port, name) => {
+  await nav(panel, 'settings'); await panel.waitForSelector('#setProvider');
+  await panel.selectOption('#setProvider', 'custom'); await panel.fill('#setUrl', `http://127.0.0.1:${port}/v1`);
+  await panel.selectOption('#setModel', '__other__'); await panel.fill('#setModelText', name);
+  await panel.click('button:has-text("Save and use this provider")');
+  await until(async () => (await model(panel)) === `Custom (OpenAI-compatible) · ${name}`);
+};
 
 test('extension works with the app closed, then syncs with it when it starts, survives it stopping, and syncs again', { skip: SKIP, timeout: 180000 }, async () => {
-  const model = await mockModel(), ownModel = await mockModel();
+  const model1 = await mockModel(), ownModel = await mockModel();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-off-'));
-  const app = await coldApp(model, dir);
+  const app = await coldApp(model1, dir);
   await app.stop();                                                // the app is NOT running at the start
-  const { ctx, panel } = await launch(dir);
+  const { ctx, panel, errors } = await launch(dir);
   try {
-    assert.match(await panel.textContent('body'), /Choose a model to start/);
-    // ---- give the extension its own model: no app, no keys file, nothing else
-    await tab(panel, 'Settings');
-    await panel.selectOption('#mProvider', 'custom');
-    await panel.fill('#mUrl', `http://127.0.0.1:${ownModel.port}/v1`);
-    await panel.selectOption('#mModel', '__other__'); await panel.fill('#mModelText', 'own-model');
-    await panel.click('button:has-text("Save")');
-    await until(async () => /own-model/.test(await chipText(panel)));
-    assert.doesNotMatch(await panel.textContent('body'), /Choose a model to start/);
-    // ---- add a product in the extension
-    await tab(panel, 'Products'); await panel.click('#addProduct');
-    await panel.fill('#pName', 'Offline Co'); await panel.fill('#pWhat', 'Offline Co writes software that works without a server.'); await panel.fill('#pX', 'offlineco');
-    await panel.click('#saveProduct'); await panel.waitForSelector('text=Ready to write from');
-    // ---- write an original tweet with the app closed
-    await tab(panel, 'Write'); await panel.click('input[value=tweet]');
-    await panel.fill('#xText', 'We just shipped offline mode'); await panel.click('text=Write the tweet'); await panel.waitForSelector('#xDraft');
-    assert.equal(await panel.inputValue('#xDraft'), 'We just shipped scheduled jobs on edge servers.');
+    assert.match(await panel.textContent('#genHint'), /No provider is set up yet/);
+    // ---- the extension's own model, set up in the SAME Settings screen the web and desktop apps have
+    assert.deepEqual(await panel.$$eval('.primary-nav a', a => a.map(x => x.textContent)), ['Write', 'Knowledge', 'History', 'Settings']);
+    await saveCustomModel(panel, ownModel.port, 'own-model');
+    await nav(panel, 'write'); await until(async () => !/No provider is set up yet/.test(await panel.textContent('#genHint')));
+    // ---- a product, through the SAME Knowledge editor
+    await nav(panel, 'knowledge'); await panel.click('#emptyAdd');
+    await panel.fill('#kName', 'Offline Co'); await panel.fill('#kWhat', 'Offline Co writes software that works without a server.');
+    await panel.click('summary:has-text("Links and social")'); await panel.fill('#kX', 'offlineco');
+    await panel.click('#kSave'); await panel.waitForFunction(() => /Saved/.test(document.querySelector('#kSave ~ .status, .status')?.textContent || ''));
+    // ---- an original tweet with the app closed, through the SAME Write screen
+    await nav(panel, 'write'); await panel.check('#fmt-tweet'); await panel.check('#tk-original');
+    await panel.fill('#tweetContext', 'We just shipped offline mode'); await panel.click('#genBtn'); await panel.waitForSelector('#tweetDraft');
+    assert.equal(await panel.inputValue('#tweetDraft'), 'We just shipped scheduled jobs on edge servers.');
     assert.ok(ownModel.prompts.some(p => /Offline Co/.test(p) && /@offlineco/.test(p)), 'the tweet used the product and its handle');
-    assert.equal(model.prompts.length, 0, 'the (closed) app\'s model was never involved');
+    assert.equal(model1.prompts.length, 0, "the (closed) app's model was never involved");
     assert.equal(app.db.snapshot().emails.length, 0);
+    // ---- History and its status buttons work offline too
+    await nav(panel, 'history'); await panel.waitForSelector('.hrow'); await panel.click('.hrow .hMarkSent');
+    await panel.waitForFunction(() => /Marked sent/.test(document.querySelector('.hrow .chip').textContent));
 
-    // ---- the app starts and is paired: everything made offline reaches it
+    // ---- the app starts and is paired from the shared Settings screen: everything made offline reaches it
     await app.start();
-    await tab(panel, 'Settings');
-    await panel.fill('#cAddress', `127.0.0.1:${app.port}`); await panel.fill('#cCode', 'wrong-code'); await panel.click('button:has-text("Connect")');
-    await panel.waitForSelector('text=rejected that pairing code');
-    await panel.fill('#cCode', app.token); await panel.click('button:has-text("Connect")');
-    await until(async () => /App connected/.test(await chipText(panel)));
+    await nav(panel, 'settings');
+    await panel.fill('#hubAddress', `127.0.0.1:${app.port}`); await panel.fill('#hubCode', 'wrong-code'); await panel.click('#hubConnect');
+    await panel.waitForSelector('#hubMsg :text("rejected that pairing code")');
+    await panel.fill('#hubCode', app.token); await panel.click('#hubConnect');
+    await until(() => hubOnline(panel));
     await until(() => app.db.snapshot().emails.length === 1 && app.db.snapshot().products.length === 1);
     const snap = app.db.snapshot();
-    assert.deepEqual([snap.products[0].name, snap.products[0].xHandle, snap.emails[0].what], ['Offline Co', '@offlineco', 'We just shipped scheduled jobs on edge servers.']);
+    assert.deepEqual([snap.products[0].name, snap.products[0].xHandle, snap.emails[0].what, snap.emails[0].status], ['Offline Co', '@offlineco', 'We just shipped scheduled jobs on edge servers.', 'sent']);
+    assert.equal(typeof snap.emails[0].sentAt, 'number'); assert.equal(snap.emails[0].sentCopy.text, 'We just shipped scheduled jobs on edge servers.');
 
     // ---- the app goes away while the panel is open: nothing breaks
     await app.stop();
-    await until(async () => /App not running/.test(await chipText(panel)));
-    assert.match(await panel.textContent('body'), /The Cold app isn't running/);
-    await tab(panel, 'Write'); await panel.fill('#xText', 'Second thought, written while the app is closed');
-    await panel.click('text=Write the tweet'); await panel.waitForFunction(() => document.querySelectorAll('.x-recent li').length >= 2);
-    assert.match(await chipText(panel), /Custom.*own-model/);
-    assert.equal(app.db.snapshot().emails.length, 1);                      // not in the app yet
+    await until(async () => !(await hubOnline(panel)));
+    await nav(panel, 'settings'); assert.match(await panel.textContent('#view-settings'), /The Cold desktop app isn't running/);
+    await nav(panel, 'write'); await panel.fill('#tweetContext', 'Second thought, written while the app is closed');
+    await panel.click('#genBtn'); await panel.waitForFunction(() => document.getElementById('tweetDraft')?.value && !document.getElementById('genBtn').disabled);
+    assert.match(await model(panel), /own-model/);
+    await nav(panel, 'history'); await panel.waitForFunction(() => document.querySelectorAll('.hrow').length === 2);
+    assert.equal(app.db.snapshot().emails.length, 1);                       // not in the app yet
+    await panel.locator('.hrow', { hasText: 'Original tweet' }).first().locator('.hNote, .hToggle').first().click().catch(() => {});
 
     // ---- the app comes back: the new draft syncs without any action
     await app.start();
     await until(() => app.db.snapshot().emails.length === 2);
-    await until(async () => /App connected/.test(await chipText(panel)));
+    await until(() => hubOnline(panel));
     // and a product edited in the app shows up in the extension
     app.db.put('products', 'p-from-app', { id: 'p-from-app', name: 'From the app', order: 5, what: 'x', proof: [], techFacts: [], approved: [], dontSay: [], updatedAt: Date.now() });
-    await tab(panel, 'Products');
-    await panel.waitForSelector('h2:has-text("From the app")', { timeout: 15000 });
-  } finally { await ctx.close(); await app.stop().catch(() => {}); app.db.close(); await model.close(); await ownModel.close(); }
+    await nav(panel, 'write'); await panel.waitForFunction(() => [...document.querySelectorAll('#rProduct option')].some(o => o.textContent === 'From the app'), null, { timeout: 15000 });
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); await app.stop().catch(() => {}); app.db.close(); await model1.close(); await ownModel.close(); }
 });
 
 test('extension also talks to a local Ollama directly (which refuses extension origins unless the header is removed)', { skip: SKIP, timeout: 200000 }, async () => {
@@ -139,90 +152,86 @@ test('extension also talks to a local Ollama directly (which refuses extension o
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-oll-'));
   const { ctx, panel } = await launch(dir);
   try {
-    await tab(panel, 'Settings');
-    await panel.selectOption('#mProvider', 'ollama');
-    await panel.click('button:has-text("Refresh models")');
-    await panel.waitForFunction(() => /models available/.test(document.querySelector('#mModel').closest('.field').innerText));
-    assert.ok((await panel.$$eval('#mModel option', o => o.map(x => x.value))).includes(small), 'the model list came from the real Ollama');
-    await panel.selectOption('#mModel', small); await panel.click('button:has-text("Save")');
-    await until(async () => (await chipText(panel)).includes(small));
-    await tab(panel, 'Write'); await panel.click('input[value=tweet]');
-    await panel.fill('#xText', 'Say hello to the world in one short sentence.');
-    await panel.click('text=Write the tweet');
-    await panel.waitForSelector('#xDraft', { timeout: 150000 });   // a real local model may need to load into memory first
-    assert.ok((await panel.inputValue('#xDraft')).length > 3);
+    await nav(panel, 'settings'); await panel.waitForSelector('#setProvider');
+    await panel.selectOption('#setProvider', 'ollama');
+    await panel.waitForFunction(() => /models available/.test(document.querySelector('#setModelMsg').textContent), null, { timeout: 15000 });   // the list came from the real Ollama
+    assert.ok((await panel.$$eval('#setModel option', o => o.map(x => x.value))).includes(small));
+    await panel.selectOption('#setModel', small); await panel.click('button:has-text("Save and use this provider")');
+    await until(async () => ((await model(panel)) || '').includes(small));
+    await nav(panel, 'write'); await panel.check('#fmt-tweet'); await panel.check('#tk-original');
+    await panel.fill('#tweetContext', 'Say hello to the world in one short sentence.');
+    await panel.click('#genBtn');
+    await panel.waitForSelector('#tweetDraft', { timeout: 150000 });   // a real local model may need to load into memory first (this test is slower when other tests run alongside)
+    assert.ok((await panel.inputValue('#tweetDraft')).length > 3);
   } finally { await ctx.close(); }
 });
 
-test('extension paired with a running app: reads pages, uses the app\'s model, saves to its database, never reaches settings', { skip: SKIP, timeout: 120000 }, async () => {
-  const model = await mockModel();
+test('extension paired with a running app: reads pages into the shared Write screen, uses the app\'s model, saves to its database, never reaches settings', { skip: SKIP, timeout: 150000 }, async () => {
+  const model1 = await mockModel();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-ext-'));
-  const app = await coldApp(model, dir);
+  const app = await coldApp(model1, dir);
   app.db.put('products', 'p1', { id: 'p1', name: 'Acme Edge', order: 0, what: 'Acme Edge runs scheduled batch jobs on edge servers.', xHandle: '@acmeedge', website: 'https://acme.dev', proof: [], techFacts: [], approved: [], dontSay: [] });
-  const { ctx, panel } = await launch(dir);
+  const { ctx, panel, errors } = await launch(dir);
   try {
-    await tab(panel, 'Settings');
-    await panel.fill('#cAddress', `127.0.0.1:${app.port}`); await panel.fill('#cCode', app.token); await panel.click('button:has-text("Connect")');
-    await until(async () => /App connected/.test(await chipText(panel)));
-    assert.match(await chipText(panel), /Cold app · app-model/);
-    await tab(panel, 'Write');
-    await panel.waitForFunction(() => [...document.querySelectorAll('#xProduct option')].some(o => o.textContent === 'Acme Edge'));
+    await nav(panel, 'settings');
+    await panel.fill('#hubAddress', `127.0.0.1:${app.port}`); await panel.fill('#hubCode', app.token); await panel.click('#hubConnect');
+    await until(() => hubOnline(panel));
+    assert.equal(await model(panel), 'Cold desktop app · app-model');
+    await nav(panel, 'write');
+    await panel.waitForFunction(() => [...document.querySelectorAll('#rProduct option')].some(o => o.textContent === 'Acme Edge'));
     const keep = async url => { const p = await ctx.newPage(); await p.goto(url); await panel.evaluate(async u => { const [t] = await chrome.tabs.query({ url: u }); await chrome.tabs.update(t.id, { active: true }); }, url); await panel.waitForTimeout(400); return p; };
 
     // ---- reply from a tweet page
     const tweetTab = await keep('https://x.com/jacktest/status/42');
-    await panel.evaluate(() => document.querySelector('.x-page button').click());
-    await panel.waitForFunction(() => /Read @jacktest/.test(document.querySelector('.x-page [role=status]').textContent));
-    assert.match(await panel.inputValue('#xText'), /Moving batch workloads between cloud and edge/);
-    await panel.fill('#xPoint', 'Disagree: scheduling is the hard part.');
-    await panel.click('text=Write a reply'); await panel.waitForSelector('#xDraft');
-    assert.equal(await panel.inputValue('#xDraft'), 'Scheduling is the hard part, not moving the data.');
-    assert.match(await panel.textContent('.x-card'), /\d+ \/ 280 characters/);
-    const replyPrompt = model.prompts.find(p => /reply to the supplied tweet/.test(p));
+    await panel.evaluate(() => document.querySelector('#readPage').click());
+    await panel.waitForFunction(() => /Read @jacktest/.test(document.querySelector('#pageStatus').textContent));
+    assert.match(await panel.inputValue('#tweetContext'), /Moving batch workloads between cloud and edge/);
+    await panel.fill('#tweetPoint', 'Disagree: scheduling is the hard part.');
+    await panel.click('#genBtn'); await panel.waitForSelector('#tweetDraft');
+    assert.equal(await panel.inputValue('#tweetDraft'), 'Scheduling is the hard part, not moving the data.');
+    assert.match(await panel.textContent('#out'), /\d+ \/ 280 characters/);
+    const replyPrompt = model1.prompts.find(p => /reply to the supplied tweet/.test(p));
     assert.match(replyPrompt, /tweet by @jacktest/); assert.match(replyPrompt, /Disagree: scheduling is the hard part/); assert.match(replyPrompt, /@acmeedge/);
     await until(() => app.db.snapshot().emails.find(e => e.mode === 'reply'));
     const saved = app.db.snapshot().emails.find(e => e.mode === 'reply');
-    assert.deepEqual([saved.what, saved.tweetAuthor, saved.productId], ['Scheduling is the hard part, not moving the data.', '@jacktest', 'p1']);
-    await panel.evaluate(() => [...document.querySelectorAll('button')].find(b => /tweet box/.test(b.textContent)).click());
+    assert.deepEqual([saved.what, saved.tweetAuthor, saved.productId, saved.status], ['Scheduling is the hard part, not moving the data.', '@jacktest', 'p1', 'draft']);
+    await panel.click('#insertTweet');                                  // extension-only action; the user still presses Post
     await tweetTab.waitForFunction(() => document.getElementById('box').innerText.includes('Scheduling is the hard part'));
     await tweetTab.close();
 
-    // ---- email from a LinkedIn profile
+    // ---- email from a LinkedIn profile, then the SAME draft card, notes, email handoff and History as on web and desktop
     const liTab = await keep('https://www.linkedin.com/in/priya-nair');
-    await panel.evaluate(() => document.querySelector('.x-page button').click());
-    await panel.waitForFunction(() => /Read their page/.test(document.querySelector('.x-page [role=status]').textContent));
-    assert.deepEqual([await panel.inputValue('#xName'), await panel.inputValue('#xCompany'), await panel.inputValue('#xRole')], ['Priya Nair', 'Northwind Logistics', 'Head of Platform']);
+    await panel.evaluate(() => document.querySelector('#readPage').click());
+    await panel.waitForFunction(() => /Read their page/.test(document.querySelector('#pageStatus').textContent));
+    assert.deepEqual([await panel.inputValue('#rName'), await panel.inputValue('#rCompany'), await panel.inputValue('#rRole')], ['Priya Nair', 'Northwind Logistics', 'Head of Platform']);
     await panel.waitForSelector('text=Use this reason'); await panel.click('text=Use this reason');
-    assert.match(await panel.inputValue('#xWhy'), /moving batch workloads to the edge/);
-    await panel.fill('#xEmail', 'priya@northwind.example');
-    await panel.click('text=Write the email'); await panel.waitForSelector('text=Copy email');
+    assert.match(await panel.inputValue('#rWhy'), /moving batch workloads to the edge/);
+    await panel.fill('#rEmail', 'priya@northwind.example');
+    await panel.click('#genBtn'); await panel.waitForSelector('#eSubject');
     await until(() => app.db.snapshot().emails.find(e => e.mode !== 'reply'));
     const email = app.db.snapshot().emails.find(e => e.mode !== 'reply');
     assert.deepEqual([email.recipient.name, email.subject, email.productId, email.recipient.email], ['Priya Nair', 'edge jobs', 'p1', 'priya@northwind.example']);
-    // ---- Open in email (the browser's mailto handoff is MOCKED here: this proves what the extension asks for, not that an email app is installed)
-    assert.equal(await panel.inputValue('#xTo'), 'priya@northwind.example');
+    // Open in email (the browser's mailto handoff is MOCKED: this proves what the extension asks for, not that an email app is installed)
     await panel.evaluate(() => { window.__mail = []; HTMLAnchorElement.prototype.click = function () { if (/^mailto:/i.test(this.href)) window.__mail.push(this.href); }; });
-    await panel.fill('[aria-label=Subject], [aria-label="subject"]', 'Edited subject & more'); 
-    await panel.click('button:has-text("Open in email")');
+    await panel.fill('#eSubject', 'Edited subject & more'); await panel.click('#openEmail');
     await panel.waitForFunction(() => window.__mail.length === 1);
-    const mailUrl = await panel.evaluate(() => window.__mail[0]);
-    assert.match(mailUrl, /^mailto:priya@northwind\.example\?subject=Edited%20subject%20%26%20more&body=/);
-    assert.match(decodeURIComponent(mailUrl.split('&body=')[1]), /Acme Edge runs batch jobs on edge servers\./);
-    assert.match(await panel.textContent('#xHandoff'), /hasn't sent anything/);
-    await panel.fill('#xTo', ''); await panel.click('button:has-text("Open in email")');
-    assert.match(await panel.textContent('#xHandoff'), /Add the recipient's email address/);
-    assert.equal(await panel.evaluate(() => window.__mail.length), 1, 'nothing opened without an address');
-    await panel.fill('#xTo', 'priya@northwind.example');
-    await until(() => app.db.snapshot().emails.find(e => e.mode !== 'reply' && e.subject === 'Edited subject & more' && e.recipient.email === 'priya@northwind.example'));
-    assert.equal(app.db.snapshot().emails.find(e => e.mode !== 'reply').status, 'draft', 'opening an email never marks it sent');
+    assert.match(await panel.evaluate(() => window.__mail[0]), /^mailto:priya@northwind\.example\?subject=Edited%20subject%20%26%20more&body=/);
+    assert.match(await panel.textContent('#handoffMsg'), /hasn't sent anything/);
+    assert.equal(app.db.snapshot().emails.find(e => e.id === email.id).status, 'draft', 'opening an email never marks it sent');
+    // notes on the draft, then mark sent in History: the app's database sees the same status, note and sent copy
+    await panel.fill('#eNote', 'Good fit: writes about batch workloads');
+    await nav(panel, 'history'); await panel.locator('.hrow', { hasText: 'Priya Nair' }).locator('.hMarkSent').click();
+    await until(() => { const e = app.db.snapshot().emails.find(x => x.id === email.id); return e.status === 'sent' && e.note?.startsWith('Good fit') && e.sentCopy?.text.includes('Acme Edge runs batch jobs'); });
     await liTab.close();
 
-    // ---- the extension can never reach keys or settings, even with its code
-    const status = await panel.evaluate(async ([origin, t]) => (await fetch(`${origin}/api/settings`, { headers: { authorization: `Bearer ${t}` } })).status, [`http://127.0.0.1:${app.port}`, app.token]);
-    assert.equal(status, 403);
+    // ---- the extension can never reach keys or settings, even with its code; the pairing code can't approve web pages
+    for (const [method, p] of [['GET', '/api/settings'], ['GET', '/api/settings/extension'], ['PUT', '/api/settings/web-origins']]) {
+      const status = await panel.evaluate(async ([origin, t, m, path]) => (await fetch(`${origin}${path}`, { method: m, headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: m === 'PUT' ? '{"origins":[]}' : undefined })).status, [`http://127.0.0.1:${app.port}`, app.token, method, p]);
+      assert.equal(status, 403, p);
+    }
     // ---- disconnect: the extension keeps its copy and keeps working
-    await tab(panel, 'Settings'); await panel.click('button:has-text("Disconnect")');
-    await panel.waitForSelector('#cCode');
-    assert.doesNotMatch(await chipText(panel), /App connected/);
-  } finally { await ctx.close(); await app.stop().catch(() => {}); app.db.close(); await model.close(); }
+    await nav(panel, 'settings'); await panel.click('#hubDisconnect'); await panel.waitForSelector('#hubCode');
+    await nav(panel, 'history'); assert.equal(await panel.locator('.hrow').count(), 2);
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); await app.stop().catch(() => {}); app.db.close(); await model1.close(); }
 });
