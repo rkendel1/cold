@@ -53,7 +53,7 @@ function resolve() {
     ready: !!baseUrl && (!def.needsKey || !!key) && !!model };
 }
 
-const SYSTEM = "You are the writing engine inside Cold, a cold-email generator. Follow the instructions in the user message exactly. When asked for JSON, reply with only the JSON value: no preamble, no code fence.";
+const { SYSTEM, authHeaders, chatRequest, parseChat, apiErrorMessage, unreachable, parseModels } = require("./lib/llm");
 
 const SECURITY_HEADERS = {
   "x-content-type-options": "nosniff",
@@ -130,15 +130,6 @@ function guardGenerate(req) {
   return null;
 }
 
-function apiErrorMessage(status, data, cfg, model = cfg.model) {
-  const msg = data && data.error && data.error.message;
-  if (status === 401 || status === 403) return `Authentication was rejected. Check ${cfg.keySetting}.`;
-  if (status === 404) return `Model "${model}" wasn't found. Check ${cfg.modelSetting}.`;
-  if (status === 429) return "Rate limited by the API. Wait a minute and try again.";
-  if (status === 529 || status >= 500) return "The API is overloaded or unavailable right now. Try again shortly.";
-  return typeof msg === "string" && msg ? `API error: ${msg}` : `API error (${status}).`;
-}
-
 let modelCache = null;
 let modelCacheUntil = 0;
 async function gatewayModels() {
@@ -156,24 +147,12 @@ async function gatewayModels() {
   return models;
 }
 
-function authHeaders(cfg) {
-  if (cfg.kind === "anthropic") return { "x-api-key": cfg.key, "anthropic-version": "2023-06-01" };
-  return cfg.key ? { authorization: `Bearer ${cfg.key}` } : {};
-}
-
 /** Live model list for one provider, using its saved key. Returns [{ id, name }]. */
 async function providerModels(cfg) {
   const r = await fetch(cfg.baseUrl + cfg.def.modelsPath, { headers: authHeaders(cfg), signal: AbortSignal.timeout(10000) });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) throw Object.assign(new Error(apiErrorMessage(r.status, data, cfg)), { status: r.status });
-  const rows = Array.isArray(data.models) ? data.models : Array.isArray(data.data) ? data.data : [];
-  const seen = new Set();
-  return rows.map(m => {
-    const raw = typeof m === "string" ? m : m.id || m.name || m.model;
-    if (typeof raw !== "string") return null;
-    const id = raw.replace(/^models\//, "");
-    return { id, name: m.display_name || id };
-  }).filter(m => m && !seen.has(m.id) && seen.add(m.id)).sort((a, b) => a.id.localeCompare(b.id));
+  return parseModels(data);
 }
 
 // Looks up a LinkedIn / X profile link, or a single tweet. Same abuse controls as /api/generate; only those two sites are ever fetched.
@@ -231,30 +210,17 @@ async function generate(req, res) {
   const ctl = new AbortController();
   res.on("close", () => { if (!res.writableEnded) ctl.abort(); });
 
-  const openai = cfg.kind === "openai";
   try {
-    const r = await fetch(cfg.baseUrl + cfg.def.chatPath, {
-      method: "POST",
-      signal: ctl.signal,
-      headers: { "content-type": "application/json", ...authHeaders(cfg) },
-      body: JSON.stringify({
-        model,
-        max_tokens: MAX_TOKENS,
-        ...(openai
-          // Ollama: skip hidden "thinking" (it can burn the whole token budget) and force valid JSON.
-          ? { messages: [{ role: "system", content: SYSTEM }, { role: "user", content: prompt }], stream: false, ...(cfg.id === "ollama" ? { reasoning_effort: "none", response_format: { type: "json_object" } } : {}) }
-          : { system: SYSTEM, messages: [{ role: "user", content: prompt }] }),
-      }),
-    });
+    const { url, init } = chatRequest(cfg, { model, prompt, maxTokens: MAX_TOKENS });
+    const r = await fetch(url, { ...init, signal: ctl.signal });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) return send(res, 502, { error: { message: apiErrorMessage(r.status, data, cfg, model) } });
-    const choice = data.choices && data.choices[0];
-    const text = openai ? choice?.message?.content : (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
-    if (typeof text !== "string" || !text.trim()) return send(res, 502, { error: { message: "The provider returned no text. Try again." } });
-    send(res, 200, { text, truncated: openai ? choice.finish_reason === "length" : data.stop_reason === "max_tokens", model: data.model });
+    const out = parseChat(cfg, data);
+    if (!out) return send(res, 502, { error: { message: "The provider returned no text. Try again." } });
+    send(res, 200, out);
   } catch (e) {
     if (ctl.signal.aborted) return;
-    send(res, 502, { error: { message: cfg.id === "ollama" ? `Couldn't reach Ollama at ${cfg.baseUrl}. Is it running (ollama serve) and is "${model}" pulled?` : `Couldn't reach ${cfg.label} from the server.` } });
+    send(res, 502, { error: { message: unreachable(cfg, model) } });
   }
 }
 

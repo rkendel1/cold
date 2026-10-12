@@ -1,55 +1,70 @@
-// Cold side panel: connect screen, then the workspace. Reuses the app's own domain, generation and storage modules.
+// Cold side panel. It works on its own: products and drafts are kept in this browser, and the model is the extension's own.
+// When the Cold desktop app is running and paired, it syncs with it and can use its model; when the app closes, nothing stops.
 import "../../src/styles/tokens.css";
 import "../../src/styles/layout.css";
 import "../../src/styles/components.css";
 import "./panel.css";
-import { h, clear } from "../../src/components/dom.js";
-import { button, notice, field, textInput } from "../../src/components/ui.js";
-import { createApi } from "../../src/services/api.js";
-import { createRemoteDb } from "../../src/services/sqliteDb.js";
+import { h } from "../../src/components/dom.js";
+import { button, notice, chip } from "../../src/components/ui.js";
 import { createStore } from "../../src/state/store.js";
-import { getConnection, saveConnection, clearConnection, appFetch, verify } from "./connection.js";
+import { getConnection } from "./connection.js";
+import { createReplica } from "./replica.js";
+import { createLink } from "./link.js";
+import { createBackend } from "./backend.js";
+import { loadModelConfig, syncOriginRules } from "./model.js";
 import { mountWorkspace } from "./workspace.js";
+import { mountSettingsView } from "./settingsView.js";
+import { mountProductsView } from "./productsView.js";
 
-const root = document.getElementById("app");
-
-function showConnect(message = "") {
-  clear(root);
-  const address = field({ id: "cAddress", label: "App address", required: null, hint: "Shown in Cold: Settings > Browser extension.", control: textInput({ value: "127.0.0.1:47821", inputmode: "url" }) });
-  const code = field({ id: "cCode", label: "Pairing code", required: null, hint: "Copy it from the same place in Settings.", control: (id, d) => h("input", { type: "password", id, autocomplete: "off", spellcheck: "false", "aria-describedby": d }) });
-  const status = h("div", { role: "status" }, message ? notice("bad", message) : null);
-  const go = button("Connect", { kind: "primary", type: "submit" });
-  const form = h("form", { class: "form", novalidate: true },
-    h("h1", {}, "Connect to Cold"),
-    h("p", { class: "lede" }, "Cold works from the desktop app. It keeps your products, drafts and model settings; this extension uses them. Open the app, go to Settings, and copy the address and pairing code here."),
-    address, code, h("div", { class: "actions" }, go), status);
-  form.addEventListener("submit", async e => {
-    e.preventDefault(); go.disabled = true; go.textContent = "Connecting…"; clear(status);
-    try { await saveConnection(await verify(address.input.value, code.input.value)); await boot(); }
-    catch (err) { clear(status).append(notice("bad", err.message || "Couldn't connect.")); go.disabled = false; go.textContent = "Connect"; }
-  });
-  root.append(form);
-}
-
-function showProblem(text, conn) {
-  clear(root).append(h("div", { class: "form" }, h("h1", {}, "Cold"), notice("warn", text),
-    h("div", { class: "actions" }, button("Try again", { kind: "primary", onclick: () => boot() }), button("Change connection", { kind: "ghost", onclick: async () => { await clearConnection(); showConnect(); } }))));
-}
+const REPLICA_KEY = "cold.replica";
+const storage = { get: async () => (await chrome.storage.local.get(REPLICA_KEY))[REPLICA_KEY] || null, set: data => chrome.storage.local.set({ [REPLICA_KEY]: data }) };
 
 async function boot() {
-  clear(root);
-  const conn = await getConnection();
-  if (!conn) return showConnect();
-  const fetchImpl = appFetch(conn);
-  const api = createApi({ fetchImpl, remote: true });
-  const config = await api.config();
-  if (!config) return showProblem("Couldn't reach the Cold app. Make sure it's running, then try again.", conn);
-  const db = createRemoteDb({ fetchImpl, migrate: false });
-  try { await db.load(); }
-  catch (e) { return showProblem("The Cold app didn't accept this extension's pairing code. Open Settings in the app and copy the current code.", conn); }
+  const root = document.getElementById("app");
+  let config = await loadModelConfig();
+  const replica = createReplica({ storage });
+  await replica.load();
   const store = createStore({ storage: {} });
-  store.start({ db });
-  mountWorkspace(root, { api, store, config, onDisconnect: async () => { db.stop(); await clearConnection(); showConnect(); } });
+  store.start({ db: replica });
+  const link = createLink({ replica });
+  const backend = createBackend({ link, getConfig: () => config });
+  syncOriginRules(config).catch(() => {});
+
+  const views = { write: h("section", { "aria-label": "Write" }), products: h("section", { "aria-label": "Products", hidden: true }), settings: h("section", { "aria-label": "Settings", hidden: true }) };
+  const status = h("div", { class: "x-status", role: "status" });
+  const banner = h("div", {});
+  let current = "write";
+  const show = name => {
+    current = name;
+    for (const [k, el] of Object.entries(views)) el.hidden = k !== name;
+    tabs.forEach(t => { t.querySelector("input").checked = t.querySelector("input").value === name; });
+    paint();
+  };
+  const tabs = [["write", "Write"], ["products", "Products"], ["settings", "Settings"]].map(([k, label]) => h("label", {}, h("input", { type: "radio", name: "xview", value: k, checked: k === current, onchange: () => show(k) }), label));
+
+  function paint() {
+    const d = backend.describe(), s = link.state;
+    status.replaceChildren(
+      h("strong", {}, "Cold"),
+      d ? chip(d.kind === "app" ? "good" : "accent", d.label, { glyph: false }) : chip("warn", "No model set up"),
+      ...(s.conn ? [chip(s.online ? "good" : "neutral", s.online ? "App connected" : "App not running", { glyph: false })] : []));
+    const msgs = [];
+    if (!d) msgs.push(notice("warn", h("strong", {}, "Choose a model to start."), h("p", {}, "Pick a provider in Settings, or open the Cold app and pair it. Local models like Ollama need no key."), button("Open Settings", { onclick: () => show("settings") })));
+    else if (s.conn && !s.online && !s.rejected) msgs.push(notice("info", h("strong", {}, "The Cold app isn't running."), h("p", {}, `You can keep writing: Cold uses the copy saved in this browser${replica.pending ? ` and will sync ${replica.pending} change${replica.pending === 1 ? "" : "s"} when the app is back` : ""}.`)));
+    if (s.rejected) msgs.push(notice("bad", h("strong", {}, "The app rejected this extension's pairing code."), h("p", {}, "Open Settings, disconnect, and pair again with the current code.")));
+    banner.replaceChildren(...msgs);
+  }
+  link.subscribe(paint); store.subscribe(t => { if (t === "emails" || t === "products") paint(); });
+
+  root.append(h("div", { class: "x-head" }, status), h("div", { class: "pills", role: "radiogroup", "aria-label": "Section", style: "margin-bottom:12px" }, tabs), banner, views.write, views.products, views.settings);
+  mountWorkspace(views.write, { backend, store, onOpenSettings: () => show("settings") });
+  mountProductsView(views.products, { store });
+  mountSettingsView(views.settings, { link, replica, getConfig: () => config, setConfig: c => { config = c; paint(); } });
+  paint();
+
+  const conn = await getConnection();
+  if (conn) await link.connect(conn);
+  link.start();
 }
 
-boot().catch(() => showProblem("Something went wrong starting Cold. Try again.", null));
+boot().catch(e => { document.getElementById("app").append(h("p", {}, `Cold couldn't start: ${e && e.message ? e.message : e}`)); });

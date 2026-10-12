@@ -13,3 +13,6 @@ body.ext { margin: 0; padding: 14px 16px 28px; background: var(--bg); min-width:
 .x-recent .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ext .pills { gap: 6px; }
 .ext .btn { min-height: 40px; padding: 6px 12px; }
+.x-status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.x-status strong { font-size: 1.15rem; }
+.x-stack > .x-card { margin: 0; }

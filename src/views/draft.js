@@ -3,6 +3,7 @@ import { h, clear, autosize, fmtDate } from "../components/dom.js";
 import { chip, button, notice, toast, announce } from "../components/ui.js";
 import { confirmDialog, promptDialog } from "../components/dialog.js";
 import { copyText } from "../services/clipboard.js";
+import { openInEmail, isEmail } from "../services/handoff.js";
 import { evaluate, checklistVerdict, words } from "../domain/rules.js";
 import { checkGrounding } from "../domain/grounding.js";
 import { emailText } from "../domain/email.js";
@@ -128,6 +129,23 @@ export function createDraftPane({ store, handlers }) {
     };
     f.what.value = rec.what; f.why.value = rec.why; f.ask.value = rec.ask;
     const saveStatus = h("span", { class: "hint", role: "status" }, rec.edited ? "" : `Saved ${store.where()}`);
+    // Recipient address: optional, kept with the draft, and only used for "Open in email".
+    const toIn = h("input", { type: "email", id: "eTo", value: rec.recipient.email || "", placeholder: "name@company.com", autocomplete: "off", inputmode: "email", "aria-describedby": "eToMsg" });
+    const toMsg = h("p", { class: "field-error", id: "eToMsg" });
+    const handoffMsg = h("p", { class: "hint handoff-msg", id: "handoffMsg", role: "status" });
+    const checkTo = () => {
+      const v = toIn.value.trim(), bad = !!v && !isEmail(v);
+      toMsg.textContent = bad ? "That doesn't look like a valid email address." : ""; if (bad) toIn.setAttribute("aria-invalid", "true"); else toIn.removeAttribute("aria-invalid");
+      return bad;
+    };
+    toIn.addEventListener("input", () => { rec.recipient = { ...rec.recipient, email: toIn.value.trim() }; checkTo(); handoffMsg.textContent = ""; queueSave(rec, saveStatus); });
+    /** Opens the CURRENT text (including edits) as an unsent draft in the user's email app. It changes nothing about the draft. */
+    async function openMail() {
+      const r = await openInEmail({ to: toIn.value, subject: rec.subject, body: emailText(rec, S.settings.signature) });
+      handoffMsg.textContent = r.message; handoffMsg.className = `hint handoff-msg${r.ok ? "" : " bad-text"}`;
+      if (!r.ok && (r.reason === "missing" || r.reason === "invalid")) { checkTo(); toIn.focus(); }
+      announce(r.message);
+    }
     const metrics = h("div", { class: "metrics", "aria-label": "Draft length" });
     const review = h("div", {});
     const checklist = h("div", {});
@@ -168,18 +186,21 @@ export function createDraftPane({ store, handlers }) {
           chip("accent", rec.productName || "No product", { glyph: false }),
           chip("neutral", rec.goal === "other" ? rec.goalOther || "Other" : GOALS[rec.goal]?.label || "", { glyph: false })),
         h("div", { class: "status-wrap" }, h("label", { class: "hint", for: "curStatus" }, "Status (you set this)"), statusSelect(rec))),
+      h("div", { class: "sentence to-field" }, h("label", { for: "eTo" }, "To ", h("span", { class: "opt" }, "Optional")), toIn, toMsg),
       h("div", { class: "sentence" }, h("label", { for: "eSubject" }, "Subject"), f.subject),
       sentence("what", "Sentence 1: what you do", f.what), sentence("why", "Sentence 2: why it matters to them", f.why), sentence("ask", "Sentence 3: the ask", f.ask),
       h("div", { class: "actions" }, signoff, signBtn), metrics,
       h("div", { class: "actions" },
         button("Copy email", { kind: "primary", id: "copyEmail", onclick: () => copy(emailText(rec, S.settings.signature), "Email") }),
+        button("Open in email", { id: "openEmail", onclick: () => openMail() }),
         button("Copy subject", { onclick: () => copy(rec.subject, "Subject") }),
         rec.status === "draft" ? button("Mark as sent", { id: "markSent", onclick: () => setStatus(rec, "sent") }) : null,
         button("Regenerate", { kind: "ghost", onclick: async () => {
           if (rec.edited && !(await confirmDialog({ title: "Replace your edited draft?", body: "Regenerating writes a new draft from the same inputs. Your edits to this one stay in History.", confirmLabel: "Regenerate" }))) return;
           handlers.regenerate(rec);
         } }), undoBtn, saveStatus),
-      h("p", { class: "next-step" }, h("strong", {}, "Next: "), "paste it into your own email and send it yourself. Cold can't send, and can't see your inbox. Come back and mark it as sent, and record a reply in History if you get one."));
+      handoffMsg,
+      h("p", { class: "next-step" }, h("strong", {}, "Next: "), "open it in your email app (or copy it) and send it yourself. Cold can't send, and can't see your inbox. Come back and mark it as sent, and record a reply in History if you get one."));
     const wrap = h("div", { class: "stack-lg" }, card,
       h("section", { "aria-label": "Review before sending", class: "stack" }, h("h2", {}, "Check before you send"), review),
       checklist,

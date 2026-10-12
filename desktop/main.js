@@ -1,7 +1,8 @@
 // Cold desktop shell: runs the Cold server inside the app on a fixed local port and shows it in a window.
 // A fixed port keeps the page origin stable between launches, which is what keeps saved products and drafts.
-const { app, BrowserWindow, Menu, shell, safeStorage, dialog, session } = require("electron");
+const { app, BrowserWindow, Menu, shell, safeStorage, dialog, session, ipcMain } = require("electron");
 const path = require("node:path");
+const { isSafeMailto } = require("../lib/mailto.js");
 
 const PORT = parseInt(process.env.COLD_PORT || "47821", 10);
 const ORIGIN = `http://127.0.0.1:${PORT}`;
@@ -45,7 +46,7 @@ function buildMenu() {
 function createWindow() {
   win = new BrowserWindow({
     width: 1100, height: 860, minWidth: 720, minHeight: 600, title: "Cold",
-    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: true },
+    webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: true, preload: path.join(__dirname, "preload.js") },
   });
   win.loadURL(ORIGIN);
   // Keep the window on Cold: external links open in the browser, everything else is blocked.
@@ -53,6 +54,17 @@ function createWindow() {
   win.webContents.on("will-navigate", (e, url) => { if (!url.startsWith(ORIGIN)) { e.preventDefault(); if (/^https:\/\//i.test(url)) shell.openExternal(url); } });
   win.on("closed", () => { win = null; });
 }
+
+// "Open in email": the page may ask the OS to open ONE kind of link, a mailto: draft in the user's email app, and only from Cold's
+// own window. Anything else (other schemes, extra parameters, other senders) is refused here, in the main process, regardless of
+// what the page sends. Cold never sends mail; this only opens an unsent draft.
+ipcMain.handle("cold:open-mail", async (event, url) => {
+  const from = event.senderFrame && event.senderFrame.url;
+  if (!from || !from.startsWith(ORIGIN)) return { ok: false, message: "not allowed from here" };
+  if (!isSafeMailto(url)) return { ok: false, message: "not a valid email link" };
+  try { await shell.openExternal(url); return { ok: true }; }
+  catch (e) { return { ok: false, message: e && e.message ? String(e.message).split("\n")[0].slice(0, 120) : "the system couldn't open it" }; }
+});
 
 app.on("second-instance", () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
 

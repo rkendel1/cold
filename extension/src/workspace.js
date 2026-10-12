@@ -8,12 +8,13 @@ import { readiness } from "../../src/domain/knowledge.js";
 import { emailText } from "../../src/domain/email.js";
 import { generateEmail, generateTweet, extractProfile, suggestReasons, describeError } from "../../src/services/generation.js";
 import { copyText } from "../../src/services/clipboard.js";
+import { openInEmail, isEmail } from "../../src/services/handoff.js";
 import { readPage, insertIntoBox, classify } from "./page.js";
 
 const MODES = { reply: "Reply", tweet: "Tweet", email: "Email" };
 const tweetLength = t => twitterText.parseTweet(t);
 
-export function mountWorkspace(root, { api, store, config, onDisconnect }) {
+export function mountWorkspace(root, { backend, store, onOpenSettings }) {
   const S = store.state;
   let mode = "reply", busy = false, ctl = null, current = null, pageKind = { kind: "other" };
   const val = c => c.input.value.trim();
@@ -25,6 +26,7 @@ export function mountWorkspace(root, { api, store, config, onDisconnect }) {
     name: field({ id: "xName", label: "Name", required: null, control: textInput({}) }),
     company: field({ id: "xCompany", label: "Company", required: null, control: textInput({}) }),
     role: field({ id: "xRole", label: "Role", required: null, control: textInput({}) }),
+    email: field({ id: "xEmail", label: "Email address", required: null, hint: "Optional. Only used for “Open in email”.", control: textInput({ type: "email", inputmode: "email", placeholder: "name@company.com" }) }),
     profile: field({ id: "xProfile", label: "What Cold learned from their page", required: null, hint: "Facts you can edit. Cold uses them as facts you supplied.", control: textArea({ rows: 3 }) }),
     why: field({ id: "xWhy", label: "Why should this person care?", required: null, control: textArea({ rows: 3 }) }),
   };
@@ -45,17 +47,12 @@ export function mountWorkspace(root, { api, store, config, onDisconnect }) {
   const tabs = Object.entries(MODES).map(([k, label]) => h("label", {}, h("input", { type: "radio", name: "xmode", value: k, checked: k === mode, onchange: () => setMode(k) }), label));
   const replyFields = h("div", { class: "x-stack" }, f.tweetText, f.point);
   const tweetFields = h("div", { class: "x-stack" });
-  const emailFields = h("div", { class: "x-stack" }, h("div", { class: "row3" }, f.name, f.company, f.role), f.profile, f.why, h("div", { class: "actions" }, suggestBtn), reasonBox,
+  const emailFields = h("div", { class: "x-stack" }, h("div", { class: "row3" }, f.name, f.company, f.role), f.email, f.profile, f.why, h("div", { class: "actions" }, suggestBtn), reasonBox,
     h("div", { class: "field" }, h("label", { for: "xGoal" }, "What do you want from them?"), goalSel));
   const productRow = h("div", { class: "field" }, h("label", { for: "xProduct" }, "Product"), productSel);
   const useRow = h("div", { class: "field" }, h("label", { for: "xUse" }, "Product in this tweet"), useSel);
 
-  const head = h("div", { class: "x-head" }, h("strong", {}, "Cold"),
-    config.ready ? chip("good", `${config.providerLabel || config.provider} · ${config.model}`, { glyph: false }) : chip("warn", "No model set up"),
-    h("span", { class: "grow" }), button("Disconnect", { kind: "ghost", onclick: onDisconnect }));
-  const setup = config.ready ? null : notice("warn", h("strong", {}, "Pick a model in the Cold app."), h("p", {}, "Open Cold, go to Settings, and choose a provider and model. The extension uses whatever you select there."));
-
-  root.append(head, setup, h("div", { class: "x-page" }, pageLine, h("div", { class: "actions" }, pageBtn), pageStatus),
+  root.append(h("div", { class: "x-page" }, pageLine, h("div", { class: "actions" }, pageBtn), pageStatus),
     h("div", { class: "pills", role: "radiogroup", "aria-label": "What to write" }, tabs),
     h("div", { class: "x-stack", style: "margin-top:14px" }, replyFields, tweetFields, emailFields, productRow, useRow,
       h("div", { class: "actions" }, genBtn, stopBtn), out),
@@ -113,13 +110,12 @@ export function mountWorkspace(root, { api, store, config, onDisconnect }) {
       pageUrl = result.url;
       if (pageKind.kind === "tweet") {
         let t = result.kind === "tweet" ? result : null;
-        if (!t) { const r = await api.tweet(result.url); if (r.ok) t = { text: r.text, handle: r.handle ? `@${r.handle}` : "" }; else { pageStatus.textContent = r.message; return; } }
+        if (!t) { const r = await backend.tweet(result.url); if (r.ok) t = { text: r.text, handle: r.handle ? `@${r.handle}` : "" }; else { pageStatus.textContent = r.message; return; } }
         f.tweetText.input.value = t.text; tweetAuthor = t.handle || "";
         document.querySelector('input[value="reply"]').click();
         pageStatus.textContent = `Read ${tweetAuthor || "the"} tweet. Check it, then write your reply.`;
       } else {
-        if (!S.sample && !api.sample) throw { code: "none" };
-        const p = await extractProfile({ sample: api.sample, text: `${result.title}\n${result.text}` });
+        const p = await extractProfile({ sample: backend.sample, text: `${result.title}\n${result.text}` });
         for (const k of ["name", "role", "company"]) if (p[k] && !val(f[k])) f[k].input.value = p[k];
         f.profile.input.value = p.notes || "";
         document.querySelector('input[value="email"]').click();
@@ -136,10 +132,10 @@ export function mountWorkspace(root, { api, store, config, onDisconnect }) {
   async function suggest({ auto = false } = {}) {
     const product = productFor();
     if (!product) { if (!auto) clear(reasonBox).append(h("p", { class: "hint" }, "Pick a product first so Cold can tell what would matter to them.")); return; }
-    if (!config.ready) return;
+    if (!backend.describe()) return;
     suggestBtn.disabled = true; suggestBtn.textContent = "Thinking…";
     try {
-      const res = await suggestReasons({ sample: api.sample, product, form: formValues() });
+      const res = await suggestReasons({ sample: backend.sample, product, form: formValues() });
       clear(reasonBox);
       if (res.who) reasonBox.append(h("p", {}, h("strong", {}, "Who they are: "), res.who));
       if (!res.suggestions.length) reasonBox.append(h("p", { class: "hint" }, "Nothing on their page connects clearly to your product. Write the reason yourself; Cold won't invent one."));
@@ -151,14 +147,15 @@ export function mountWorkspace(root, { api, store, config, onDisconnect }) {
   /* ---------- generating ---------- */
   function formValues() {
     return { mode: mode === "reply" ? "reply" : mode === "tweet" ? "tweet" : "email", tweetContext: val(f.tweetText), tweetUrl: pageUrl, tweetAuthor, tweetPoint: mode === "reply" ? val(f.point) : "", tweetUse: useSel.value,
-      name: val(f.name), company: val(f.company), role: val(f.role), why: val(f.why), goal: goalSel.value || "advice", goalOther: "", convey: "", profile: val(f.profile), profileUrl: pageUrl, productId: productSel.value };
+      name: val(f.name), company: val(f.company), role: val(f.role), email: val(f.email), why: val(f.why), goal: goalSel.value || "advice", goalOther: "", convey: "", profile: val(f.profile), profileUrl: pageUrl, productId: productSel.value };
   }
   function friendly(e) {
     if (e && (e.status === 403 || e.code === "bad_origin")) return "The app rejected this extension's pairing code. Disconnect, then connect again with the current code.";
+    if (e && e.code === "no_model") return e.message;
     if (e && e.code === "network") return "Couldn't reach the Cold app. Is it running?";
     const d = describeError(e); return d ? d.message : "";
   }
-  function setBusy(b) { busy = b; genBtn.disabled = b || !config.ready; stopBtn.hidden = !b; genBtn.setAttribute("aria-busy", String(b)); }
+  function setBusy(b) { busy = b; genBtn.disabled = b; stopBtn.hidden = !b; genBtn.setAttribute("aria-busy", String(b)); }
   setBusy(false);
 
   async function generate() {
@@ -167,6 +164,7 @@ export function mountWorkspace(root, { api, store, config, onDisconnect }) {
     if (mode !== "email" && !v.tweetContext) { clear(out).append(notice("bad", mode === "reply" ? "Read the tweet from the page, or paste its text." : "Say what the tweet should be about.")); return; }
     if (mode === "email") {
       if (!v.name || !v.company || !v.why) { clear(out).append(notice("bad", "Add their name, company and why they should care.")); return; }
+      if (v.email && !isEmail(v.email)) { clear(out).append(notice("bad", "That email address doesn't look right. Fix it or leave it empty.")); return; }
       if (!product) { clear(out).append(notice("bad", "Pick a product. Add products in the Cold app, under Knowledge.")); return; }
       const r = readiness(product);
       if (!r.ready) { clear(out).append(notice("bad", `${product.name || "This product"} needs ${r.blocking.map(b => b.label.toLowerCase()).join(" and ")} in the Cold app first.`)); return; }
@@ -174,8 +172,8 @@ export function mountWorkspace(root, { api, store, config, onDisconnect }) {
     setBusy(true); ctl = new AbortController(); clear(out).append(h("p", { class: "hint" }, "Writing…"));
     try {
       const rec = mode === "email"
-        ? await generateEmail({ sample: api.sample, product, form: v, signal: ctl.signal })
-        : await generateTweet({ sample: api.sample, product, form: v, tweetLength, signal: ctl.signal });
+        ? await generateEmail({ sample: backend.sample, product, form: v, signal: ctl.signal })
+        : await generateTweet({ sample: backend.sample, product, form: v, tweetLength, signal: ctl.signal });
       current = rec;
       try { await store.saveEmail(rec); } catch { toast("Written, but couldn't save to the Cold app."); }
       renderResult(rec); announce("Draft ready.");
@@ -201,11 +199,20 @@ export function mountWorkspace(root, { api, store, config, onDisconnect }) {
       return;
     }
     const bind = (key, rows) => { const t = h(rows === 1 ? "input" : "textarea", { type: "text", rows, "aria-label": key }); t.value = rec[key] || ""; t.addEventListener("input", () => { rec[key] = t.value; rec.edited = true; queueSave(rec); }); return t; };
+    // Optional recipient address, kept with the draft; "Open in email" hands the CURRENT text to the user's own email app, unsent.
+    const toIn = h("input", { type: "email", id: "xTo", value: rec.recipient.email || "", placeholder: "name@company.com", autocomplete: "off", "aria-label": "To (optional)" });
+    const handoffMsg = h("p", { class: "hint", id: "xHandoff", role: "status" });
+    toIn.addEventListener("input", () => { rec.recipient = { ...rec.recipient, email: toIn.value.trim() }; handoffMsg.textContent = ""; queueSave(rec); });
+    const openMail = async () => {
+      const r = await openInEmail({ to: toIn.value, subject: rec.subject, body: emailText(rec, S.settings.signature) });
+      handoffMsg.textContent = r.message; announce(r.message);
+      if (!r.ok && (r.reason === "missing" || r.reason === "invalid")) toIn.focus();
+    };
     out.append(h("div", { class: "x-card" }, h("h2", {}, `Email to ${rec.recipient.name}`),
-      h("div", { class: "field" }, h("label", {}, "Subject"), bind("subject", 1)), h("div", { class: "field" }, h("label", {}, "Sentence 1"), bind("what", 3)),
+      h("div", { class: "field" }, h("label", { for: "xTo" }, "To (optional)"), toIn), h("div", { class: "field" }, h("label", {}, "Subject"), bind("subject", 1)), h("div", { class: "field" }, h("label", {}, "Sentence 1"), bind("what", 3)),
       h("div", { class: "field" }, h("label", {}, "Sentence 2"), bind("why", 3)), h("div", { class: "field" }, h("label", {}, "Sentence 3"), bind("ask", 2)),
-      h("div", { class: "actions" }, button("Copy email", { kind: "primary", onclick: async () => toast((await copyText(`Subject: ${rec.subject}\n\n${emailText(rec, S.settings.signature)}`)) ? "Copied" : "Couldn't copy") }), button("Write another", { kind: "ghost", onclick: () => generate() })),
-      h("p", { class: "hint" }, "Saved to your Cold history. Open the Cold app for the full checklist.")));
+      h("div", { class: "actions" }, button("Copy email", { kind: "primary", onclick: async () => toast((await copyText(`Subject: ${rec.subject}\n\n${emailText(rec, S.settings.signature)}`)) ? "Copied" : "Couldn't copy") }), button("Open in email", { onclick: openMail }), button("Write another", { kind: "ghost", onclick: () => generate() })),
+      handoffMsg, h("p", { class: "hint" }, "Saved to your Cold history. Open the Cold app for the full checklist.")));
   }
   async function insertDraft(text) {
     const tab = await activeTab();

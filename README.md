@@ -110,6 +110,15 @@ Cold runs its own server inside the app on `127.0.0.1:47821` (override with `COL
 
 **Settings** (menu: Cold > Settings, or `Cmd/Ctrl+,`) lets you pick the provider and model and save API keys for Ollama, Anthropic, OpenAI, Google Gemini, OpenRouter, Groq, Mistral, Vercel AI Gateway, or any OpenAI-compatible server (LM Studio, vLLM, llama.cpp). Models are listed live from the provider. Keys are encrypted with the OS keychain (Electron `safeStorage`), saved in the app's data folder, and never sent back to the page. The same screen is available to a local `npm start` by setting `COLD_SETTINGS_FILE=/path/to/settings.json` (keys are then stored in that file, mode 0600). Hosted deployments leave it unset and keep using environment variables.
 
+## Open in email
+
+An email draft has an optional **Email address** (in Write, and a **To** field on the draft). **Open in email** hands the current text, including your edits and sign-off, to your own email app as an *unsent* draft: recipient, subject and body filled in, line breaks kept. You review and press Send there. Cold never sends mail, never connects to an email account, never looks an address up, and opening a draft does not change its status.
+
+- **No address, or an invalid one:** nothing opens. Cold says so, puts the cursor in the To field and keeps your draft. **Copy email** always works without an address.
+- **Long messages:** `mailto:` links are unreliable past roughly 2,000 characters (`MAILTO_MAX_LENGTH` in `lib/mailto.js`). Longer drafts are never shortened; Cold tells you and you use Copy.
+- **Desktop app:** a one-function bridge (`desktop/preload.js`) asks the main process to open the link; the main process only accepts a single valid address with `subject`/`body` and refuses everything else, and reports failure back so the page can point to Copy.
+- **Browser, web and extension:** a normal `mailto:` link. A browser cannot tell whether an email app answered, so the message says "if nothing opened, this device may not have an email app set up". Chrome may ask once before handing off to an app. This depends on your local email-app / browser setup and is the one part automated tests cannot prove.
+
 ## Where your data lives (SQLite)
 
 In the desktop app, products and drafts are stored in one SQLite file: `~/Library/Application Support/Cold/cold.db` on macOS (the path is also shown in Settings > Browser extension). It uses WAL mode, so you can copy it for a backup or open it with any SQLite tool, e.g. `sqlite3 cold.db "select recipient_name, status, subject from emails"`. Provider keys are *not* in this file; they are encrypted separately in `settings.json`.
@@ -120,17 +129,25 @@ Outside the desktop app, Cold still uses browser storage unless you set `COLD_DB
 
 ## Browser extension
 
-The extension writes replies, tweets and cold emails from the page you are on, using your products and whichever model you picked in the app. It does not open the SQLite file itself (browsers can't); it talks to the running desktop app, which owns the database and the model keys.
+The extension writes replies, tweets and cold emails from the page you are on. **It works on its own, with the Cold app closed**, and it syncs with the app whenever the app is running.
 
 ```
 npm run build:extension      # bundles extension/dist
 ```
 
-Then in Chrome, Edge or Brave: `chrome://extensions` > turn on Developer mode > **Load unpacked** > choose the `extension/` folder. Click the Cold icon to open the side panel and paste the address and pairing code from **Cold > Settings > Browser extension**.
+Then in Chrome, Edge or Brave: `chrome://extensions` > turn on Developer mode > **Load unpacked** > choose the `extension/` folder. Click the Cold icon to open the side panel.
 
-- **Reply:** open a tweet, click *Read this page*, optionally say what you want to say back, and write. *Put it in the tweet box* types the draft into X's reply box; you press Reply yourself.
-- **Tweet:** describe what you want to say; the product you pick (with its X handle and website from Knowledge) is worked in.
-- **Email:** open a LinkedIn or X profile, click *Read this page*; Cold fills in who they are and suggests reasons they'd care.
-- Drafts are saved to the app, so they appear in its History within a few seconds.
+**On its own:**
+- **Settings > Model for this extension:** pick a provider (Ollama, Anthropic, OpenAI, Gemini, OpenRouter, Groq, Mistral, AI Gateway, or any OpenAI-compatible server), add a key if it needs one, choose a model. The extension calls the provider directly. Keys saved here live in the browser profile's extension storage and are *not* encrypted (the desktop app keeps its keys in the OS keychain).
+- **Products:** add and edit products in the panel (name, what it does, who it's for, problem, website, X handle, links). Proof points and do-not-say rules are edited in the app.
+- **Write:** Reply, Tweet or Email. Drafts and products are saved in the extension.
+- Local Ollama needs no setup: the extension removes the browser-extension `Origin` header from its own requests to the Ollama address you configure, since Ollama otherwise answers 403.
 
-Security: the extension authenticates with the pairing code and can only read and write products and drafts, generate, and look up public profiles and tweets. It cannot read or change provider keys, the provider choice, or the code itself. Creating a new code in Settings disconnects it. It only talks to `127.0.0.1` / `localhost`, and it reads x.com, twitter.com and linkedin.com pages only when you click *Read this page*. Other websites and other browser extensions get nothing from the app's local server without the code.
+**With the app:** in the app, open **Settings > Browser extension**, then paste the address and pairing code into the extension's **Settings > Cold app**.
+- Products and drafts sync both ways, automatically. Anything you did while the app was closed is sent when it starts. If the same item was changed in the app after your version, the app's newer copy wins; the extension never overwrites it.
+- If you choose "the Cold app's model, when it's running" (the default), the app's provider and model are used while it runs, and the extension falls back to its own model the moment the app closes, including mid-use.
+- Deletes happen in the app and are copied to the extension. The extension doesn't delete.
+
+**On a page:** open a tweet and click *Read this page* for a reply (optionally say what you want to say back); *Put it in the tweet box* types the draft into X's reply box and you press Reply yourself. On a LinkedIn or X profile, *Read this page* fills in who they are and suggests reasons they'd care.
+
+**Security:** with the app, the extension authenticates with the pairing code and can only read and write products and drafts, generate, and look up public profiles and tweets. It cannot read or change the app's provider keys, the provider choice, or the code. Creating a new code in the app disconnects the extension. The extension reads x.com, twitter.com and linkedin.com pages only when you click *Read this page*. Other websites and other browser extensions get nothing from the app's local server without the code.

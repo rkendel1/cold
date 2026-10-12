@@ -111,6 +111,118 @@ test("generation: expected two-call API contract, editable draft, saved product 
   assert.deepEqual(t.errors, []); await t.close();
 });
 
+/** The OS email handoff is MOCKED in these tests: they prove what Cold asks for and how it recovers, not that this computer has a working email app. */
+const mockDesktopMail = (page, reply = { ok: true }) => page.evaluate(r => { window.__mail = []; window.coldDesktop = { openMail: async u => { window.__mail.push(u); if (r === "throw") throw new Error("ipc down"); return r; } }; }, reply);
+const mockBrowserMail = page => page.evaluate(() => { window.__mail = []; HTMLAnchorElement.prototype.click = function () { if (/^mailto:/i.test(this.href)) window.__mail.push(this.href); }; });
+const mailed = page => page.evaluate(() => window.__mail);
+const parseMail = url => { const q = url.indexOf("?"), p = new URLSearchParams(url.slice(q + 1)); return { to: decodeURIComponent(url.slice(7, q)), subject: p.get("subject"), body: p.get("body"), keys: [...p.keys()] }; };
+
+test("open in email: uses the CURRENT edited draft, keeps Copy, never marks the draft sent, and the address persists", { skip: SKIP }, async () => {
+  const t = await open({ seed: SEED }); const { page } = t;
+  await fillCompose(page); await page.fill("#rEmail", "sam@trialco.com"); await generate(page);
+  assert.equal(await page.inputValue("#eTo"), "sam@trialco.com");
+  await mockDesktopMail(page);
+  await page.fill("#eSubject", "Edited & subject = ok? ✓"); await page.fill("#eWhat", "Edited first sentence for Åsa — 日本語.");
+  await page.click("#openEmail");
+  await page.waitForFunction(() => window.__mail.length === 1);
+  const m = parseMail((await mailed(page))[0]);
+  assert.equal(m.to, "sam@trialco.com"); assert.equal(m.subject, "Edited & subject = ok? ✓"); assert.deepEqual(m.keys, ["subject", "body"]);
+  assert.ok(m.body.startsWith("Edited first sentence for Åsa — 日本語."), "the body is the edited text, not the model's original");
+  assert.ok(m.body.includes("\r\n\r\n"), "the ask is separated by a blank line, as in Copy");
+  assert.match(await page.textContent("#handoffMsg"), /Review it and press Send there. Cold hasn't sent anything/);
+  // nothing about the draft changed
+  const rec = (await ls(page, "cold.emails"))[0];
+  assert.deepEqual([rec.status, rec.sentAt, rec.repliedAt, rec.recipient.email], ["draft", undefined, undefined, "sam@trialco.com"]);
+  assert.equal(await page.inputValue("#eSubject"), "Edited & subject = ok? ✓");
+  // Copy is independent and still gives the same body
+  await page.click("#copyEmail");
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), m.body.replace(/\r\n/g, "\n"), "Copy and Open in email carry the same text (mailto uses CRLF line breaks)");
+  // the address survives navigating away and reopening from History
+  await go(page, "history"); await page.click(".hrow button:has-text('Open')"); await page.waitForSelector("#eTo");
+  assert.equal(await page.inputValue("#eTo"), "sam@trialco.com");
+  assert.equal(await page.inputValue("#rEmail"), "sam@trialco.com");
+  assert.deepEqual(t.errors, []); await t.close();
+});
+
+test("open in email without an address: nothing opens, the draft is untouched, and typing the address fixes it", { skip: SKIP }, async () => {
+  const t = await open({ seed: SEED }); const { page } = t;
+  await fillCompose(page); await generate(page);                                    // no email address entered
+  await mockDesktopMail(page);
+  const before = await page.inputValue("#eWhat");
+  await page.click("#openEmail");
+  assert.match(await page.textContent("#handoffMsg"), /Add the recipient's email address/);
+  assert.deepEqual(await mailed(page), [], "no blank or misleading email window");
+  assert.equal(await page.evaluate(() => document.activeElement.id), "eTo", "focus goes to the field that fixes it");
+  assert.equal(await page.inputValue("#eWhat"), before);
+  await page.click("#copyEmail");                                                    // Copy needs no address
+  assert.ok((await page.evaluate(() => navigator.clipboard.readText())).startsWith(before));
+  // a typo is caught inline and still opens nothing
+  await page.fill("#eTo", "sam@"); await page.click("#openEmail");
+  assert.match(await page.textContent("#eToMsg"), /doesn't look like a valid email address/);
+  assert.equal(await page.getAttribute("#eTo", "aria-invalid"), "true"); assert.deepEqual(await mailed(page), []);
+  // the corrected address is saved with the draft and now works
+  await page.fill("#eTo", "sam@trialco.com"); await page.click("#openEmail");
+  await page.waitForFunction(() => window.__mail.length === 1);
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.emails"))[0].recipient.email === "sam@trialco.com");
+  assert.equal((await ls(page, "cold.emails"))[0].status, "draft");
+  assert.deepEqual(t.errors, []); await t.close();
+});
+
+test("open in email: a typo in the compose form is caught before generating, and an empty address is fine", { skip: SKIP }, async () => {
+  const t = await open({ seed: SEED }); const { page } = t;
+  await fillCompose(page); await page.fill("#rEmail", "not-an-email"); await page.click("#genBtn");
+  await page.waitForSelector("#errorSummary", { state: "visible" });
+  assert.match(await page.textContent("#errorSummary"), /Email address/);
+  assert.match(await page.textContent("#rEmail ~ .field-error, #rEmail-err"), /valid email address/);
+  await page.fill("#rEmail", ""); await generate(page);                              // optional: no address, still generates
+  assert.equal(await page.inputValue("#eTo"), "");
+  await t.close();
+});
+
+test("open in email: a message that is too long is refused, not truncated, and Copy still has all of it", { skip: SKIP }, async () => {
+  const t = await open({ seed: SEED }); const { page } = t;
+  await fillCompose(page); await page.fill("#rEmail", "sam@trialco.com"); await generate(page);
+  await mockDesktopMail(page);
+  const long = "Long sentence number one. ".repeat(120);
+  await page.fill("#eWhat", long);
+  await page.click("#openEmail");
+  assert.match(await page.textContent("#handoffMsg"), /too long to open reliably in an email app \(\d{4,} characters; the limit is 2000\)\. Nothing was shortened/);
+  assert.deepEqual(await mailed(page), []);
+  await page.click("#copyEmail");
+  assert.ok((await page.evaluate(() => navigator.clipboard.readText())).includes(long.trim()), "Copy has the full, unshortened text");
+  assert.equal(await page.inputValue("#eWhat"), long);
+  await t.close();
+});
+
+test("open in email: when the OS handoff fails, the draft is preserved and the message points to Copy", { skip: SKIP }, async () => {
+  for (const reply of [{ ok: false, message: "no handler" }, "throw"]) {
+    const t = await open({ seed: SEED }); const { page } = t;
+    await fillCompose(page); await page.fill("#rEmail", "sam@trialco.com"); await generate(page);
+    await mockDesktopMail(page, reply);
+    const subject = await page.inputValue("#eSubject");
+    await page.click("#openEmail");
+    await page.waitForFunction(() => /Couldn't open your email app/.test(document.getElementById("handoffMsg").textContent));
+    assert.match(await page.textContent("#handoffMsg"), /Use Copy email/);
+    assert.equal(await page.inputValue("#eSubject"), subject);
+    assert.equal(await page.locator("#copyEmail").isEnabled(), true);
+    assert.equal((await ls(page, "cold.emails"))[0].status, "draft");
+    await t.close();
+  }
+});
+
+test("open in email (plain web, no desktop bridge): asks the browser for a mailto link and is honest that it cannot know the result", { skip: SKIP }, async () => {
+  const t = await open({ seed: SEED }); const { page } = t;
+  await fillCompose(page); await page.fill("#rEmail", "sam@trialco.com"); await generate(page);
+  assert.equal(await page.evaluate(() => typeof window.coldDesktop), "undefined");
+  await mockBrowserMail(page);
+  await page.click("#openEmail");
+  await page.waitForFunction(() => window.__mail.length === 1);
+  const m = parseMail((await mailed(page))[0]); assert.equal(m.to, "sam@trialco.com");
+  assert.match(await page.textContent("#handoffMsg"), /If nothing opened, this device may not have an email app set up: use Copy email/);
+  assert.equal((await ls(page, "cold.emails"))[0].status, "draft");
+  await t.close();
+});
+
 test("sentence boxes always show all their text, including after the window is resized or the view was hidden", { skip: SKIP }, async () => {
   const t = await open({ seed: SEED }); const { page } = t;
   await fillCompose(page); await generate(page);

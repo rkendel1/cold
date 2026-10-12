@@ -2,19 +2,50 @@
   "manifest_version": 3,
   "name": "Cold",
   "version": "0.1.0",
-  "description": "Write replies, tweets and cold emails from the page you're on, using your products and the model you chose in the Cold app.",
+  "description": "Write replies, tweets and cold emails from the page you're on. Works on its own with your own model, and syncs with the Cold desktop app when it's running.",
   "minimum_chrome_version": "114",
-  "action": { "default_title": "Open Cold" },
-  "side_panel": { "default_path": "panel.html" },
-  "background": { "service_worker": "background.js" },
-  "permissions": ["storage", "sidePanel", "scripting", "tabs"],
+  "action": {
+    "default_title": "Open Cold"
+  },
+  "side_panel": {
+    "default_path": "panel.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "sidePanel",
+    "scripting",
+    "tabs",
+    "declarativeNetRequest"
+  ],
   "host_permissions": [
     "http://127.0.0.1/*",
     "http://localhost/*",
     "https://x.com/*",
     "https://twitter.com/*",
-    "https://www.linkedin.com/*"
+    "https://www.linkedin.com/*",
+    "https://cdn.syndication.twimg.com/*",
+    "https://api.anthropic.com/*",
+    "https://api.openai.com/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://openrouter.ai/*",
+    "https://api.groq.com/*",
+    "https://api.mistral.ai/*",
+    "https://ai-gateway.vercel.sh/*"
   ],
-  "content_security_policy": { "extension_pages": "script-src 'self'; object-src 'self'" },
-  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ]
 }

@@ -28,7 +28,7 @@ const trim = v => String(v || "").trim();
 function emailRecord({ id, createdAt, status, form, product, fin, draft, ed, prev }) {
   const rec = {
     id, createdAt, status,
-    recipient: { name: form.name, role: form.role, company: form.company, why: form.why, profileUrl: form.profileUrl || "", profile: form.profile || "" },
+    recipient: { name: form.name, role: form.role, company: form.company, why: form.why, profileUrl: form.profileUrl || "", profile: form.profile || "", email: String(form.email || "").trim() },
     productId: product.id, productName: product.name, goal: form.goal, goalOther: form.goalOther || "", convey: form.convey || "",
     subject: trim(fin.subject), what: trim(fin.what), why: trim(fin.why), ask: trim(fin.ask),
     relevance: prev ? prev.relevance : (draft.relevance || null),

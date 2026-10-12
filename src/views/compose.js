@@ -3,6 +3,7 @@ import { h, $, $$, clear } from "../components/dom.js";
 import { field, textInput, textArea, button, notice, chip, announce, toast } from "../components/ui.js";
 import { confirmDialog } from "../components/dialog.js";
 import { GOALS, FORMAT_CHOICES } from "../domain/constants.js";
+import { isEmail } from "../services/handoff.js";
 import { readiness } from "../domain/knowledge.js";
 import { uid } from "../domain/ids.js";
 import { generateEmail, improveEmail, generateTweet, describeError } from "../services/generation.js";
@@ -24,6 +25,7 @@ export function mountCompose(root, { store, platform, navigate }) {
       hint: "The specific reason you're contacting them: something they wrote, built or said. Cold uses this as the only connection between you and won't invent one.",
       control: textArea({ rows: 3, placeholder: "e.g. They've written about how hard it is to move workloads between cloud and edge." }),
     }),
+    email: field({ id: "rEmail", label: "Email address", required: null, hint: "Optional. Only used for “Open in email”; Cold never looks one up and never sends mail.", control: textInput({ placeholder: "sarah@acme.com", inputmode: "email", type: "email" }) }),
     profileUrl: field({ id: "rProfileUrl", label: "Their LinkedIn or X profile", hint: "Paste a link and Cold reads the public profile to fill in who they are. Nothing is posted or sent to them.", control: textInput({ placeholder: "linkedin.com/in/sarahchen or x.com/sarahchen", inputmode: "url" }) }),
     profilePaste: field({ id: "rProfilePaste", label: "Or paste their profile text", required: null, hint: "Copy their headline, About section or recent posts from the profile. Use this when the link can't be read.", control: textArea({ rows: 4 }) }),
     profile: field({ id: "rProfile", label: "What Cold learned from their profile", required: null, hint: "Cold treats this as facts you supplied and can use it for the reason you're writing. Edit or delete anything that's wrong.", control: textArea({ rows: 4 }) }),
@@ -55,7 +57,7 @@ export function mountCompose(root, { store, platform, navigate }) {
   const assist = createRecipientAssist({ f, S, store, platform, readForm: () => readForm(), persist: () => persistForm(), getProduct: () => reasoningProduct(), pName: f.pName, pWhat: f.pWhat });
   const emailGroup = h("div", { class: "form", id: "emailGroup" },
     assist.profileBlock,
-    h("fieldset", {}, h("legend", {}, "Who are you writing to?"), h("div", { class: "row3" }, f.name, f.company, f.role)),
+    h("fieldset", {}, h("legend", {}, "Who are you writing to?"), h("div", { class: "row3" }, f.name, f.company, f.role), f.email),
     f.why, assist.reasonEl,
     h("fieldset", {}, h("legend", {}, "What do you want from them?"), h("div", { class: "pills" }, goalRadios), f.goalOther),
   );
@@ -101,13 +103,13 @@ export function mountCompose(root, { store, platform, navigate }) {
       ...tw.read(), mode: (checked("format") || "email") === "email" ? "email" : tw.read().mode,
       name: val(f.name), role: val(f.role), company: val(f.company), productId: productSelect.value,
       why: val(f.why), goal: checked("goal") || "advice", goalOther: val(f.goalOther), convey: val(f.convey),
-      profileUrl: val(f.profileUrl), profile: val(f.profile),
+      profileUrl: val(f.profileUrl), profile: val(f.profile), email: val(f.email),
     };
   }
   function fillForm(d) {
     radio("format", d.mode && d.mode !== "email" ? "tweet" : "email"); tw.fill(d);
     f.name.input.value = d.name || ""; f.role.input.value = d.role || ""; f.company.input.value = d.company || "";
-    f.profileUrl.input.value = d.profileUrl || ""; f.profile.input.value = d.profile || ""; assist.reset();
+    f.profileUrl.input.value = d.profileUrl || ""; f.profile.input.value = d.profile || ""; f.email.input.value = d.email || ""; assist.reset();
     f.why.input.value = d.why || ""; f.convey.input.value = d.convey || ""; f.goalOther.input.value = d.goalOther || "";
     radio("goal", GOALS[d.goal] ? d.goal : "advice");
     if (d.productId && [...productSelect.options].some(o => o.value === d.productId)) productSelect.value = d.productId;
@@ -115,7 +117,7 @@ export function mountCompose(root, { store, platform, navigate }) {
   }
   const formFromRecord = e => e.mode && e.mode !== "email"
     ? { mode: e.mode, tweetUrl: e.tweetUrl, tweetContext: e.tweetContext, tweetAuthor: e.tweetAuthor, tweetPoint: e.tweetPoint, tweetUse: e.tweetUse, productId: e.productId, goal: e.goal, convey: e.convey }
-    : ({ mode: e.mode, tweetUrl: e.tweetUrl, tweetContext: e.tweetContext, name: e.recipient.name, role: e.recipient.role, company: e.recipient.company, why: e.recipient.why, profileUrl: e.recipient.profileUrl, profile: e.recipient.profile, productId: e.productId, goal: e.goal, goalOther: e.goalOther, convey: e.convey });
+    : ({ mode: e.mode, tweetUrl: e.tweetUrl, tweetContext: e.tweetContext, name: e.recipient.name, role: e.recipient.role, company: e.recipient.company, why: e.recipient.why, profileUrl: e.recipient.profileUrl, profile: e.recipient.profile, email: e.recipient.email, productId: e.productId, goal: e.goal, goalOther: e.goalOther, convey: e.convey });
   /** Empties everything in Write: inputs, helper results, the shown draft and any error. Saved drafts stay in History. */
   async function clearAll() {
     const edited = S.current && S.current.edited;
@@ -222,6 +224,7 @@ export function mountCompose(root, { store, platform, navigate }) {
       need(f.name, v.name, "Enter their name.", "Name");
       need(f.company, v.company, "Enter their company.", "Company");
       need(f.why, v.why, "Say why this person should care. Cold won't invent a reason.", "Why should this person care");
+      need(f.email, !v.email || isEmail(v.email), "Enter a valid email address, or leave it empty.", "Email address");
       if (v.goal === "other") need(f.goalOther, v.goalOther, "Describe what you want from them.", "What you want");
     } else {
       tw.validate(v, need);

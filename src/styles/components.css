@@ -6,7 +6,7 @@
 .hint { color: var(--muted); font-size: var(--fs-sm); }
 .field-error { color: var(--bad); font-size: var(--fs-sm); font-weight: 600; }
 .field-error::before { content: "✕ "; }
-input[type=text], input[type=url], input[type=password], input[type=search], select, textarea { width: 100%; min-height: 44px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 9px 11px; }
+input[type=text], input[type=url], input[type=email], input[type=password], input[type=search], select, textarea { width: 100%; min-height: 44px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 9px 11px; }
 textarea { resize: vertical; min-height: 72px; line-height: 1.45; }
 input[aria-invalid="true"], textarea[aria-invalid="true"], select[aria-invalid="true"] { border: 2px solid var(--bad); }
 fieldset { border: 0; padding: 0; margin: 0; min-width: 0; display: grid; gap: 10px; }
@@ -149,3 +149,10 @@ details.panel .in { padding: 0 16px 16px; display: grid; gap: 10px; font-size: v
 .ext-panel { display: grid; gap: 14px; margin-top: 28px; padding-top: 22px; border-top: 1px solid var(--line); }
 .ext-panel h2 { margin: 0; }
 .ext-panel input[readonly] { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* Open in email */
+.handoff-msg { margin: 0; }
+.handoff-msg:empty { display: none; }
+.to-field { display: grid; gap: 6px; }
+.to-field .field-error:empty { display: none; }
+.bad-text { color: var(--bad); }
