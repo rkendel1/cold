@@ -1,5 +1,5 @@
 // localStorage access with validation. Reads never throw; writes report failure instead of swallowing it.
-import { STORAGE_KEYS, STATUSES } from "../domain/constants.js";
+import { STORAGE_KEYS } from "../domain/constants.js";
 import { normalizeProduct } from "../domain/knowledge.js";
 
 /** Returns { value, warning } where warning is set when stored data existed but could not be used. */
@@ -29,13 +29,13 @@ export function normalizeEmail(raw) {
   const rec = raw.recipient && typeof raw.recipient === "object" ? raw.recipient : {};
   return {
     ...raw, id,
-    status: STATUSES.includes(raw.status) ? raw.status : "draft",
+    status: raw.status == null || raw.status === "" ? "draft" : raw.status,   // only a MISSING status gets the legacy default; an unfamiliar one is kept as is
     createdAt: Number.isFinite(raw.createdAt) ? raw.createdAt : 0,
-    recipient: { name: str(rec.name), role: str(rec.role), company: str(rec.company), why: str(rec.why), profileUrl: str(rec.profileUrl), profile: str(rec.profile), email: str(rec.email) },
+    recipient: { ...rec, name: str(rec.name), role: str(rec.role), company: str(rec.company), why: str(rec.why), profileUrl: str(rec.profileUrl), profile: str(rec.profile), email: str(rec.email) },
     productName: str(raw.productName), goal: str(raw.goal) || "advice",
     subject: str(raw.subject), what: str(raw.what), why: str(raw.why), ask: str(raw.ask),
     note: str(raw.note),
-    sentCopy: raw.sentCopy && typeof raw.sentCopy === "object" && !Array.isArray(raw.sentCopy) ? { subject: str(raw.sentCopy.subject), text: str(raw.sentCopy.text), at: Number.isFinite(raw.sentCopy.at) ? raw.sentCopy.at : 0 } : undefined,
+    sentCopy: raw.sentCopy && typeof raw.sentCopy === "object" && !Array.isArray(raw.sentCopy) ? { ...raw.sentCopy, subject: str(raw.sentCopy.subject), text: str(raw.sentCopy.text), at: Number.isFinite(raw.sentCopy.at) ? raw.sentCopy.at : 0 } : undefined,
     checks: Array.isArray(raw.checks) ? raw.checks.filter(c => c && typeof c === "object") : [],
     claims: Array.isArray(raw.claims) ? raw.claims.filter(c => c && typeof c === "object") : [],
     retrieved: Array.isArray(raw.retrieved) ? raw.retrieved.filter(c => c && typeof c === "object") : [],

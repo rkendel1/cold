@@ -23,12 +23,15 @@ export const GOALS = {
 export const PROOF_TYPES = ["Customer", "Revenue / growth", "Launch", "Adoption", "Technical", "Institution", "Background"];
 export const PROOF_STRENGTHS = ["High", "Medium", "Low"];
 export const STATUSES = ["draft", "sent", "replied"];
+// What `statusOf` reports for a status this client doesn't recognise (legacy or from a newer Cold). The stored value is never rewritten.
+export const UNKNOWN_STATUS = "unknown";
 
 // What each status means in the UI. "sent" and "replied" are always the user's own record.
 export const STATUS_COPY = {
   draft:   { label: "Draft", detail: "Not marked as sent" },
   sent:    { label: "Marked sent", detail: "You marked this as sent" },
   replied: { label: "Reply recorded", detail: "You recorded a reply" },
+  unknown: { label: "Unknown status", detail: "Saved with a status this version of Cold doesn't recognise. It is kept as it is until you choose one." },
 };
 
 // What the Write screen offers. Replies and original tweets are one "tweet" choice with a sub-choice; saved records keep

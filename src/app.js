@@ -51,8 +51,10 @@ export async function startApp(rootEl = document.getElementById("app"), { store 
     while (notices.firstChild) notices.removeChild(notices.firstChild);
     S.warnings.forEach(w => notices.append(notice("warn", h("strong", {}, "Some saved data couldn't be read"), h("p", {}, w))));
     if (S.notice) notices.append(notice("info", S.notice));
+    const held = platform.hub ? platform.hub.replica.conflicts : [];
+    if (held.length) notices.append(notice("warn", h("strong", {}, `${held.length} edit${held.length === 1 ? "" : "s"} made here couldn't be merged with a newer change in the Cold desktop app`), h("p", {}, "The app's newer version was kept and your edit was set aside, not lost. Review it in Settings.")));
   };
-  store.subscribe(t => { if (t === "ready" || t === "notice") renderNotices(); if (t === "ready" || t === "server" || t === "surface") paintFooter(); });
+  store.subscribe(t => { if (t === "ready" || t === "notice" || t === "emails" || t === "products") renderNotices(); if (t === "ready" || t === "server" || t === "surface") paintFooter(); });
 
   const boot = await platform.detect();
   store.start({ db: boot.db });

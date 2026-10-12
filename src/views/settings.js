@@ -143,6 +143,21 @@ export function mountSettings(root, { store, platform }) {
     const hub = platform.hub;
     const box = h("div", { class: "form" });
     const line = h("p", { class: "hint", role: "status", id: "syncLine" });
+    let shown = 0;
+    const KIND = { emails: "draft", products: "product" };
+    /** Edits that couldn't be merged with a newer change at the app: the app's version was kept, this one is set aside until the user decides. */
+    function conflictsBlock() {
+      const list = hub.replica.conflicts; shown = list.length;
+      if (!list.length) return null;
+      return h("div", { class: "stack", id: "syncConflicts" }, h("strong", {}, "Edits set aside"),
+        h("p", { class: "hint" }, "These were changed here and in the Cold desktop app at the same time. The app's version was kept. Nothing was deleted: restore yours to replace the app's version, or dismiss it."),
+        list.map(c => {
+          const label = (c.mine && (c.mine.recipient?.name || c.mine.subject || c.mine.name)) || c.id;
+          return h("div", { class: "row" }, h("span", {}, `${KIND[c.kind] || c.kind} “${label}” (${c.fields.join(", ")})`),
+            c.mine ? button("Use my version", { onclick: async () => { await hub.replica.resolveConflict(c.kind, c.id, { restore: true }); toast("Restored. It will sync again."); paint(); } }) : null,
+            button("Dismiss", { kind: "ghost", onclick: async () => { await hub.replica.resolveConflict(c.kind, c.id); paint(); } }));
+        }));
+    }
     function paint() {
       clear(box);
       const s = hub.link.state;
@@ -169,12 +184,12 @@ export function mountSettings(root, { store, platform }) {
         s.online ? notice("good", h("strong", {}, "Connected."), h("p", {}, `The Cold desktop app is running (${s.config.providerLabel || s.config.provider} · ${s.config.model}). Changes sync automatically.`))
           : s.rejected ? notice("bad", h("strong", {}, "The desktop app rejected the pairing code."), h("p", {}, "Disconnect, then connect again with the current code from the app's Settings."))
           : notice("warn", h("strong", {}, "The Cold desktop app isn't running."), h("p", {}, "Cold keeps working from the copy saved here. Drafts and edits sync the next time the app starts.")),
-        preference(), line,
+        preference(), line, conflictsBlock(),
         h("div", { class: "actions" },
           button("Sync now", { id: "syncNow", onclick: async () => { try { await hub.replica.sync(); toast("Synced"); } catch { toast("The desktop app isn't reachable right now. Your changes are kept and will sync later."); } paint(); } }),
           button("Disconnect", { kind: "ghost danger", id: "hubDisconnect", onclick: async () => { await hub.disconnect(); toast("Disconnected"); } }))]);
     }
-    paint(); hub.link.subscribe(paint); store.subscribe(t => { if (t === "emails" || t === "products") { /* pending count changed */ const p = hub.replica.pending; if (line.isConnected) line.textContent = line.textContent.replace(/^(\d+ changes? waiting to sync\. |Nothing waiting to sync\. )/, p ? `${p} change${p === 1 ? "" : "s"} waiting to sync. ` : "Nothing waiting to sync. "); } });
+    paint(); hub.link.subscribe(paint); store.subscribe(t => { if (t === "emails" || t === "products") { if (box.isConnected && hub.replica.conflicts.length !== shown && hub.link.state.conn) paint(); /* pending count changed */ const p = hub.replica.pending; if (line.isConnected) line.textContent = line.textContent.replace(/^(\d+ changes? waiting to sync\. |Nothing waiting to sync\. )/, p ? `${p} change${p === 1 ? "" : "s"} waiting to sync. ` : "Nothing waiting to sync. "); } });
     return box;
   }
 

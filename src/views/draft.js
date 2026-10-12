@@ -7,8 +7,8 @@ import { openInEmail, isEmail } from "../services/handoff.js";
 import { evaluate, checklistVerdict, words } from "../domain/rules.js";
 import { checkGrounding } from "../domain/grounding.js";
 import { emailText } from "../domain/email.js";
-import { applyStatus, editedSinceSent } from "../domain/outreach.js";
-import { GOALS, STATUSES, STATUS_COPY } from "../domain/constants.js";
+import { applyStatus, editedSinceSent, statusOf } from "../domain/outreach.js";
+import { GOALS, STATUSES, STATUS_COPY, UNKNOWN_STATUS } from "../domain/constants.js";
 
 const STEPS = ["Reading your saved product facts", "Drafting three sentences", "Editor pass against the 20 rules", "Running local checks"];
 
@@ -25,7 +25,7 @@ export function createDraftPane({ store, handlers, platform = null }) {
     clearTimeout(saveT);
     if (!rec.mode || rec.mode === "email") rec.score = evaluate(rec, productFor(rec)).score;
     try { await store.saveEmail(rec); return true; }
-    catch (e) { toast(e && e.code === "quota_exceeded" ? "Couldn't save: browser storage is full. Copy your draft now, then delete old drafts in History." : "Couldn't save your changes."); return false; }
+    catch (e) { toast(e && e.code === "conflict" ? "Not saved: this draft was changed somewhere else, so the newer version was kept. Your edits are still on screen: copy them, then reopen the draft from History." : e && e.code === "quota_exceeded" ? "Couldn't save: browser storage is full. Copy your draft now, then delete old drafts in History." : "Couldn't save your changes."); return false; }
   }
   const queueSave = (rec, statusEl) => {
     statusEl.textContent = "Saving…";
@@ -35,14 +35,14 @@ export function createDraftPane({ store, handlers, platform = null }) {
 
   /** The user's own record of what happened. Only ever called from an explicit click or menu choice. */
   async function setStatus(rec, st) {
-    if (rec.status === st) return;
+    if (!STATUSES.includes(st) || rec.status === st) return;   // an unrecognised status is only ever replaced by a deliberate choice of a supported one
     Object.assign(rec, applyStatus(rec, st, { signature: S.settings.signature }));
     if (await persist(rec)) toast(`Status set to “${STATUS_COPY[st].label}”`);
     renderedKey = null; render();
   }
 
   const statusSelect = rec => {
-    const sel = h("select", { id: "curStatus", "aria-label": "Status (you set this)" }, STATUSES.map(s => h("option", { value: s, selected: rec.status === s }, STATUS_COPY[s].label)));
+    const sel = h("select", { id: "curStatus", "aria-label": "Status (you set this)" }, (statusOf(rec) === UNKNOWN_STATUS ? [UNKNOWN_STATUS, ...STATUSES] : STATUSES).map(s => h("option", { value: s, selected: statusOf(rec) === s }, STATUS_COPY[s].label)));
     sel.addEventListener("change", () => setStatus(rec, sel.value));
     return sel;
   };

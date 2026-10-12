@@ -301,7 +301,7 @@ test("history: Open in email from a row never changes status; a missing address 
   await go(page, "history");
   assert.equal(await page.locator(".hrow").count(), 4);                                                                       // every record loads; none is dropped
   const counts = Object.fromEntries(await page.$$eval(".hfilters .btn", b => b.map(x => x.textContent.replace(/\s+/g, " ").trim().split(/ (?=\d+$)/))));
-  assert.deepEqual(counts, { All: "4", Draft: "3", "Marked sent": "1", "Reply recorded": "0" });
+  assert.deepEqual(counts, { All: "4", Draft: "2", "Marked sent": "1", "Reply recorded": "0", "Unknown status": "1" });   // "archived" is shown as unknown, not as a draft
   const before = await ls(page, "cold.emails");
   await mockDesktopMail(page);
   // with an address: hands off, changes nothing, writes nothing
@@ -319,8 +319,8 @@ test("history: Open in email from a row never changes status; a missing address 
   await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.emails")).find(e => e.id === "nomail").recipient.email === "bo@boco.example");
   const after = await ls(page, "cold.emails");
   const strip = e => ({ ...e, recipient: { ...e.recipient, email: undefined }, updatedAt: undefined });
-  // (saving any record re-writes the list with normalised defaults, so an unknown or missing status reads back as "draft")
-  const known = x => (["draft", "sent", "replied"].includes(x) ? x : "draft");
+  // (a MISSING status reads back as the legacy default "draft"; an unfamiliar one such as "archived" is kept as it was)
+  const known = x => (x == null || x === "" ? "draft" : x);
   const byId = (x, y) => x[0].localeCompare(y[0]);
   assert.deepEqual(after.map(e => [e.id, e.status, e.sentAt ?? null, e.repliedAt ?? null]).sort(byId), before.map(e => [e.id, known(e.status), e.sentAt ?? null, e.repliedAt ?? null]).sort(byId), "no status or timestamp changed");
   assert.equal(after.find(e => e.id === "withmail").updatedAt, 111, "a handoff does not even re-save the record");
@@ -809,4 +809,27 @@ test("desktop UI: the hub's Settings shows the model form, the pairing code, and
     await page.waitForFunction(o => document.querySelector("#extCode").value !== o, old);
     assert.notEqual(db.extensionToken(), old);
   } finally { await t.close(); hub.stop(); db.close(); }
+});
+
+test("history: an unfamiliar status is shown as Unknown, offers no Draft-only action, survives a note, and changes only by a deliberate choice", { skip: SKIP }, async () => {
+  const seed = { "cold.products": [P1], "cold.emails": [EMAIL({ id: "odd", status: "scheduled", sentAt: 77, futureField: { keep: true }, recipient: { name: "Ola Odd", company: "OddCo", phone: "555" } })] };
+  const t = await open({ seed }); const { page } = t;
+  await go(page, "history");
+  const r = row(page, "Ola Odd");
+  assert.match(await r.locator(".ctl .chip").first().textContent(), /Unknown status/);
+  assert.equal(await r.locator(".hMarkSent").count() + await r.locator(".hRecordReply").count(), 0, "no Draft-only or sent-only action is offered");
+  assert.match(await page.locator(".hfilters .btn", { hasText: "Unknown status" }).textContent(), /1/);
+  // an unrelated edit keeps the stored status and the fields this version doesn't know
+  await r.locator(".hToggle").click(); await r.locator(".hNote").fill("called, no answer");
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.emails"))[0].note === "called, no answer");
+  const kept = (await ls(page, "cold.emails"))[0];
+  assert.deepEqual([kept.status, kept.sentAt, kept.futureField, kept.recipient.phone], ["scheduled", 77, { keep: true }, "555"]);
+  // choosing the "Unknown status" entry again does nothing; choosing a supported status is the explicit correction
+  await r.locator("select.hStatus").selectOption("unknown");
+  assert.equal((await ls(page, "cold.emails"))[0].status, "scheduled");
+  await r.locator("select.hStatus").selectOption("replied");
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.emails"))[0].status === "replied");
+  await page.evaluate(() => document.activeElement.blur());   // History waits to redraw while a note box has focus
+  await page.waitForFunction(() => !document.querySelector("select.hStatus option[value=unknown]"));   // once corrected, Unknown is no longer offered
+  await t.close();
 });

@@ -8,13 +8,14 @@ import { openInEmail, isEmail } from "../services/handoff.js";
 import { evaluate } from "../domain/rules.js";
 import { emailText } from "../domain/email.js";
 import { applyStatus, statusOf, filterOutreach, countByStatus, preview, editedSinceSent } from "../domain/outreach.js";
-import { GOALS, STATUSES, STATUS_COPY, FORMATS } from "../domain/constants.js";
+import { GOALS, STATUSES, STATUS_COPY, FORMATS, UNKNOWN_STATUS } from "../domain/constants.js";
 
 export function mountHistory(root, { store, openRecord }) {
   const S = store.state;
   let filter = "all", query = "";
   const openIds = new Set();            // rows whose details are showing (kept across re-renders)
   const messages = new Map();           // per-row status line, e.g. the result of "Open in email"
+  const held = new Map();               // id -> the user's own text from a save that was refused because the record changed elsewhere
   let deferred = false;
   const filters = h("div", { class: "hfilters", role: "group", "aria-label": "Filter by status" });
   const search = h("input", { type: "search", id: "histSearch", "aria-label": "Search outreach", placeholder: "Search name, company, email, subject, notes" });
@@ -37,14 +38,25 @@ export function mountHistory(root, { store, openRecord }) {
     const next = typeof change === "function" ? change(cur) : { ...cur, ...change };
     try {
       await store.saveEmail(next);
+      held.delete(id); messages.delete(id);
       // Keep the draft open in Write in step, but only with what THIS change altered: it may hold text (a note, an edit) that is still
       // waiting to be saved, and a stale copy from here must never overwrite it.
       if (S.current?.id === id) for (const k of Object.keys(next)) if (JSON.stringify(next[k]) !== JSON.stringify(cur[k])) S.current[k] = next[k];
       return true;
-    } catch { toast(failMsg || "Couldn't save that change."); render(); return false; }
+    } catch (err) {
+      if (err && err.code === "conflict") {
+        // The stored (newer) record stays; the user's text stays in the box so nothing they typed is lost. Saving it again is their decision.
+        const mine = err.mine || {};
+        held.set(id, { note: err.conflicts.includes("note") ? mine.note : undefined, email: err.conflicts.includes("recipient.email") ? (mine.recipient || {}).email : undefined });
+        messages.set(id, "Not saved: this was changed somewhere else, so the newer version was kept. Your text is still in the box; change it again to replace the newer version.");
+        openIds.add(id); toast("Not saved: changed somewhere else. Your text is still here."); render(); return false;
+      }
+      toast(failMsg || "Couldn't save that change."); render(); return false;
+    }
   }
   /** The user's explicit record of what happened: the only way a status changes. */
   async function setStatus(e, st) {
+    if (!STATUSES.includes(st)) return;   // "Unknown status" is not something the user can set; only a supported status is a deliberate correction
     if (await save(e.id, cur => applyStatus(cur, st, { signature: S.settings.signature }), "Couldn't update the status.")) { toast(`Status set to “${STATUS_COPY[st].label}”`); announce(`Status set to ${STATUS_COPY[st].label}`); }
   }
 
@@ -62,7 +74,7 @@ export function mountHistory(root, { store, openRecord }) {
 
   /** Adds a hook class (used by tests and styles) without losing the button's own classes. */
   const tag = (el, cls) => { el.classList.add(cls); return el; };
-  const statusChip = st => chip(st === "draft" ? "neutral" : st === "sent" ? "accent" : "good", STATUS_COPY[st].label, { glyph: st !== "draft" });
+  const statusChip = st => chip(st === "draft" || st === UNKNOWN_STATUS ? "neutral" : st === "sent" ? "accent" : "good", STATUS_COPY[st].label, { glyph: st !== "draft" && st !== UNKNOWN_STATUS });
 
   function row(e) {
     const st = statusOf(e), isSocial = e.mode && e.mode !== "email";
@@ -71,17 +83,17 @@ export function mountHistory(root, { store, openRecord }) {
     const score = !isSocial ? (Number.isFinite(e.score) ? e.score : evaluate(e, store.productById(e.productId)).score) : null;
     const dates = [`Created ${fmtDate(e.createdAt)}`, e.updatedAt && fmtDate(e.updatedAt) !== fmtDate(e.createdAt) ? `updated ${fmtDate(e.updatedAt)}` : "",
       e.sentAt && st !== "draft" ? `marked sent ${fmtDate(e.sentAt)}` : "", e.repliedAt && st === "replied" ? `reply recorded ${fmtDate(e.repliedAt)}` : ""].filter(Boolean).join(" · ");
-    const sel = h("select", { "aria-label": `Status for ${e.recipient?.name || "draft"} (you set this)`, class: "hStatus" }, STATUSES.map(s => h("option", { value: s, selected: st === s }, STATUS_COPY[s].label)));
+    const sel = h("select", { "aria-label": `Status for ${e.recipient?.name || "draft"} (you set this)`, class: "hStatus" }, (st === UNKNOWN_STATUS ? [UNKNOWN_STATUS, ...STATUSES] : STATUSES).map(s => h("option", { value: s, selected: st === s, title: s === UNKNOWN_STATUS ? STATUS_COPY[s].detail : undefined }, STATUS_COPY[s].label)));
     sel.addEventListener("change", () => setStatus(e, sel.value));
 
     /* details: address, notes, and the text as it was when marked sent */
-    const toIn = h("input", { type: "email", class: "hTo", "aria-label": `Email address for ${e.recipient?.name || "this draft"}`, value: e.recipient?.email || "", placeholder: "name@company.com", autocomplete: "off" });
+    const toIn = h("input", { type: "email", class: "hTo", "aria-label": `Email address for ${e.recipient?.name || "this draft"}`, value: (held.get(e.id)?.email ?? e.recipient?.email) || "", placeholder: "name@company.com", autocomplete: "off" });
     const toMsg = h("p", { class: "field-error" });
     toIn.addEventListener("input", () => {
       const v = toIn.value.trim(), bad = !!v && !isEmail(v); toMsg.textContent = bad ? "That doesn't look like a valid email address." : ""; toIn.toggleAttribute("aria-invalid", bad);
       saveLater(e.id, cur => ({ ...cur, recipient: { ...cur.recipient, email: v } }));
     });
-    const noteIn = h("textarea", { class: "hNote", rows: 3, "aria-label": `Notes for ${e.recipient?.name || "this draft"}`, placeholder: "Why they fit, what you actually sent, what the reply said, what to follow up on…" }); noteIn.value = e.note || "";
+    const noteIn = h("textarea", { class: "hNote", rows: 3, "aria-label": `Notes for ${e.recipient?.name || "this draft"}`, placeholder: "Why they fit, what you actually sent, what the reply said, what to follow up on…" }); noteIn.value = (held.get(e.id)?.note ?? e.note) || "";
     noteIn.addEventListener("input", () => saveLater(e.id, { note: noteIn.value }));
     for (const el of [toIn, noteIn]) { el.dataset.keep = "1"; el.addEventListener("blur", () => flush(e.id)); }
     const edited = editedSinceSent(e, S.settings.signature);
@@ -120,7 +132,7 @@ export function mountHistory(root, { store, openRecord }) {
     paintLede();
     const counts = countByStatus(all);
     clear(filters);
-    ["all", ...STATUSES].forEach(s => filters.append(h("button", { type: "button", class: "btn", "aria-pressed": String(filter === s), onclick: () => { filter = s; render(); } }, s === "all" ? "All" : STATUS_COPY[s].label, h("span", { class: "mono" }, ` ${counts[s]}`))));
+    ["all", ...STATUSES, ...(counts[UNKNOWN_STATUS] ? [UNKNOWN_STATUS] : [])].forEach(s => filters.append(h("button", { type: "button", class: "btn", "aria-pressed": String(filter === s), onclick: () => { filter = s; render(); } }, s === "all" ? "All" : STATUS_COPY[s].label, h("span", { class: "mono" }, ` ${counts[s]}`))));
     const rows = filterOutreach(all, { status: filter, query });
     clear(listHost);
     if (!all.length) { listHost.append(h("li", { class: "empty" }, h("h2", {}, "No drafts yet"), h("p", {}, "Every draft you generate is saved here automatically as a draft. You decide when it counts as sent."), button("Write one", { kind: "primary", id: "hGo", onclick: () => openRecord(null) }))); return; }

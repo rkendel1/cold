@@ -13,7 +13,7 @@ export function createLink({ replica }) {
 
   function appData(conn) {
     const f = hubFetch(conn);
-    const call = async (path, init) => { const r = await f(path, { ...init, headers: { "content-type": "application/json", ...(init && init.headers) } }); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); };
+    const call = async (path, init) => { const r = await f(path, { ...init, headers: { "content-type": "application/json", ...(init && init.headers) } }); if (!r.ok) throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status, body: await r.json().catch(() => null) }); return r.json(); };
     return { get: p => call(p), put: (p, b) => call(p, { method: "PUT", body: JSON.stringify(b) }), del: p => call(p, { method: "DELETE" }) };
   }
 
