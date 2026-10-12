@@ -76,3 +76,28 @@ test('changes made by another client (the extension) appear without a restart', 
     assert.ok(emailsEvents > 0);
   } finally { await t.close(); }
 });
+
+test('outreach status, notes and the sent copy persist in SQLite and read back identically in a new client', async () => {
+  const { createRemoteDb } = await load('services/sqliteDb.js');
+  const { createStore } = await load('state/store.js');
+  const { applyStatus } = await load('domain/outreach.js');
+  const t = await boot();
+  try {
+    const db = createRemoteDb({ fetchImpl: t.fetchImpl, readLocal: () => null, poll: false }); await db.load();
+    const store = createStore({ storage: {} }); store.start({ db });
+    const draft = { id: 'e1', createdAt: 10, status: 'draft', recipient: { name: 'Sam', company: 'TrialCo', email: 'sam@trialco.com' }, subject: 'hi', what: 'We help.', why: 'You wrote it.', ask: 'Could I ask?' };
+    await store.saveEmail(draft);
+    assert.deepEqual([t.db.snapshot().emails[0].status, t.db.snapshot().emails[0].sentAt], ['draft', undefined]);
+    await store.saveEmail({ ...store.state.emails[0], note: 'Good fit' });                       // a note alone changes no status
+    assert.equal(t.db.snapshot().emails[0].status, 'draft');
+    await store.saveEmail(applyStatus(store.state.emails[0], 'sent', { now: 500 }));
+    await store.saveEmail(applyStatus(store.state.emails[0], 'replied', { now: 900 }));
+    const row = new (require('node:sqlite').DatabaseSync)(t.db.file, { readOnly: true });
+    assert.deepEqual({ ...row.prepare("SELECT status, recipient_name FROM emails WHERE id='e1'").get() }, { status: 'replied', recipient_name: 'Sam' });   // the real column other tools query
+    row.close();
+    const db2 = createRemoteDb({ fetchImpl: t.fetchImpl, readLocal: () => null, poll: false }); await db2.load();
+    const s2 = createStore({ storage: {} }); s2.start({ db: db2 });
+    const e = s2.state.emails[0];
+    assert.deepEqual([e.status, e.sentAt, e.repliedAt, e.note, e.sentCopy.text.startsWith('We help.'), e.recipient.email], ['replied', 500, 900, 'Good fit', true, 'sam@trialco.com']);
+  } finally { await t.close(); }
+});

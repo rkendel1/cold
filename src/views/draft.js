@@ -7,6 +7,7 @@ import { openInEmail, isEmail } from "../services/handoff.js";
 import { evaluate, checklistVerdict, words } from "../domain/rules.js";
 import { checkGrounding } from "../domain/grounding.js";
 import { emailText } from "../domain/email.js";
+import { applyStatus, editedSinceSent } from "../domain/outreach.js";
 import { GOALS, STATUSES, STATUS_COPY } from "../domain/constants.js";
 
 const STEPS = ["Reading your saved product facts", "Drafting three sentences", "Editor pass against the 20 rules", "Running local checks"];
@@ -32,11 +33,10 @@ export function createDraftPane({ store, handlers }) {
     saveT = setTimeout(async () => { statusEl.textContent = (await persist(rec)) ? `Edits saved ${store.where()}` : "Not saved"; }, 700);
   };
 
+  /** The user's own record of what happened. Only ever called from an explicit click or menu choice. */
   async function setStatus(rec, st) {
     if (rec.status === st) return;
-    rec.status = st;
-    if (st === "sent" && !rec.sentAt) rec.sentAt = Date.now();
-    if (st === "replied" && !rec.repliedAt) rec.repliedAt = Date.now();
+    Object.assign(rec, applyStatus(rec, st, { signature: S.settings.signature }));
     if (await persist(rec)) toast(`Status set to “${STATUS_COPY[st].label}”`);
     renderedKey = null; render();
   }
@@ -133,6 +133,11 @@ export function createDraftPane({ store, handlers }) {
     const toIn = h("input", { type: "email", id: "eTo", value: rec.recipient.email || "", placeholder: "name@company.com", autocomplete: "off", inputmode: "email", "aria-describedby": "eToMsg" });
     const toMsg = h("p", { class: "field-error", id: "eToMsg" });
     const handoffMsg = h("p", { class: "hint handoff-msg", id: "handoffMsg", role: "status" });
+    // Optional private note (why they fit, what you sent, what the reply said). Saved with the record.
+    const noteIn = h("textarea", { id: "eNote", rows: 2, placeholder: "Why they fit, what you actually sent, what the reply said, what to follow up on…", "aria-describedby": "eNoteHint" }); noteIn.value = rec.note || "";
+    noteIn.addEventListener("input", () => { rec.note = noteIn.value; queueSave(rec, saveStatus); });
+    // Editing after "sent" never rewrites what was sent: the text at the moment of marking it sent is kept alongside.
+    const sentNote = h("p", { class: "hint", id: "sentNote", role: "status" });
     const checkTo = () => {
       const v = toIn.value.trim(), bad = !!v && !isEmail(v);
       toMsg.textContent = bad ? "That doesn't look like a valid email address." : ""; if (bad) toIn.setAttribute("aria-invalid", "true"); else toIn.removeAttribute("aria-invalid");
@@ -155,6 +160,7 @@ export function createDraftPane({ store, handlers }) {
       const ev = evaluate(rec, product);
       clear(metrics).append(h("span", {}, h("span", { class: ev.wc > 80 ? "over" : "" }, String(ev.wc)), ` words${ev.wc > 80 ? " (over 80)" : ""}`), h("span", {}, `~${Math.max(ev.secs, 1)} sec read`), h("span", {}, h("span", { class: ev.sentences !== 3 ? "over" : "" }, String(ev.sentences)), " sentences"), h("span", {}, `subject ${words(rec.subject)} words`));
       clear(review).append(groundingSection(rec, product));
+      sentNote.textContent = rec.sentCopy && rec.status !== "draft" && editedSinceSent(rec, S.settings.signature) ? `You edited this after marking it sent on ${fmtDate(rec.sentCopy.at)}. Cold keeps the text as it was when you marked it sent (see “Text when you marked it sent” below). Editing doesn't change your sent or reply record.` : "";
       clear(checklist).append(checklistSection(rec, product));
       renderSignoff();
     };
@@ -199,12 +205,14 @@ export function createDraftPane({ store, handlers }) {
           if (rec.edited && !(await confirmDialog({ title: "Replace your edited draft?", body: "Regenerating writes a new draft from the same inputs. Your edits to this one stay in History.", confirmLabel: "Regenerate" }))) return;
           handlers.regenerate(rec);
         } }), undoBtn, saveStatus),
-      handoffMsg,
-      h("p", { class: "next-step" }, h("strong", {}, "Next: "), "open it in your email app (or copy it) and send it yourself. Cold can't send, and can't see your inbox. Come back and mark it as sent, and record a reply in History if you get one."));
+      handoffMsg, sentNote,
+      h("div", { class: "field" }, h("label", { for: "eNote" }, "Notes ", h("span", { class: "opt" }, "Optional, only for you")), noteIn),
+      h("p", { class: "next-step" }, h("strong", {}, "Next: "), "open it in your email app (or copy it) and send it yourself. Cold can't send, and can't see your inbox. Come back and press “Mark as sent”, then record a reply in History when one arrives."));
     const wrap = h("div", { class: "stack-lg" }, card,
       h("section", { "aria-label": "Review before sending", class: "stack" }, h("h2", {}, "Check before you send"), review),
       checklist,
       panel("improve", "Ask for a change", [h("p", { class: "hint" }, "Describe what to change. Cold re-runs the editor on the text above, including your edits, and you can undo it."), h("div", { class: "actions" }, improveIn, improveBtn)]),
+      rec.sentCopy ? panel("sentcopy", "Text when you marked it sent", [h("p", { class: "hint" }, `Saved ${fmtDate(rec.sentCopy.at)} when you marked this sent. It is Cold's copy of the text at that moment, not proof of what your email app actually sent.`), h("p", {}, h("strong", {}, "Subject: "), rec.sentCopy.subject), h("p", { class: "preline" }, rec.sentCopy.text)]) : null,
       rec.relevance ? panel("why", "Why them", [h("p", {}, rec.relevance.signal || ""), h("p", { class: "hint" }, `Relevance ladder rank ${rec.relevance.rank} of 8 (1 = direct shared problem), based on your note: “${rec.recipient.why}”. The ranking is the model's classification.`)], chip(rec.relevance.strength === "strong" ? "good" : rec.relevance.strength === "medium" ? "warn" : "bad", rec.relevance.category || "")) : null,
       rec.draft || (rec.draftFailures || []).length ? panel("editor", "Editor notes", [
         (rec.draftFailures || []).length ? h("ul", {}, rec.draftFailures.map(x => h("li", {}, x))) : h("p", {}, "The model reports that its first draft passed every rule."),

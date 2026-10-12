@@ -119,6 +119,19 @@ An email draft has an optional **Email address** (in Write, and a **To** field o
 - **Desktop app:** a one-function bridge (`desktop/preload.js`) asks the main process to open the link; the main process only accepts a single valid address with `subject`/`body` and refuses everything else, and reports failure back so the page can point to Copy.
 - **Browser, web and extension:** a normal `mailto:` link. A browser cannot tell whether an email app answered, so the message says "if nothing opened, this device may not have an email app set up". Chrome may ask once before handing off to an app. This depends on your local email-app / browser setup and is the one part automated tests cannot prove.
 
+## Tracking outreach (History)
+
+History is where you record what actually happened. Cold records only what you tell it: it can't see your inbox, so nothing is ever marked sent or replied automatically, and copying, opening in your email app, generating and editing never change a status.
+
+1. Write an email, then **Open in email** (or Copy) and send it yourself.
+2. Come back and press **Mark sent** (on the draft, or on its row in History). Cold keeps the text as it was at that moment under "Text when you marked it sent".
+3. When a reply arrives, press **Record reply**.
+4. Filter by **Draft / Marked sent / Reply recorded**, or search by name, company, email address, subject or your notes.
+
+Each row shows the recipient, address (if you entered one), subject, a message preview, the status, and created / updated / marked-sent / reply dates. **Notes & details** holds an optional note (why they fit, what you sent, what the reply said, what to follow up on) and the address; both save as you type. The status menu is still there to correct a mistake.
+
+If you edit a draft after marking it sent, the status and dates don't change and the as-sent text is kept; Cold says so on the draft. This is a single saved copy, not version history, and it is Cold's copy of the text, not proof of what your email app sent. Records saved by older versions load as before (no note, no sent copy; nothing is invented).
+
 ## Where your data lives (SQLite)
 
 In the desktop app, products and drafts are stored in one SQLite file: `~/Library/Application Support/Cold/cold.db` on macOS (the path is also shown in Settings > Browser extension). It uses WAL mode, so you can copy it for a backup or open it with any SQLite tool, e.g. `sqlite3 cold.db "select recipient_name, status, subject from emails"`. Provider keys are *not* in this file; they are encrypted separately in `settings.json`.

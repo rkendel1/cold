@@ -34,6 +34,8 @@ export function normalizeEmail(raw) {
     recipient: { name: str(rec.name), role: str(rec.role), company: str(rec.company), why: str(rec.why), profileUrl: str(rec.profileUrl), profile: str(rec.profile), email: str(rec.email) },
     productName: str(raw.productName), goal: str(raw.goal) || "advice",
     subject: str(raw.subject), what: str(raw.what), why: str(raw.why), ask: str(raw.ask),
+    note: str(raw.note),
+    sentCopy: raw.sentCopy && typeof raw.sentCopy === "object" && !Array.isArray(raw.sentCopy) ? { subject: str(raw.sentCopy.subject), text: str(raw.sentCopy.text), at: Number.isFinite(raw.sentCopy.at) ? raw.sentCopy.at : 0 } : undefined,
     checks: Array.isArray(raw.checks) ? raw.checks.filter(c => c && typeof c === "object") : [],
     claims: Array.isArray(raw.claims) ? raw.claims.filter(c => c && typeof c === "object") : [],
     retrieved: Array.isArray(raw.retrieved) ? raw.retrieved.filter(c => c && typeof c === "object") : [],

@@ -87,3 +87,21 @@ test('a failed push is kept and retried; edits to the same draft collapse to one
     assert.deepEqual([replica.pending, a.db.snapshot().emails[0].what], [0, 'v2']);
   } finally { await a.close(); }
 });
+
+test('outreach records marked in the app reach the extension intact, and the extension never alters them', async () => {
+  const { createReplica } = await load('extension/src/replica.js');
+  const { createStore } = await load('src/state/store.js');
+  const a = await appOn();
+  try {
+    a.db.put('emails', 'e1', { id: 'e1', createdAt: 1, status: 'sent', sentAt: 50, note: 'Asked for pricing', sentCopy: { subject: 's', text: 'body', at: 50 }, recipient: { name: 'Sam', email: 'sam@trialco.com' }, subject: 's', what: 'w', why: 'y', ask: 'a', updatedAt: 60 });
+    a.db.put('emails', 'e0', { id: 'e0', createdAt: 0, recipient: { name: 'Legacy' }, subject: 'old', what: 'w', why: '', ask: '' });   // an old record with no status at all
+    const replica = createReplica({ storage: memory() }); await replica.load();
+    const store = createStore({ storage: {} }); store.start({ db: replica });
+    replica.attach(a.link); await replica.sync();
+    const sent = store.state.emails.find(e => e.id === 'e1'), old = store.state.emails.find(e => e.id === 'e0');
+    assert.deepEqual([sent.status, sent.sentAt, sent.note, sent.sentCopy.text, sent.recipient.email], ['sent', 50, 'Asked for pricing', 'body', 'sam@trialco.com']);
+    assert.deepEqual([old.status, old.sentAt, old.note], ['draft', undefined, '']);
+    assert.equal(replica.pending, 0, 'merely reading records queues nothing to send back');
+    assert.equal(a.db.snapshot().emails.find(e => e.id === 'e1').status, 'sent');
+  } finally { await a.close(); }
+});

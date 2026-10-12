@@ -156,3 +156,19 @@ details.panel .in { padding: 0 16px 16px; display: grid; gap: 10px; font-size: v
 .to-field { display: grid; gap: 6px; }
 .to-field .field-error:empty { display: none; }
 .bad-text { color: var(--bad); }
+.preline { white-space: pre-wrap; }
+
+/* History: details area, preview, note */
+.hrow .preview { font-size: var(--fs-sm); color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hrow .hnote { font-size: var(--fs-sm); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hrow .hmsg, .hrow .hdetails { grid-column: 1 / -1; margin: 0; }
+.hrow .hmsg:empty { display: none; }
+.hrow .hdetails { display: grid; gap: 12px; border-top: 1px solid var(--line); padding-top: 12px; }
+.hrow .hdetails[hidden] { display: none; }
+
+/* History row: details on top, actions on their own row so long names and previews have room */
+.hrow { grid-template-columns: minmax(0, 1fr); align-items: start; }
+.hrow .ctl { justify-content: flex-start; }
+.hrow .ctl .btn { min-height: 38px; padding: 5px 12px; }
+.hrow .hdetails .field-error:empty { display: none; }
+.hfilters input[type=search] { flex: 1 1 260px; max-width: 380px; }

@@ -138,7 +138,7 @@ test("open in email: uses the CURRENT edited draft, keeps Copy, never marks the 
   await page.click("#copyEmail");
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), m.body.replace(/\r\n/g, "\n"), "Copy and Open in email carry the same text (mailto uses CRLF line breaks)");
   // the address survives navigating away and reopening from History
-  await go(page, "history"); await page.click(".hrow button:has-text('Open')"); await page.waitForSelector("#eTo");
+  await go(page, "history"); await page.click('.hrow button[title="Reopen and edit this draft"]'); await page.waitForSelector("#eTo");
   assert.equal(await page.inputValue("#eTo"), "sam@trialco.com");
   assert.equal(await page.inputValue("#rEmail"), "sam@trialco.com");
   assert.deepEqual(t.errors, []); await t.close();
@@ -220,6 +220,127 @@ test("open in email (plain web, no desktop bridge): asks the browser for a mailt
   const m = parseMail((await mailed(page))[0]); assert.equal(m.to, "sam@trialco.com");
   assert.match(await page.textContent("#handoffMsg"), /If nothing opened, this device may not have an email app set up: use Copy email/);
   assert.equal((await ls(page, "cold.emails"))[0].status, "draft");
+  await t.close();
+});
+
+const stored = async (page, id) => (await ls(page, "cold.emails")).find(e => e.id === id);
+const row = (page, text) => page.locator(".hrow", { hasText: text });
+
+test("outreach workflow: draft -> open in email -> mark sent -> find later -> note -> record reply; only explicit actions change status", { skip: SKIP }, async () => {
+  const t = await open({ seed: SEED }); const { page } = t;
+  await fillCompose(page, { name: "Priya Nair", company: "Northwind" }); await page.fill("#rEmail", "priya@northwind.example"); await generate(page);
+  const id = (await ls(page, "cold.emails"))[0].id;
+  // a new draft starts as a draft, with no send or reply recorded
+  let rec = await stored(page, id);
+  assert.deepEqual([rec.status, rec.sentAt, rec.repliedAt, rec.sentCopy], ["draft", undefined, undefined, undefined]);
+  // opening it in an email app (mocked), copying it, and editing it change nothing about the status
+  await mockDesktopMail(page);
+  await page.click("#openEmail"); await page.waitForFunction(() => window.__mail.length === 1);
+  await page.click("#copyEmail");
+  await page.fill("#eWhat", "A sentence the founder rewrote before sending.");
+  await page.waitForFunction(i => JSON.parse(localStorage.getItem("cold.emails")).find(e => e.id === i).what?.startsWith("A sentence the founder"), id);
+  rec = await stored(page, id);
+  assert.deepEqual([rec.status, rec.sentAt, rec.repliedAt, rec.sentCopy], ["draft", undefined, undefined, undefined], "open, copy and edit never mark anything");
+  // back in History it is plainly a draft
+  await go(page, "history");
+  assert.match(await row(page, "Priya Nair").locator(".chip").textContent(), /Draft/);
+  assert.equal(await row(page, "Priya Nair").locator(".hMarkSent").count(), 1);
+  assert.equal(await row(page, "Priya Nair").locator(".hRecordReply").count(), 0, "no reply can be recorded before it is marked sent");
+  // the founder sends it themselves, then explicitly marks it sent
+  await row(page, "Priya Nair").locator(".hMarkSent").click();
+  await page.waitForFunction(i => JSON.parse(localStorage.getItem("cold.emails")).find(e => e.id === i).status === "sent", id);
+  rec = await stored(page, id);
+  assert.equal(typeof rec.sentAt, "number"); assert.equal(rec.repliedAt, undefined);
+  assert.match(rec.sentCopy.text, /^A sentence the founder rewrote before sending\./);
+  // it survives a reload, and the Sent filter finds that person later
+  await page.reload(); await page.waitForSelector("#genBtn", { state: "attached" }); await go(page, "history");
+  await page.getByRole("button", { name: /^Marked sent/ }).click();
+  assert.equal(await page.locator(".hrow").count(), 1); assert.match(await page.locator(".hrow").textContent(), /Priya Nair/);
+  assert.match(await page.locator(".hrow .chip").textContent(), /Marked sent/);
+  await page.getByRole("button", { name: /^All/ }).click(); await page.fill("#histSearch", "priya@northwind");
+  assert.equal(await page.locator(".hrow").count(), 1, "searchable by the address the user entered");
+  await page.fill("#histSearch", "");
+  // a note is optional, saved, and still there after navigating away and reloading
+  const r1 = row(page, "Priya Nair");
+  assert.equal(await r1.locator(".hNote").isHidden(), true);
+  await r1.locator(".hToggle").click(); await r1.locator(".hNote").fill("Good fit: wrote about trials stalling. Follow up in a week.");
+  await page.waitForFunction(i => JSON.parse(localStorage.getItem("cold.emails")).find(e => e.id === i).note?.startsWith("Good fit"), id);
+  assert.equal((await stored(page, id)).status, "sent", "adding a note is not a status change");
+  await go(page, "compose"); await go(page, "history");
+  assert.match(await row(page, "Priya Nair").locator(".hnote").textContent(), /Follow up in a week/);
+  await page.reload(); await page.waitForSelector("#genBtn", { state: "attached" }); await go(page, "history");
+  await row(page, "Priya Nair").locator(".hToggle").click();
+  assert.equal(await row(page, "Priya Nair").locator(".hNote").inputValue(), "Good fit: wrote about trials stalling. Follow up in a week.");
+  // a reply arrives: the founder records it, without losing when it was sent or what was sent
+  const sentAt = (await stored(page, id)).sentAt, sentCopy = (await stored(page, id)).sentCopy;
+  await row(page, "Priya Nair").locator(".hRecordReply").click();
+  await page.waitForFunction(i => JSON.parse(localStorage.getItem("cold.emails")).find(e => e.id === i).status === "replied", id);
+  rec = await stored(page, id);
+  assert.equal(typeof rec.repliedAt, "number"); assert.equal(rec.sentAt, sentAt); assert.deepEqual(rec.sentCopy, sentCopy);
+  await page.getByRole("button", { name: /^Reply recorded/ }).click(); assert.equal(await page.locator(".hrow").count(), 1);
+  // editing the record later does not rewrite what was sent, and does not fabricate any event
+  await page.getByRole("button", { name: "Open", exact: true }).click(); await page.waitForURL(/#\/compose$/);
+  await page.fill("#eSubject", "Edited long after sending");
+  await page.waitForFunction(i => JSON.parse(localStorage.getItem("cold.emails")).find(e => e.id === i).subject === "Edited long after sending", id);
+  rec = await stored(page, id);
+  assert.deepEqual([rec.status, rec.sentAt, rec.sentCopy.subject, rec.sentCopy.text === sentCopy.text], ["replied", sentAt, sentCopy.subject, true]);
+  assert.match(await page.textContent("#sentNote"), /You edited this after marking it sent/);
+  assert.ok(await page.isVisible("summary:has-text('Text when you marked it sent')"));
+  assert.equal(await page.inputValue("#eNote"), "Good fit: wrote about trials stalling. Follow up in a week.", "the note is also on the draft");
+  assert.deepEqual(t.errors, []); await t.close();
+});
+
+test("history: Open in email from a row never changes status; a missing address is recoverable; old and sparse records are fine", { skip: SKIP }, async () => {
+  const seed = { "cold.products": [P1], "cold.emails": [
+    EMAIL({ id: "withmail", recipient: { name: "Ada Park", company: "PipeCo", email: "ada@pipeco.example" }, updatedAt: 111 }),
+    EMAIL({ id: "nomail", recipient: { name: "Bo Chen", company: "BoCo" }, status: "sent", sentAt: 1700000000000 }),          // saved before addresses, notes and sent copies existed
+    { id: "sparse", createdAt: 5, recipient: {}, subject: "", what: "", why: "", ask: "" },                                     // nothing but an id
+    { id: "oddstatus", createdAt: 6, status: "archived", recipient: null, subject: "x", what: "y", why: "", ask: "" },
+  ] };
+  const t = await open({ seed }); const { page } = t;
+  await go(page, "history");
+  assert.equal(await page.locator(".hrow").count(), 4);                                                                       // every record loads; none is dropped
+  const counts = Object.fromEntries(await page.$$eval(".hfilters .btn", b => b.map(x => x.textContent.replace(/\s+/g, " ").trim().split(/ (?=\d+$)/))));
+  assert.deepEqual(counts, { All: "4", Draft: "3", "Marked sent": "1", "Reply recorded": "0" });
+  const before = await ls(page, "cold.emails");
+  await mockDesktopMail(page);
+  // with an address: hands off, changes nothing, writes nothing
+  await row(page, "Ada Park").locator(".hEmail").click();
+  await page.waitForFunction(() => window.__mail.length === 1);
+  assert.match((await mailed(page))[0], /^mailto:ada@pipeco\.example\?subject=onboarding&body=/);
+  assert.match(await row(page, "Ada Park").locator(".hmsg").textContent(), /Cold hasn't sent anything/);
+  // without one: nothing opens, the details open with the address field focused
+  await row(page, "Bo Chen").locator(".hEmail").click();
+  assert.equal((await mailed(page)).length, 1);
+  assert.match(await row(page, "Bo Chen").locator(".hmsg").textContent(), /Add the recipient's email address/);
+  assert.equal(await page.evaluate(() => document.activeElement.className), "hTo");
+  // typing the address saves it, still without touching the status
+  await page.fill(".hrow[data-id=nomail] .hTo", "bo@boco.example");
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.emails")).find(e => e.id === "nomail").recipient.email === "bo@boco.example");
+  const after = await ls(page, "cold.emails");
+  const strip = e => ({ ...e, recipient: { ...e.recipient, email: undefined }, updatedAt: undefined });
+  // (saving any record re-writes the list with normalised defaults, so an unknown or missing status reads back as "draft")
+  const known = x => (["draft", "sent", "replied"].includes(x) ? x : "draft");
+  assert.deepEqual(after.map(e => [e.id, e.status, e.sentAt ?? null, e.repliedAt ?? null]), before.map(e => [e.id, known(e.status), e.sentAt ?? null, e.repliedAt ?? null]), "no status or timestamp changed");
+  assert.equal(after.find(e => e.id === "withmail").updatedAt, 111, "a handoff does not even re-save the record");
+  // copy is also inert
+  await row(page, "Ada Park").locator("button:text-is('Copy')").click();
+  assert.deepEqual((await ls(page, "cold.emails")).map(e => e.status ?? null), after.map(e => e.status ?? null));
+  assert.deepEqual(t.errors, []); await t.close();
+});
+
+test("history: the outreach status survives in the shared record that the extension and desktop app also read", { skip: SKIP }, async () => {
+  const t = await open({ seed: { "cold.products": [P1], "cold.emails": [EMAIL()] } }); const { page } = t;
+  await go(page, "history");
+  await row(page, "Ada Park").locator(".hMarkSent").click();
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.emails"))[0].status === "sent");
+  const rec = (await ls(page, "cold.emails"))[0];
+  // the record keeps every earlier field (nothing is dropped) and gains only the new ones
+  assert.deepEqual(Object.keys(EMAIL()).filter(k => !(k in rec)), []);
+  assert.deepEqual([rec.recipient.why, rec.productName, rec.subject], ["Posted about onboarding", "Acme Flow", "onboarding"]);
+  const added = Object.keys(rec).filter(k => !(k in EMAIL()));
+  for (const k of ["sentAt", "sentCopy", "updatedAt"]) assert.ok(added.includes(k), `${k} is recorded`);
+  assert.equal(rec.repliedAt, undefined, "marking sent does not imply a reply");
   await t.close();
 });
 
@@ -417,7 +538,7 @@ test("history: statuses are the user's own record, filters and counts are accura
   assert.equal(await page.locator(".hrow").count(), 1);
   await page.fill("#histSearch", "zzz"); assert.ok(await page.isVisible("text=No drafts match your search"));
   await page.fill("#histSearch", "pipeco"); assert.equal(await page.locator(".hrow").count(), 1);
-  await page.getByRole("button", { name: "Open" }).click();
+  await page.getByRole("button", { name: "Open", exact: true }).click();
   await page.waitForURL(/#\/compose$/);
   assert.equal(await page.inputValue("#rName"), "Ada Park"); assert.equal(await page.inputValue("#eSubject"), "onboarding");
   await go(page, "history");
