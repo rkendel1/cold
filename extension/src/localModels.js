@@ -1,0 +1,68 @@
+// The on-device models Cold can run in the browser (WebLLM / WebGPU), and the pure helpers around them. Nothing here touches the network
+// or the browser, so it can be tested in Node. Sizes are estimates (parameter count x 4-bit weights), NOT measured downloads.
+//
+// Where things come from:
+//   runtime         @mlc-ai/web-llm, pinned to RUNTIME.webllm in package.json, bundled into the extension (llm-client.js / llm-worker.js)
+//   compiled model  one .wasm per model+precision, fetched at BUILD time from mlc-ai/binary-mlc-llm-libs, checked against the SRI hash below,
+//                   and shipped inside the extension (extension/dist/models). Cold never downloads code at run time.
+//   weights         DATA only (config, tokenizer, weight shards) from MODEL_SOURCE, downloaded once on the user's say-so and cached by the browser
+export const RUNTIME = { webllm: "0.2.86", libSource: "https://raw.githubusercontent.com/mlc-ai/binary-mlc-llm-libs/main/web-llm-models/v0_2_86/base/" };
+export const MODEL_SOURCE = {
+  origin: "https://huggingface.co", org: "mlc-ai",
+  // NOT YET PINNED: "main" follows the repository. Run `npm run pin:local-model` on a machine that can reach Hugging Face to replace this with a
+  // commit SHA and fill in `integrity` for each model (config and tokenizer SRI hashes). See docs/ask-cold.md.
+  revision: "main",
+};
+
+export const MODELS = [
+  { key: "qwen2.5-1.5b", name: "Qwen2.5 1.5B Instruct", license: "Apache-2.0", approxDownloadMB: 1000, note: "Better answers; needs about 1.7 GB of graphics memory.",
+    variants: {
+      f16: { id: "Qwen2.5-1.5B-Instruct-q4f16_1-MLC", vramMB: 1629.75, lib: "Qwen2-1.5B-Instruct-q4f16_1_cs1k-webgpu.wasm", libSri: "sha256-Q2Rira1AfgkU0jUP1FKlo9mD4AMdd8lAxD6jUcjNMAA=" },
+      f32: { id: "Qwen2.5-1.5B-Instruct-q4f32_1-MLC", vramMB: 1888.97, lib: "Qwen2-1.5B-Instruct-q4f32_1_cs1k-webgpu.wasm", libSri: "sha256-1muCqPl9NRBoF1DawFXGBQud8zJ1aMi3hg0qxh2ZBrg=" },
+    } },
+  { key: "qwen2.5-0.5b", name: "Qwen2.5 0.5B Instruct", license: "Apache-2.0", approxDownloadMB: 400, note: "Smaller and faster, but weaker; needs about 1 GB of graphics memory.",
+    variants: {
+      f16: { id: "Qwen2.5-0.5B-Instruct-q4f16_1-MLC", vramMB: 944.62, lib: "Qwen2-0.5B-Instruct-q4f16_1_cs1k-webgpu.wasm", libSri: "sha256-phgHSzD30CKreIbQz1e+Ku/aw0KQHUO+5OGREOG0tzk=" },
+      f32: { id: "Qwen2.5-0.5B-Instruct-q4f32_1-MLC", vramMB: 1060.2, lib: "Qwen2-0.5B-Instruct-q4f32_1_cs1k-webgpu.wasm", libSri: "sha256-JDziq9qNF1ixnUTa2lgkCk9d2wdddKsRo40U0jvQ91M=" },
+    } },
+];
+export const DEFAULT_MODEL = "qwen2.5-1.5b";
+export const CONTEXT_WINDOW = 4096;
+export const modelByKey = key => MODELS.find(m => m.key === key) || MODELS[0];
+
+/** f16 shaders when the GPU supports them (smaller and faster), else the f32 build of the same model. */
+export const pickVariant = features => (features && typeof features.has === "function" && features.has("shader-f16") ? "f16" : "f32");
+
+/** The WebLLM model record for one model: weights from MODEL_SOURCE, the compiled library from inside the extension, integrity enforced. */
+export function modelRecord(model, variant, { libUrl }) {
+  const v = model.variants[variant];
+  const url = `${MODEL_SOURCE.origin}/${MODEL_SOURCE.org}/${v.id}/resolve/${MODEL_SOURCE.revision}/`;
+  return { model: url, model_id: v.id, model_lib: libUrl(`models/${v.lib}`), vram_required_MB: v.vramMB, low_resource_required: true,
+    overrides: { context_window_size: CONTEXT_WINDOW }, integrity: { model_lib: v.libSri, onFailure: "error", ...(MODEL_SOURCE.integrity && MODEL_SOURCE.integrity[v.id]) } };
+}
+export const appConfigFor = (model, variant, opts) => ({ model_list: [modelRecord(model, variant, opts)], cacheBackend: "cache" });
+
+/** Every origin the weights may come from (for the docs and the tests): the model host only. */
+export const assetOrigins = () => [MODEL_SOURCE.origin];
+
+/**
+ * A readable reason for a failed load, whatever the runtime threw. `code` is what the UI and tests key on.
+ *   unsupported_webgpu | no_adapter | insufficient_memory | download_failed | integrity_failed | init_failed | cancelled
+ */
+const describe = e => {
+  if (e == null) return "";
+  if (typeof e === "string") return e;
+  if (typeof e === "object") { const t = e.message || e.msg || e.reason || (e.cause && e.cause.message) || e.name; if (typeof t === "string" && t) return t; try { return JSON.stringify(e).slice(0, 200); } catch { return ""; } }
+  return String(e);
+};
+export function classifyLoadError(e) {
+  if (e && e.code && typeof e.code === "string" && e.message) return { code: e.code, message: e.message };
+  const text = describe(e) === "[object Object]" ? "" : describe(e);   // the runtime sometimes reports a failure as the string "[object Object]"
+  if (e && e.code === "cancelled") return { code: "cancelled", message: "Cancelled." };
+  if (/IntegrityError|integrity|SRI/i.test(`${e && e.name} ${text}`)) return { code: "integrity_failed", message: "A model file didn't match its expected checksum, so it was not used. Nothing was run." };
+  if (/Cannot find parameter in cache|ParamModule|incomplete/i.test(text)) return { code: "incomplete_files", message: "The downloaded model files are incomplete. Remove the downloaded model and set it up again." };
+  if (/out of memory|OOM|insufficient|exceeds|maxBufferSize|maxStorageBufferBindingSize|Device was lost|device lost|Cannot allocate|allocation/i.test(text)) return { code: "insufficient_memory", message: "This computer doesn't have enough free graphics memory for this model." };
+  if (/QuotaExceeded|quota/i.test(text)) return { code: "insufficient_memory", message: "There isn't enough free storage in this browser to keep the model." };
+  if (/fetch|network|Failed to load|NetworkError|ERR_|404|403|HTTP|status|Request failed|Failed to execute 'add'/i.test(text)) return { code: "download_failed", message: "The model files couldn't be downloaded. Check your connection and try again; nothing you were reading was sent." };
+  return { code: "init_failed", message: `The on-device model couldn't start${text ? `: ${text.slice(0, 160)}` : ""}. If this keeps happening, remove the downloaded model and set it up again, or try the smaller model.` };
+}

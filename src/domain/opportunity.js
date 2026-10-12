@@ -50,17 +50,24 @@ export function pageKey(url) { try { const u = new URL(url); return `${u.protoco
 // ---- locality --------------------------------------------------------------------------------------------------------------------
 export const isLoopbackUrl = u => { try { return /^(127\.0\.0\.1|localhost|\[::1\]|::1)$/i.test(new URL(u).hostname); } catch { return false; } };
 /**
- * Where would the page text go? Only a model this browser reaches at a loopback address counts as local. The paired desktop app's
- * provider address is not visible from here, so it is "unverified", never "local".
- * @returns {{ kind: "local"|"remote"|"unverified"|"none", label: string, host?: string }}
+ * Where would the page text go? Kinds:
+ *   in_browser  Cold's on-device model, running in this browser on this computer: verified local. Nothing is sent anywhere.
+ *   loopback    a model server this browser reaches at a loopback address (for example Ollama). The text stays on this computer on its way
+ *               there, but Cold cannot verify what that server then does with it, so it is NOT called verified local.
+ *   remote      the extension's own model at a non-loopback address.     unverified  the paired desktop app's model (its address is not visible here).
+ *   none        nothing is set up.
+ * @returns {{ kind: string, label: string, host?: string, verified: boolean }}
  */
-export function localityOf({ own, appAvailable = false }) {
+export function localityOf({ own, appAvailable = false, device = null }) {
+  if (device && device.ready) return { kind: "in_browser", label: device.label, verified: true };
   if (own && own.ready) {
     let host = ""; try { host = new URL(own.baseUrl).host; } catch { /* ignore */ }
-    return { kind: isLoopbackUrl(own.baseUrl) ? "local" : "remote", label: `${own.label} · ${own.model}`, host };
+    return { kind: isLoopbackUrl(own.baseUrl) ? "loopback" : "remote", label: `${own.label} · ${own.model}`, host, verified: false };
   }
-  return appAvailable ? { kind: "unverified", label: "the Cold desktop app's model" } : { kind: "none", label: "" };
+  return appAvailable ? { kind: "unverified", label: "the Cold desktop app's model", verified: false } : { kind: "none", label: "", verified: false };
 }
+/** Page text may go here without the user's say-so: on this computer only. */
+export const staysOnThisComputer = loc => loc.kind === "in_browser" || loc.kind === "loopback";
 
 // ---- text helpers ----------------------------------------------------------------------------------------------------------------
 const norm = s => String(s || "").toLowerCase().replace(/[‘’“”"'`]/g, "").replace(/\s+/g, " ").trim();

@@ -59,9 +59,9 @@ async function coldApp(model, dir) {
     start: () => new Promise(r => server.listen(port, '127.0.0.1', r)),
   };
 }
-async function launch(dir) {
-  const ext = path.join(__dirname, '../extension');
-  const ctx = await pw.chromium.launchPersistentContext(path.join(dir, 'profile'), { executablePath: CHROMIUM, headless: false, args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`, '--headless=new'] });
+async function launch(dir, { args = [], init = null, ext = path.join(__dirname, '../extension') } = {}) {
+  const ctx = await pw.chromium.launchPersistentContext(path.join(dir, 'profile'), { executablePath: CHROMIUM, headless: false, args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`, '--headless=new', ...args] });
+  if (init) await ctx.addInitScript(init);
   await ctx.route('https://x.com/**', r => r.fulfill({ contentType: 'text/html', body: TWEET_PAGE }));
   await ctx.route('https://www.linkedin.com/**', r => r.fulfill({ contentType: 'text/html', body: PROFILE_PAGE }));
   let [sw] = ctx.serviceWorkers(); if (!sw) sw = await ctx.waitForEvent('serviceworker');
@@ -369,8 +369,8 @@ const LIBRARY = {
   outbox: [], lastSync: 0,
 };
 /** Opens the panel with a product in the library and the extension's own model pointed at `baseUrl` (or none). */
-async function askSetup(dir, baseUrl) {
-  const l = await launch(dir);
+async function askSetup(dir, baseUrl, opts) {
+  const l = await launch(dir, opts);
   await l.panel.evaluate(async ([lib, cfg]) => { await chrome.storage.local.set({ 'cold.replica': lib, ...(cfg ? { 'cold.model': cfg } : {}) }); }, [LIBRARY, baseUrl ? { provider: 'custom', configured: true, prefer: 'own', providers: { custom: { baseUrl, model: 'eval-model', key: '' } } } : null]);
   await l.panel.reload(); await l.panel.waitForSelector('#askRun', { state: 'attached' });
   return l;
@@ -438,10 +438,10 @@ test('Ask Cold keeps page text on this computer: with no local model it explains
     await showTab(s.ctx, s.panel, `${site.base}/northwind/careers`);
     await s.panel.click('#askRun');
     await s.panel.waitForSelector('#askConsent .notice, #askConsent [role], #askConsent p');
-    assert.match(await s.panel.textContent('#askConsent'), /Nothing was read\./); assert.match(await s.panel.textContent('#askConsent'), /No model on this computer is set up/);
+    assert.match(await s.panel.textContent('#askConsent'), /Nothing was read\./); assert.match(await s.panel.textContent('#askConsent'), /no graphics adapter is available|hasn't been downloaded/);   // the on-device model is what is offered first; which message depends on this computer's GPU
     await s.panel.click('#bwmStart'); assert.match(await s.panel.textContent('#bwmStatus'), /didn't start/); assert.equal(await s.panel.getAttribute('#bwmState', 'data-state'), 'idle');
     assert.deepEqual(seen, [], 'no request left the browser');
-  } finally { await s.ctx.close(); }
+  } catch (e) { await site.close(); throw e; } finally { await s.ctx.close(); }   // an early failure must not leave the fixture server open (it would hang the whole run)
   // ---- a hosted model is configured: the same refusal, no request to it, and the page text is never sent without the user's say-so
   const remote = [];
   s = await askSetup(dir, 'https://models.example.com/v1');
@@ -450,7 +450,7 @@ test('Ask Cold keeps page text on this computer: with no local model it explains
     await showTab(s.ctx, s.panel, `${site.base}/northwind/careers`);
     await s.panel.click('#askRun');
     await s.panel.waitForFunction(() => /Nothing was read\./.test(document.querySelector('#askConsent').textContent));
-    assert.match(await s.panel.textContent('#askConsent'), /models\.example\.com, not on this computer/);
+    assert.match(await s.panel.textContent('#askConsent'), /Your choices/); assert.equal(await s.panel.locator('#askRemoteOn').count(), 1, 'the hosted model is OFFERED, not used');
     await new Promise(r => setTimeout(r, 1200));
     assert.deepEqual(remote, [], 'nothing was sent to the hosted model');
     // the user chooses to use it: only then is the page read and sent, and the page says where it went
@@ -510,5 +510,229 @@ test('Browse With Me: explicit start, pause and stop; checks only eligible pages
     assert.equal(await emails(), 2);
     assert.equal(model.prompts.length, evalPrompts(model).length, 'the only model calls were evaluations: nothing was drafted');
     assert.deepEqual(errors, []);
+  } finally { await ctx.close(); await model.close(); await site.close(); }
+});
+
+// ================================================================================================== On-device model (WebLLM in the browser)
+const SOFT_GPU = ['--enable-unsafe-webgpu', '--enable-features=Vulkan,WebGPU', '--use-angle=swiftshader', '--use-webgpu-adapter=swiftshader', '--ignore-gpu-blocklist'];
+const HF = 'https://huggingface.co';
+const CORS = { 'access-control-allow-origin': '*' };
+const MODEL_STUBS = {   // STAND-IN model files: just enough for the real runtime to get as far as asking for the weights. NOT a real model.
+  'mlc-chat-config.json': { version: '0.1.0', model_type: 'qwen2', quantization: 'q4f32_1', vocab_size: 151936, context_window_size: 4096, sliding_window_size: -1, prefill_chunk_size: 1024, attention_sink_size: -1, tensor_parallel_shards: 1, pipeline_parallel_stages: 1, temperature: 0.7, presence_penalty: 0, frequency_penalty: 0, repetition_penalty: 1.05, top_p: 0.8,
+    model_config: { hidden_act: 'silu', hidden_size: 1536, intermediate_size: 8960, num_attention_heads: 12, num_hidden_layers: 28, num_key_value_heads: 2, rms_norm_eps: 1e-6, rope_theta: 1000000, vocab_size: 151936, tie_word_embeddings: true, context_window_size: 4096, prefill_chunk_size: 1024, tensor_parallel_shards: 1, head_dim: 128, dtype: 'float32', max_batch_size: 128 },
+    conv_template: { name: 'chatml', system_template: '<|im_start|>system\n{system_message}<|im_end|>\n', system_message: 'You are a helpful assistant.', roles: { user: '<|im_start|>user', assistant: '<|im_start|>assistant' }, role_templates: { user: '{user_message}', assistant: '{assistant_message}', tool: '{tool_message}' }, seps: ['<|im_end|>\n'], role_content_sep: '\n', role_empty_sep: '\n', stop_str: ['<|im_end|>'], stop_token_ids: [2], system_prefix_token_ids: [], add_role_after_system_message: true },
+    pad_token_id: 151643, bos_token_id: 151643, eos_token_id: [151645, 151643], tokenizer_files: ['tokenizer.json'] },
+  'tokenizer.json': { version: '1.0', truncation: null, padding: null, added_tokens: [], normalizer: null, pre_tokenizer: null, post_processor: null, decoder: null, model: { type: 'BPE', dropout: null, unk_token: null, continuing_subword_prefix: '', end_of_word_suffix: '', fuse_unk: false, byte_fallback: false, vocab: { a: 0, b: 1 }, merges: [] } },
+  'tensor-cache.json': { metadata: { ParamSize: 0, ParamBytes: 0, BitsPerParam: 4 }, records: [] },
+};
+/** Stands in for huggingface.co and records every request made to it. */
+const modelHost = log => route => { const req = route.request(); const file = new URL(req.url()).pathname.split('/').pop(); log.push({ method: req.method(), url: req.url(), headers: req.headers(), body: req.postData() || '' }); const stub = MODEL_STUBS[file]; return route.fulfill(stub ? { status: 200, contentType: 'application/json', headers: CORS, body: JSON.stringify(stub) } : { status: 404, headers: CORS, body: 'not found' }); };
+const hasAdapter = async panel => panel.evaluate(async () => { try { return !!(navigator.gpu && await navigator.gpu.requestAdapter()); } catch { return false; } });
+const localPhase = panel => panel.getAttribute('#localState', 'data-phase');
+const localCode = panel => panel.getAttribute('#localState', 'data-code');
+
+test('on-device model, REAL runtime and NO usable GPU (this headless browser has none): says so, loads nothing, sends nothing, falls back to nothing', { skip: SKIP, timeout: 180000 }, async () => {
+  const site = await fixtureSite(), hf = [], other = [];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-nogpu-'));
+  const s = await askSetup(dir, 'https://models.example.com/v1');                    // a HOSTED model is configured: it must not be used
+  await s.ctx.route(`${HF}/**`, modelHost(hf));
+  await s.ctx.route('https://models.example.com/**', r => { other.push(r.request().url()); r.abort(); });
+  if (await hasAdapter(s.panel)) { await s.ctx.close(); await site.close(); return; }   // a machine with a real GPU: the next test covers it
+  try {
+    await showTab(s.ctx, s.panel, `${site.base}/northwind/careers`);
+    await s.panel.click('#localSetup');
+    await s.panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'unsupported');
+    assert.equal(await localCode(s.panel), 'no_adapter'); assert.match(await s.panel.textContent('#localState'), /no graphics adapter is available/);
+    assert.equal(await s.panel.evaluate(() => !!globalThis.coldWebLLM), false, 'the runtime was never even loaded');
+    await s.panel.click('#askRun');
+    await s.panel.waitForFunction(() => /Nothing was read\./.test(document.querySelector('#askConsent').textContent));
+    assert.match(await s.panel.textContent('#askConsent'), /no graphics adapter is available/); assert.match(await s.panel.textContent('#askConsent'), /Your choices/);
+    await s.panel.click('#bwmStart'); assert.match(await s.panel.textContent('#bwmStatus'), /didn't start/); assert.equal(await s.panel.getAttribute('#bwmState', 'data-state'), 'idle');
+    await new Promise(r => setTimeout(r, 1000));
+    assert.deepEqual([hf.length, other], [0, []], 'no model file was requested and the hosted model was never contacted');
+    // the alternatives are the user's to pick: nothing happened until this click
+    await s.panel.click('#askRemoteOn'); assert.match(await s.panel.textContent('#askModelLine'), /because you allowed it for this session/);
+  } finally { await s.ctx.close(); await site.close(); }
+});
+
+test('on-device model, REAL runtime on a software WebGPU adapter and STAND-IN model files: the runtime starts under the extension\'s CSP, loads the bundled library, and asks the model host only for model files; the user then gets a clear error and no fallback', { skip: SKIP, timeout: 240000 }, async () => {
+  const site = await fixtureSite(), hf = [], other = [];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-softgpu-'));
+  const s = await askSetup(dir, 'https://models.example.com/v1', { args: SOFT_GPU });
+  const outside = []; s.ctx.on('request', r => { const u = r.url(); if (!/^(chrome-extension|data|blob):/.test(u) && !u.startsWith(site.base) && !u.startsWith(HF) && !u.startsWith('https://models.example.com')) outside.push(u); });
+  await s.ctx.route(`${HF}/**`, modelHost(hf));
+  await s.ctx.route('https://models.example.com/**', r => { other.push(r.request().url()); r.abort(); });
+  if (!(await hasAdapter(s.panel))) { await s.ctx.close(); await site.close(); return t_skip('no software WebGPU adapter in this browser'); }
+  const lib = path.join(__dirname, '../extension/dist/models/Qwen2-1.5B-Instruct-q4f32_1_cs1k-webgpu.wasm');
+  if (!fs.existsSync(lib)) { await s.ctx.close(); await site.close(); return t_skip('the build could not fetch the compiled model libraries'); }
+  try {
+    await showTab(s.ctx, s.panel, `${site.base}/northwind/careers`);                    // the user is looking at a page with private-looking text
+    await s.panel.click('#localSetup');
+    await s.panel.waitForSelector('dialog');
+    const text = await s.panel.textContent('dialog');
+    assert.match(text, /about 1 GB \(estimated\)/); assert.match(text, /huggingface\.co \(mlc-ai\)/); assert.match(text, /Apache-2\.0/); assert.match(text, /not part of the download/);
+    await s.panel.click('dialog button[value="ok"]');
+    await s.panel.waitForFunction(() => ['error', 'ready', 'unsupported'].includes(document.querySelector('#localState').dataset.phase), null, { timeout: 120000 });
+    assert.equal(await s.panel.evaluate(() => !!globalThis.coldWebLLM), true, 'the runtime script loaded on demand under the extension CSP');
+    // the software adapter has no f16 shaders, so the f32 build was chosen; the library came from inside the extension and passed its checksum
+    assert.ok(hf.length >= 3 && hf.every(r => r.url.includes('/mlc-ai/Qwen2.5-1.5B-Instruct-q4f32_1-MLC/resolve/')), hf.map(r => r.url).join(' '));
+    assert.equal(await localPhase(s.panel), 'error'); assert.equal(await localCode(s.panel), 'init_failed');   // the stand-in has no weights: the runtime stops when it asks for them, and Cold says so plainly
+    assert.match(await s.panel.textContent('#localState'), /couldn't start.*remove the downloaded model/);
+    // what the model host saw: plain GETs for model files; no query, body, cookie or anything from the page or the library
+    for (const r of hf) {
+      assert.equal(r.method, 'GET'); assert.equal(new URL(r.url).search, ''); assert.equal(r.body, '');
+      assert.ok(!r.headers.cookie && !r.headers.authorization, 'no credentials');
+      assert.ok(!/Northwind|Priya|PRIVATE-NOTE|ElsewhereCo|Zed/i.test(JSON.stringify(r)), 'no page or library text in a model request');
+    }
+    assert.deepEqual(outside, [], 'nothing else left the browser');
+    // now ask: the local model failed, a hosted model is configured, and it is NOT used
+    await s.panel.click('#askRun');
+    await s.panel.waitForFunction(() => /Nothing was read\./.test(document.querySelector('#askConsent').textContent));
+    await new Promise(r => setTimeout(r, 1000));
+    assert.deepEqual(other, [], 'no hosted fallback after the local model failed');
+    // the files can be removed again
+    await s.panel.click('#localRemove').catch(() => {});
+  } finally { await s.ctx.close(); await site.close(); }
+});
+function t_skip() { /* the condition is reported by the test name: this machine can't exercise it */ }
+
+test('on-device model, REAL runtime: a compiled model library that does not match its pinned checksum is refused and nothing runs', { skip: SKIP, timeout: 240000 }, async () => {
+  const hf = [];
+  const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-ext-tamper-')); fs.cpSync(path.join(__dirname, '../extension'), copy, { recursive: true });   // a throwaway copy: the real build is never touched
+  const lib = path.join(copy, 'dist/models/Qwen2-1.5B-Instruct-q4f32_1_cs1k-webgpu.wasm');
+  if (!fs.existsSync(lib)) { fs.rmSync(copy, { recursive: true, force: true }); return t_skip('the build could not fetch the compiled model libraries'); }
+  const bytes = fs.readFileSync(lib); bytes[bytes.length - 1] ^= 1; fs.writeFileSync(lib, bytes);                                                  // one flipped bit
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-tamper-'));
+  const s = await askSetup(dir, null, { args: SOFT_GPU, ext: copy });
+  await s.ctx.route(`${HF}/**`, modelHost(hf));
+  try {
+    if (!(await hasAdapter(s.panel))) return t_skip('no software WebGPU adapter in this browser');
+    await s.panel.click('#localSetup'); await s.panel.click('dialog button[value="ok"]');
+    await s.panel.waitForFunction(() => ['error', 'ready'].includes(document.querySelector('#localState').dataset.phase), null, { timeout: 120000 });
+    assert.equal(await localPhase(s.panel), 'error'); assert.equal(await localCode(s.panel), 'integrity_failed');
+    assert.match(await s.panel.textContent('#localState'), /didn't match its expected checksum.*Nothing was run/);
+  } finally { await s.ctx.close(); fs.rmSync(copy, { recursive: true, force: true }); }
+});
+
+// ---- the product flows on a FAKE runtime: deterministic, fast, and NOT evidence that a real model works ----------------------------------
+const FAKE_RUNTIME = () => {
+  Object.defineProperty(navigator, 'gpu', { configurable: true, value: { requestAdapter: async () => ({ features: new Set(['shader-f16']), limits: {} }) } });
+  const F = window.__fake = { creates: 0, gens: [], aborts: 0, deleted: [], cached: false, hang: false, failNext: 0, unloaded: 0 };
+  const answer = prompt => {
+    const page = (prompt.match(/<<<PAGE [^>]+>>>\n([\s\S]*?)\n<<<END PAGE/) || [])[1] || '';
+    const opp = (company, quote) => ({ verdict: 'opportunity', summary: `${company} is hiring in the area you cover.`, opportunities: [{ type: 'buying_signal', productId: 'P1', who: { name: '', role: '', company }, relationshipId: '', evidence: [quote], rationale: 'Hiring for this work suggests they are investing in it.', confidence: 'medium', uncertainty: 'The page does not say who decides.', nextAction: 'save_prospect' }] });
+    if (/Northwind Logistics is hiring/.test(page)) return opp('Northwind Logistics', 'Northwind Logistics is hiring three platform engineers to move batch jobs from the cloud to the edge');
+    if (/Contoso Freight is hiring/.test(page)) return opp('Contoso Freight', 'Contoso Freight is hiring two platform engineers to move batch jobs from the cloud to the edge');
+    return { verdict: 'none', summary: 'Nothing related to what you sell.', opportunities: [] };
+  };
+  window.coldWebLLM = {
+    version: 'FAKE',
+    hasModelInCache: async () => F.cached,
+    deleteModelAllInfoInCache: async id => { F.deleted.push(id); F.cached = false; },
+    create: async ({ modelId, onProgress, signal }) => {
+      F.creates++;
+      if (F.failNext > 0) { F.failNext--; throw new Error('Failed to fetch model files'); }
+      onProgress({ progress: 0.4, text: 'Fetching param cache[3/9]' });
+      if (F.hang) await new Promise((_, rej) => signal.addEventListener('abort', () => { F.aborts++; rej({ code: 'cancelled' }); }));
+      F.cached = true; onProgress({ progress: 1, text: 'Finish loading' });
+      return { generate: async ({ prompt }) => { F.gens.push(prompt); return { text: JSON.stringify(answer(prompt)) }; }, unload: async () => { F.unloaded++; } };
+    },
+  };
+};
+const fake = panel => panel.evaluate(() => JSON.parse(JSON.stringify(window.__fake)));
+
+test('on-device model (FAKE runtime): nothing downloads without consent; setup shows progress and can be cancelled; the loaded model is reused by Ask Cold and Browse With Me, which use the same evaluator; nothing leaves the browser', { skip: SKIP, timeout: 240000 }, async () => {
+  const site = await fixtureSite();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-device-'));
+  const s = await askSetup(dir, null, { init: `(${FAKE_RUNTIME.toString()})()` });
+  const { ctx, panel, errors } = s;
+  const outside = []; ctx.on('request', r => { const u = r.url(); if (!/^(chrome-extension|data|blob):/.test(u) && !u.startsWith(site.base)) outside.push(u); });
+  try {
+    await showTab(ctx, panel, `${site.base}/northwind/careers`);
+    // ---- asking before setup: nothing is read, nothing is downloaded, and the page says what to do
+    await panel.click('#askRun');
+    await panel.waitForFunction(() => /hasn't been downloaded/.test(document.querySelector('#askConsent').textContent));
+    assert.deepEqual([(await fake(panel)).creates, (await fake(panel)).gens.length], [0, 0]);
+    // ---- cancel a download in progress
+    await panel.evaluate(() => { window.__fake.hang = true; });
+    await panel.click('#localSetup'); await panel.click('dialog button[value="ok"]');
+    await panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'loading' && /40%/.test(document.querySelector('#localState').textContent));
+    await panel.click('#localCancel');
+    await panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'unloaded');
+    assert.deepEqual([(await fake(panel)).aborts, await panel.isVisible('#localCancel')], [1, false]);
+    // ---- set up for real: ready, and Ask Cold works
+    await panel.evaluate(() => { window.__fake.hang = false; window.__fake.cached = false; });
+    await panel.click('#localSetup'); await panel.click('dialog button[value="ok"]');
+    await panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'ready');
+    assert.match(await panel.textContent('#askModelLine'), /Uses the on-device model .*running in this browser\. Page text is processed on this device and is not sent anywhere/);
+    await panel.click('#askRun'); await panel.waitForSelector('#askResult .ask-card');
+    assert.match(await panel.textContent('#askResult'), /Northwind Logistics/);
+    const c1 = (await fake(panel)).creates;
+    await showTab(ctx, panel, `${site.base}/recipes`); await panel.click('#askRun');
+    await panel.waitForFunction(() => /No meaningful opportunity found/.test(document.querySelector('#askResult').textContent));
+    assert.equal((await fake(panel)).creates, c1, 'the loaded model was reused, not started again');
+    // ---- Browse With Me uses the same model and the same evaluator
+    await showTab(ctx, panel, `${site.base}/contoso/careers`);
+    await panel.click('#bwmStart');
+    await panel.waitForSelector('#bwmList .ask-card', { timeout: 30000 });
+    assert.match(await panel.textContent('#bwmList'), /Contoso Freight/);
+    assert.equal((await fake(panel)).creates, c1, 'still the one loaded model');
+    await panel.click('#bwmStop');
+    const f = await fake(panel);
+    assert.ok(f.gens.length >= 3 && f.gens.every(p => /Cold's opportunity evaluator/.test(p) && /untrusted web content/.test(p)), 'every request to the model was the shared evaluator\'s prompt');
+    for (const secret of ['Zed Unrelated', 'ElsewhereCo', 'PRIVATE-NOTE-ABOUT-ZED']) assert.ok(!f.gens.join('\n').includes(secret), `not given to the model: ${secret}`);
+    assert.deepEqual(outside, [], 'no request left the browser during local evaluation');
+    // ---- remove: the files are deleted and the model needs setting up again
+    await panel.click('#localRemove');
+    await panel.waitForFunction(() => /removed from this browser/i.test(document.querySelector('#localState').textContent) || document.querySelector('#localState').dataset.phase === 'unloaded');
+    assert.deepEqual((await fake(panel)).deleted.length, 1);
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); await site.close(); }
+});
+
+test('on-device model (FAKE runtime): a model already stored in the browser loads on first use without a prompt; a failed load is reported with a retry and nothing falls back to a hosted model', { skip: SKIP, timeout: 200000 }, async () => {
+  const site = await fixtureSite(), hosted = [];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-device2-'));
+  const s = await askSetup(dir, 'https://models.example.com/v1', { init: `(${FAKE_RUNTIME.toString()})(); window.__fake.cached = true;` });
+  await s.ctx.route('https://models.example.com/**', r => { hosted.push(r.request().url()); r.abort(); });
+  const { ctx, panel } = s;
+  try {
+    await showTab(ctx, panel, `${site.base}/northwind/careers`);
+    // cached: asking loads it (lazily, on first request) and answers; no download dialog
+    await panel.click('#askRun'); await panel.waitForSelector('#askResult .ask-card');
+    assert.deepEqual([(await fake(panel)).creates, await panel.locator('dialog').count()], [1, 0]);
+    // reload the panel with a model that will fail to load
+    await panel.reload(); await panel.waitForSelector('#askRun', { state: 'attached' });
+    await panel.evaluate(() => { window.__fake.cached = true; window.__fake.failNext = 1; });
+    await showTab(ctx, panel, `${site.base}/northwind/careers`); await panel.click('#askRun');
+    await panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'error');
+    assert.equal(await localCode(panel), 'download_failed'); assert.match(await panel.textContent('#askConsent'), /couldn't be downloaded/);
+    assert.match(await panel.textContent('#askConsent'), /Your choices/);
+    await new Promise(r => setTimeout(r, 800));
+    assert.deepEqual(hosted, [], 'the hosted model that is configured was not used');
+    assert.equal(await panel.locator('#askResult .ask-card').count(), 0);
+    // retry works
+    await panel.click('#localSetup'); await panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'ready', null, { timeout: 15000 }).catch(async () => { await panel.click('dialog button[value="ok"]'); await panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'ready'); });
+    await panel.click('#askRun'); await panel.waitForSelector('#askResult .ask-card');
+    assert.deepEqual(hosted, []);
+  } finally { await ctx.close(); await site.close(); }
+});
+
+test('on-device model (FAKE runtime) and a model server on this computer can both be configured; the user picks, and the loopback option still works', { skip: SKIP, timeout: 200000 }, async () => {
+  const site = await fixtureSite(), model = await evalModel();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-device3-'));
+  const s = await askSetup(dir, `http://127.0.0.1:${model.port}/v1`, { init: `(${FAKE_RUNTIME.toString()})()` });
+  const { ctx, panel } = s;
+  try {
+    await showTab(ctx, panel, `${site.base}/northwind/careers`);
+    assert.equal(await panel.isVisible('#askEngineField'), true);
+    assert.match(await panel.textContent('#askModelLine'), /which this browser reaches on this computer.*can't verify what that server does/);
+    await panel.click('#askRun'); await panel.waitForSelector('#askResult .ask-card');
+    assert.equal(evalPrompts(model).length, 1, 'the loopback model answered');
+    assert.equal((await fake(panel)).gens.length, 0, 'the on-device model was not used');
+    await panel.selectOption('#askEngine', 'device');
+    await panel.click('#askRun');
+    await panel.waitForFunction(() => /hasn't been downloaded/.test(document.querySelector('#askConsent').textContent));
+    assert.equal(evalPrompts(model).length, 1, 'choosing the on-device model does not quietly use the server instead');
   } finally { await ctx.close(); await model.close(); await site.close(); }
 });

@@ -5,8 +5,10 @@
 // Write form) and Dismiss. Cold never sends or contacts anyone from here.
 import { h, clear } from "../../src/components/dom.js";
 import { button, chip, notice, toast } from "../../src/components/ui.js";
+import { confirmDialog } from "../../src/components/dialog.js";
+import { MODELS, MODEL_SOURCE, modelByKey } from "./localModels.js";
 import { readPage } from "./page.js";
-import { ASK_QUESTIONS, BROWSE_QUESTION, TYPE_LABEL, evaluatePage, localityOf, urlEligibility, createBrowseSession, opportunityKey, prospectRecord, draftPatch } from "../../src/domain/opportunity.js";
+import { ASK_QUESTIONS, BROWSE_QUESTION, TYPE_LABEL, evaluatePage, localityOf, staysOnThisComputer, isLoopbackUrl, urlEligibility, createBrowseSession, opportunityKey, prospectRecord, draftPatch } from "../../src/domain/opportunity.js";
 
 const NEXT_LABEL = { save_prospect: "Save as a prospect", draft_outreach: "Start a draft", follow_up: "Follow up with them yourself", none: "Nothing to do yet" };
 const sitePattern = url => { const u = new URL(url); return `${u.protocol}//${u.hostname}/*`; };
@@ -14,7 +16,8 @@ const hasAccess = url => chrome.permissions.contains({ origins: [sitePattern(url
 
 export function mountAskCold(composeRoot, { store, platform, compose }) {
   const S = store.state;
-  let allowRemote = false;                      // this panel session only; never saved
+  const lm = platform.localModel;
+  let engine = "auto";                          // auto | device | loopback | hosted: this panel session only, never saved. "hosted" is the user's explicit choice.
   let busy = false, tick = null, timer = null;
 
   const modelLine = h("p", { class: "hint", id: "askModelLine" });
@@ -23,6 +26,19 @@ export function mountAskCold(composeRoot, { store, platform, compose }) {
   const status = h("p", { class: "hint", role: "status", id: "askStatus" });
   const result = h("div", { id: "askResult" });
   const consent = h("div", { id: "askConsent" });
+  const engineSel = h("select", { id: "askEngine", "aria-label": "Which model checks the page" }, h("option", { value: "device" }, "On-device model (in this browser)"), h("option", { value: "loopback" }, "Model server on this computer"));
+  engineSel.addEventListener("change", () => { engine = engineSel.value; paintModel(); paintLocal(); });
+  const engineField = h("div", { class: "field", id: "askEngineField", hidden: true }, h("label", { for: "askEngine" }, "Model for these checks"), engineSel);
+  const localInfo = h("p", { class: "hint", id: "localInfo" });
+  const localState = h("p", { role: "status", id: "localState" });
+  const localSelect = h("select", { id: "localModel", "aria-label": "On-device model size" }, MODELS.map(m => h("option", { value: m.key }, `${m.name} (about ${m.approxDownloadMB >= 1000 ? `${m.approxDownloadMB / 1000} GB` : `${m.approxDownloadMB} MB`})`)));
+  localSelect.addEventListener("change", () => { lm.select(localSelect.value); paintLocal(); });
+  const setupBtn = button("Set up the on-device model", { kind: "primary", id: "localSetup", onclick: () => setupDevice() });
+  const cancelBtn = button("Cancel", { id: "localCancel", onclick: () => lm.cancel() });
+  const removeBtn = button("Remove downloaded model", { kind: "ghost danger", id: "localRemove", onclick: async () => { await lm.remove(localSelect.value); paintModel(); toast("The on-device model was removed from this browser."); } });
+  const smallBtn = button("Use the smaller model", { id: "localSmall", onclick: () => { localSelect.value = "qwen2.5-0.5b"; lm.select("qwen2.5-0.5b"); setupDevice(); } });
+  const localBlock = h("div", { class: "x-local", id: "localBlock" }, h("strong", {}, "On-device model"), localInfo, h("div", { class: "field" }, h("label", { for: "localModel" }, "Model"), localSelect), localState,
+    h("div", { class: "actions" }, setupBtn, cancelBtn, smallBtn, removeBtn));
   const quick = h("div", { class: "actions" }, ASK_QUESTIONS.map(q => button(q, { kind: "ghost", class: "askQuick", onclick: () => { question.value = q; question.focus(); } })));
 
   const bwmState = h("p", { id: "bwmState", role: "status" });
@@ -36,7 +52,7 @@ export function mountAskCold(composeRoot, { store, platform, compose }) {
   const allowBtn = button("Allow Cold on this site", { kind: "ghost", id: "bwmAllow", onclick: () => allowSite() });
 
   composeRoot.prepend(h("section", { class: "x-page x-ask", "aria-label": "Ask Cold" },
-    h("h2", {}, "Ask Cold"), modelLine, consent,
+    h("h2", {}, "Ask Cold"), modelLine, consent, engineField, localBlock,
     h("div", { class: "field" }, h("label", { for: "askQuestion" }, "Ask about the page you are on"), question), quick,
     h("div", { class: "actions" }, askBtn), status, result,
     h("h3", {}, "Browse With Me"), bwmNote, bwmState,
@@ -45,18 +61,23 @@ export function mountAskCold(composeRoot, { store, platform, compose }) {
   const activeTab = async () => (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0];
 
   // ---- where page text may go ---------------------------------------------------------------------------------------------------
+  const loopbackReady = () => { const { cfg } = platform.ownModel(); return !!cfg && cfg.ready && isLoopbackUrl(cfg.baseUrl); };
+  const wantsDevice = () => engine === "device" || (engine === "auto" && !loopbackReady());
+  /** The model for a check, or why there isn't one. An explicit choice of the on-device model never falls back to anything else. */
   function plan() {
     const { cfg, sample } = platform.ownModel();
     const d = platform.backend.describe();
+    if (engine === "hosted") return d ? { ok: true, sample: platform.backend.sample, loc: { kind: "hosted", label: d.label, verified: false }, remote: true } : { ok: false, loc: localityOf({ own: cfg }) };
+    if (wantsDevice()) return lm.ready ? { ok: true, sample: lm.sample, loc: localityOf({ device: { ready: true, label: lm.label } }), device: true } : { ok: false, device: true, loc: { kind: "device_pending", verified: false } };
     const loc = localityOf({ own: cfg, appAvailable: !!d && d.kind === "app" });
-    if (loc.kind === "local") return { ok: true, sample, loc };
-    if (allowRemote && d) return { ok: true, sample: platform.backend.sample, loc: { ...loc, label: d.label }, remote: true };
-    return { ok: false, loc };
+    return staysOnThisComputer(loc) ? { ok: true, sample, loc } : { ok: false, loc };
   }
   function paintModel() {
     const p = plan(); clear(consent);
-    if (p.ok && !p.remote) modelLine.textContent = `Uses ${p.loc.label}, which this browser reaches on this computer${p.loc.host ? ` (${p.loc.host})` : ""}. The page text is sent to that model and nowhere else.`;
-    else if (p.ok) { modelLine.textContent = `Using ${p.loc.label} because you allowed it for this session. Page text is sent to that model.`; consent.append(button("Turn that off", { kind: "ghost", id: "askRemoteOff", onclick: () => { allowRemote = false; if (session.state !== "idle" && session.state !== "stopped") stopSession("Hosted model turned off."); paintModel(); } })); }
+    engineField.hidden = !loopbackReady(); if (loopbackReady()) engineSel.value = engine === "device" ? "device" : "loopback";
+    if (p.ok && p.device) modelLine.textContent = `Uses the on-device model (${lm.label}), running in this browser. Page text is processed on this device and is not sent anywhere.`;
+    else if (p.ok && !p.remote) modelLine.textContent = `Uses ${p.loc.label}, which this browser reaches on this computer${p.loc.host ? ` (${p.loc.host})` : ""}. Page text goes only to that address, but Cold can't verify what that server does with it.`;
+    else if (p.ok) { modelLine.textContent = `Using ${p.loc.label} because you allowed it for this session. Page text is sent to that model.`; consent.append(button("Turn that off", { kind: "ghost", id: "askRemoteOff", onclick: () => { engine = "auto"; if (session.state !== "idle" && session.state !== "stopped") stopSession("Hosted model turned off."); paintModel(); paintLocal(); } })); }
     else modelLine.textContent = "";
     return p;
   }
@@ -65,11 +86,61 @@ export function mountAskCold(composeRoot, { store, platform, compose }) {
     clear(consent);
     const d = platform.backend.describe();
     const why = loc.kind === "remote" ? `Your model (${loc.label}) is at ${loc.host}, not on this computer.`
-      : loc.kind === "unverified" ? "The only model available is the Cold desktop app's. From here Cold can't tell whether it runs on this computer."
-      : "No model on this computer is set up.";
-    consent.append(notice("warn", h("strong", {}, "Nothing was read."), h("p", {}, `${why} Cold keeps page text on this computer unless you say otherwise. Set up a local model (for example Ollama) in Settings, or choose to use the available one for this panel session.`),
-      d ? h("div", { class: "actions" }, button(`Use ${d.label} for these checks`, { id: "askRemoteOn", onclick: () => { allowRemote = true; paintModel(); status.textContent = "Allowed for this panel session. Page text will be sent to that model when you ask."; } })) : null));
+      : loc.kind === "unverified" ? "The only other model available is the Cold desktop app's. From here Cold can't tell whether it runs on this computer."
+      : loc.kind === "device_pending" ? "The on-device model isn't ready." : "No model on this computer is set up.";
+    consent.append(notice("warn", h("strong", {}, "Nothing was read."), h("p", {}, `${why} Cold keeps page text on this computer unless you say otherwise. You can set up the on-device model below (no extra software), use a model server on this computer such as Ollama, or choose to use the available model for this panel session.`),
+      d && loc.kind !== "device_pending" ? h("div", { class: "actions" }, button(`Use ${d.label} for these checks`, { id: "askRemoteOn", onclick: () => { engine = "hosted"; paintModel(); paintLocal(); status.textContent = "Allowed for this panel session. Page text will be sent to that model when you ask."; } })) : null));
     modelLine.textContent = "";
+  }
+
+  // ---- the on-device model: set up on request, reused afterwards ------------------------------------------------------------------
+  const sizeText = m => (m.approxDownloadMB >= 1000 ? `about ${m.approxDownloadMB / 1000} GB` : `about ${m.approxDownloadMB} MB`);
+  function paintLocal() {
+    const st = lm.state, m = modelByKey(localSelect.value || st.modelKey);
+    localInfo.textContent = `Runs in this browser on your graphics hardware (WebGPU), so no model server is needed. The first time, it downloads the model files (${sizeText(m)}, estimated) from ${new URL(MODEL_SOURCE.origin).host} (${MODEL_SOURCE.org}) and keeps them in this browser. License: ${m.license}. Pages and your library are never part of that download. ${m.note}`;
+    const busy = st.phase === "checking" || st.phase === "loading";
+    localState.textContent = busy ? `${st.text || "Working…"}${st.phase === "loading" && st.progress ? ` (${Math.round(st.progress * 100)}%)` : ""}`
+      : st.phase === "ready" ? `Ready: ${lm.label}.` : st.phase === "error" || st.phase === "unsupported" ? st.text : st.text || "Not loaded yet.";
+    localState.dataset.phase = st.phase; localState.dataset.code = (st.error && st.error.code) || "";
+    setupBtn.hidden = busy || st.phase === "ready"; setupBtn.textContent = st.phase === "error" ? "Try again" : "Set up the on-device model";
+    cancelBtn.hidden = !busy; removeBtn.hidden = !(st.cached || st.phase === "ready"); localSelect.disabled = busy;
+    smallBtn.hidden = !(st.error && st.error.code === "insufficient_memory" && localSelect.value !== "qwen2.5-0.5b");
+    if (!localSelect.value || localSelect.value !== st.modelKey) localSelect.value = st.modelKey;
+  }
+  lm.subscribe(() => { paintLocal(); paintModel(); });
+
+  /** Explicit setup: says what will be downloaded and asks first, unless the files are already in this browser. */
+  async function setupDevice() {
+    engine = "device"; paintModel();
+    const key = localSelect.value, m = modelByKey(key);
+    lm.select(key);
+    const sup = await lm.support();
+    if (!sup.ok) { status.textContent = sup.message; try { await lm.load({ modelKey: key }); } catch { /* the state shows why */ } return false; }
+    if (!(await lm.isCached(key))) {
+      const ok = await confirmDialog({ title: "Download the on-device model?", confirmLabel: "Download",
+        body: `${m.name} is ${sizeText(m)} (estimated), downloaded once from ${new URL(MODEL_SOURCE.origin).host} (${MODEL_SOURCE.org}) and kept in this browser. License: ${m.license}. It needs about ${(m.variants[sup.variant].vramMB / 1000).toFixed(1)} GB of graphics memory. Only the model files are requested: your pages and library are not part of the download.` });
+      if (!ok) return false;
+    }
+    try { await lm.load({ modelKey: key }); paintModel(); return true; } catch (e) { return false; }
+  }
+  /** The on-device model can't be used right now: say why, and list the other choices. Nothing is chosen for the user. */
+  function deviceProblem(message) {
+    clear(consent);
+    const d = platform.backend.describe();
+    consent.append(notice("warn", h("strong", {}, "Nothing was read."), h("p", {}, `${message} Cold keeps page text on this computer unless you choose otherwise.`),
+      h("p", { class: "hint" }, "Your choices: fix the problem above, use a model server on this computer such as Ollama (Settings)" + (d && !loopbackReady() ? `, or use ${d.label} for these checks.` : ".")),
+      d && !loopbackReady() ? h("div", { class: "actions" }, button(`Use ${d.label} for these checks`, { id: "askRemoteOn", onclick: () => { engine = "hosted"; paintModel(); paintLocal(); status.textContent = "Allowed for this panel session. Page text will be sent to that model when you ask."; } })) : null));
+    modelLine.textContent = ""; status.textContent = "Nothing was read.";
+  }
+  /** Make the on-device model ready for a check WITHOUT downloading anything unasked: load it only if it is already stored in this browser. */
+  async function ensureDevice() {
+    if (lm.ready) return true;
+    if (lm.state.phase === "loading" || lm.state.phase === "checking") { status.textContent = "The on-device model is still loading."; return false; }
+    const sup = await lm.support();
+    if (!sup.ok) { try { await lm.load(); } catch { /* the state shows why */ } deviceProblem(sup.message); return false; }
+    if (!(await lm.isCached())) { deviceProblem("The on-device model hasn't been downloaded to this browser yet. Choose “Set up the on-device model” below; it asks before downloading."); return false; }
+    status.textContent = "Loading the on-device model from this browser…";
+    try { await lm.load(); return true; } catch (e) { deviceProblem(lm.state.text); return false; }
   }
 
   // ---- reading and evaluating ---------------------------------------------------------------------------------------------------
@@ -81,7 +152,8 @@ export function mountAskCold(composeRoot, { store, platform, compose }) {
 
   async function ask() {
     if (busy) return;
-    const p = plan();
+    let p = plan();
+    if (!p.ok && p.device) { busy = true; askBtn.disabled = true; const ready = await ensureDevice(); busy = false; askBtn.disabled = false; if (!ready) { if (!status.textContent) status.textContent = "Nothing was read."; return; } p = plan(); }
     if (!p.ok) { blocked(p.loc); status.textContent = "Nothing was read."; return; }          // before the page is touched
     busy = true; askBtn.disabled = true; clear(result); paintModel();
     try {
@@ -141,7 +213,8 @@ export function mountAskCold(composeRoot, { store, platform, compose }) {
     allowBtn.hidden = !(st === "active" || st === "paused");
   }
   async function startSession() {
-    const p = plan();
+    let p = plan();
+    if (!p.ok && p.device) { bwmStatus.textContent = "Getting the on-device model ready…"; if (!(await ensureDevice())) { bwmStatus.textContent = "Browse With Me didn't start: the on-device model isn't ready."; return; } p = plan(); }
     if (!p.ok) { blocked(p.loc); bwmStatus.textContent = "Browse With Me didn't start: no local model."; return; }
     currentPlan = paintModel();
     session = createBrowseSession({ read: readTab, evaluate: page => evaluateWith(currentPlan, BROWSE_QUESTION)(page), allowed: hasAccess, onChange: paintSession });
@@ -186,7 +259,7 @@ export function mountAskCold(composeRoot, { store, platform, compose }) {
     if (ok) schedule(0);
   }
 
-  paintModel(); paintSession();
+  paintModel(); paintLocal(); paintSession();
   platform.subscribe(() => { if (!consent.firstChild || plan().ok) paintModel(); });
   return { get session() { return session; } };
 }
