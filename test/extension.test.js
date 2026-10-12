@@ -527,8 +527,20 @@ const MODEL_STUBS = {   // STAND-IN model files: just enough for the real runtim
   'tokenizer.json': { version: '1.0', truncation: null, padding: null, added_tokens: [], normalizer: null, pre_tokenizer: null, post_processor: null, decoder: null, model: { type: 'BPE', dropout: null, unk_token: null, continuing_subword_prefix: '', end_of_word_suffix: '', fuse_unk: false, byte_fallback: false, vocab: { a: 0, b: 1 }, merges: [] } },
   'tensor-cache.json': { metadata: { ParamSize: 0, ParamBytes: 0, BitsPerParam: 4 }, records: [] },
 };
-/** Stands in for huggingface.co and records every request made to it. */
-const modelHost = log => route => { const req = route.request(); const file = new URL(req.url()).pathname.split('/').pop(); log.push({ method: req.method(), url: req.url(), headers: req.headers(), body: req.postData() || '' }); const stub = MODEL_STUBS[file]; return route.fulfill(stub ? { status: 200, contentType: 'application/json', headers: CORS, body: JSON.stringify(stub) } : { status: 404, headers: CORS, body: 'not found' }); };
+const PIN_REV = 'a1b2c3d4e5'.repeat(4);   // a made-up commit id for the stand-in model: this is NOT a real Hugging Face revision
+const STAND_IN_BODIES = Object.fromEntries(Object.entries(MODEL_STUBS).map(([k, v]) => [k, Buffer.from(JSON.stringify(v))]));
+const sha = b => require('node:crypto').createHash('sha256').update(b).digest('hex');
+const STAND_IN_IDS = ['Qwen2.5-1.5B-Instruct-q4f16_1-MLC', 'Qwen2.5-1.5B-Instruct-q4f32_1-MLC', 'Qwen2.5-0.5B-Instruct-q4f16_1-MLC', 'Qwen2.5-0.5B-Instruct-q4f32_1-MLC'];
+/** A throwaway copy of the extension whose pins describe the STAND-IN files above (so the real download-and-verify path runs against them). The real build and its (unpinned) pins are never touched. */
+function pinnedExtension(bodies = STAND_IN_BODIES) {
+  const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-ext-pinned-')); fs.cpSync(path.join(__dirname, '../extension'), copy, { recursive: true });
+  const files = Object.fromEntries(Object.entries(bodies).map(([k, v]) => [k, { sha256: sha(v), size: v.length }]));
+  const models = Object.fromEntries(STAND_IN_IDS.map(id => [id, { repo: `mlc-ai/${id}`, revision: PIN_REV, files }]));
+  fs.writeFileSync(path.join(copy, 'dist/model-pins.json'), JSON.stringify({ schema: 1, status: 'pinned', models }));
+  return copy;
+}
+/** Stands in for huggingface.co and records every request made to it. opts.tamper: {file: Buffer} served instead of the pinned bytes; opts.hold: a promise that delays every response. */
+const modelHost = (log, opts = {}) => async route => { const req = route.request(); const file = new URL(req.url()).pathname.split('/').pop(); log.push({ method: req.method(), url: req.url(), headers: req.headers(), body: req.postData() || '' }); if (opts.hold) await opts.hold; const body = (opts.tamper && opts.tamper[file]) || STAND_IN_BODIES[file]; return route.fulfill(body ? { status: 200, contentType: 'application/json', headers: CORS, body } : { status: 404, headers: CORS, body: 'not found' }); };
 const hasAdapter = async panel => panel.evaluate(async () => { try { return !!(navigator.gpu && await navigator.gpu.requestAdapter()); } catch { return false; } });
 const localPhase = panel => panel.getAttribute('#localState', 'data-phase');
 const localCode = panel => panel.getAttribute('#localState', 'data-code');
@@ -559,8 +571,8 @@ test('on-device model, REAL runtime and NO usable GPU (this headless browser has
 
 test('on-device model, REAL runtime on a software WebGPU adapter and STAND-IN model files: the runtime starts under the extension\'s CSP, loads the bundled library, and asks the model host only for model files; the user then gets a clear error and no fallback', { skip: SKIP, timeout: 240000 }, async () => {
   const site = await fixtureSite(), hf = [], other = [];
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-softgpu-'));
-  const s = await askSetup(dir, 'https://models.example.com/v1', { args: SOFT_GPU });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-softgpu-')), copy = pinnedExtension();
+  const s = await askSetup(dir, 'https://models.example.com/v1', { args: SOFT_GPU, ext: copy });
   const outside = []; s.ctx.on('request', r => { const u = r.url(); if (!/^(chrome-extension|data|blob):/.test(u) && !u.startsWith(site.base) && !u.startsWith(HF) && !u.startsWith('https://models.example.com') && !isIdleOllamaProbe(u)) outside.push(u); });
   await s.ctx.route(`${HF}/**`, modelHost(hf));
   await s.ctx.route('https://models.example.com/**', r => { other.push(r.request().url()); r.abort(); });
@@ -572,12 +584,16 @@ test('on-device model, REAL runtime on a software WebGPU adapter and STAND-IN mo
     await s.panel.click('#localSetup');
     await s.panel.waitForSelector('dialog');
     const text = await s.panel.textContent('dialog');
-    assert.match(text, /about 1 GB \(estimated\)/); assert.match(text, /huggingface\.co \(mlc-ai\)/); assert.match(text, /Apache-2\.0/); assert.match(text, /not part of the download/);
+    assert.match(text, /mlc-ai\/Qwen2\.5-1\.5B-Instruct-q4f32_1-MLC at revision a1b2c3d4e5a1/); assert.match(text, /huggingface\.co/); assert.match(text, /Apache-2\.0/); assert.match(text, /pinned SHA-256/); assert.match(text, /not part of the download/);
     await s.panel.click('dialog button[value="ok"]');
     await s.panel.waitForFunction(() => ['error', 'ready', 'unsupported'].includes(document.querySelector('#localState').dataset.phase), null, { timeout: 120000 });
     assert.equal(await s.panel.evaluate(() => !!globalThis.coldWebLLM), true, 'the runtime script loaded on demand under the extension CSP');
     // the software adapter has no f16 shaders, so the f32 build was chosen; the library came from inside the extension and passed its checksum
-    assert.ok(hf.length >= 3 && hf.every(r => r.url.includes('/mlc-ai/Qwen2.5-1.5B-Instruct-q4f32_1-MLC/resolve/')), hf.map(r => r.url).join(' '));
+    const urls = hf.map(r => r.url);
+    assert.ok(urls.length >= 3 && urls.every(u => u.startsWith(`${HF}/mlc-ai/Qwen2.5-1.5B-Instruct-q4f32_1-MLC/resolve/${PIN_REV}/`)), 'every request names the pinned commit, never a branch: ' + urls.join(' '));
+    for (const file of Object.keys(STAND_IN_BODIES)) assert.equal(urls.filter(u => u.endsWith('/' + file)).length, 1, `${file} was fetched exactly once`);
+    const stored = await s.panel.evaluate(async () => { const out = {}; for (const k of await caches.keys()) out[k] = (await (await caches.open(k)).keys()).map(r => r.url); return out; });
+    assert.equal(Object.values(stored).flat().length, 3, 'the three verified files are stored in the browser cache: ' + JSON.stringify(stored));
     assert.equal(await localPhase(s.panel), 'error'); assert.equal(await localCode(s.panel), 'init_failed');   // the stand-in has no weights: the runtime stops when it asks for them, and Cold says so plainly
     assert.match(await s.panel.textContent('#localState'), /couldn't start.*remove the downloaded model/);
     // what the model host saw: plain GETs for model files; no query, body, cookie or anything from the page or the library
@@ -593,14 +609,16 @@ test('on-device model, REAL runtime on a software WebGPU adapter and STAND-IN mo
     await new Promise(r => setTimeout(r, 1000));
     assert.deepEqual(other, [], 'no hosted fallback after the local model failed');
     // the files can be removed again
-    await s.panel.click('#localRemove').catch(() => {});
-  } finally { await s.ctx.close(); await site.close(); }
+    await s.panel.click('#localRemove');
+    await s.panel.waitForFunction(() => /Removed from this browser/.test(document.querySelector('#localState').textContent));
+    assert.deepEqual(await s.panel.evaluate(async () => { const out = []; for (const k of await caches.keys()) for (const r of await (await caches.open(k)).keys()) out.push(k + ' ' + r.url); return out; }), [], 'removal left no model file in the browser cache');
+  } finally { await s.ctx.close(); await site.close(); fs.rmSync(copy, { recursive: true, force: true }); }
 });
 function t_skip() { /* the condition is reported by the test name: this machine can't exercise it */ }
 
 test('on-device model, REAL runtime: a compiled model library that does not match its pinned checksum is refused and nothing runs', { skip: SKIP, timeout: 240000 }, async () => {
   const hf = [];
-  const copy = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-ext-tamper-')); fs.cpSync(path.join(__dirname, '../extension'), copy, { recursive: true });   // a throwaway copy: the real build is never touched
+  const copy = pinnedExtension();                                                                                                                       // a throwaway copy: the real build is never touched
   const lib = path.join(copy, 'dist/models/Qwen2-1.5B-Instruct-q4f32_1_cs1k-webgpu.wasm');
   if (!fs.existsSync(lib)) { fs.rmSync(copy, { recursive: true, force: true }); return t_skip('the build could not fetch the compiled model libraries'); }
   const bytes = fs.readFileSync(lib); bytes[bytes.length - 1] ^= 1; fs.writeFileSync(lib, bytes);                                                  // one flipped bit
@@ -619,7 +637,7 @@ test('on-device model, REAL runtime: a compiled model library that does not matc
 // ---- the product flows on a FAKE runtime: deterministic, fast, and NOT evidence that a real model works ----------------------------------
 const FAKE_RUNTIME = () => {
   Object.defineProperty(navigator, 'gpu', { configurable: true, value: { requestAdapter: async () => ({ features: new Set(['shader-f16']), limits: {} }) } });
-  const F = window.__fake = { creates: 0, gens: [], aborts: 0, deleted: [], cached: false, hang: false, failNext: 0, unloaded: 0 };
+  const F = window.__fake = { creates: 0, gens: [], aborts: 0, deleted: [], hang: false, failNext: 0, unloaded: 0 };
   const answer = prompt => {
     const page = (prompt.match(/<<<PAGE [^>]+>>>\n([\s\S]*?)\n<<<END PAGE/) || [])[1] || '';
     const opp = (company, quote) => ({ verdict: 'opportunity', summary: `${company} is hiring in the area you cover.`, opportunities: [{ type: 'buying_signal', productId: 'P1', who: { name: '', role: '', company }, relationshipId: '', evidence: [quote], rationale: 'Hiring for this work suggests they are investing in it.', confidence: 'medium', uncertainty: 'The page does not say who decides.', nextAction: 'save_prospect' }] });
@@ -629,42 +647,107 @@ const FAKE_RUNTIME = () => {
   };
   window.coldWebLLM = {
     version: 'FAKE',
-    hasModelInCache: async () => F.cached,
-    deleteModelAllInfoInCache: async id => { F.deleted.push(id); F.cached = false; },
     create: async ({ modelId, onProgress, signal }) => {
       F.creates++;
       if (F.failNext > 0) { F.failNext--; throw new Error('Failed to fetch model files'); }
       onProgress({ progress: 0.4, text: 'Fetching param cache[3/9]' });
       if (F.hang) await new Promise((_, rej) => signal.addEventListener('abort', () => { F.aborts++; rej({ code: 'cancelled' }); }));
-      F.cached = true; onProgress({ progress: 1, text: 'Finish loading' });
+      onProgress({ progress: 1, text: 'Finish loading' });
       return { generate: async ({ prompt }) => { F.gens.push(prompt); return { text: JSON.stringify(answer(prompt)) }; }, unload: async () => { F.unloaded++; } };
     },
   };
 };
 const fake = panel => panel.evaluate(() => JSON.parse(JSON.stringify(window.__fake)));
 
+const cacheCount = panel => panel.evaluate(async () => { let n = 0; for (const k of await caches.keys()) n += (await (await caches.open(k)).keys()).length; return n; });
+
+test('on-device model, shipped build (pins not yet recorded): setup fails closed with an explanation; no dialog, no request to any model host, no runtime start, no fallback', { skip: SKIP, timeout: 120000 }, async () => {
+  const pins = JSON.parse(fs.readFileSync(path.join(__dirname, '../extension/dist/model-pins.json'), 'utf8'));
+  if (pins.status === 'pinned') return t_skip('this build carries recorded pins; the unpinned behaviour is covered by the unit tests');
+  const site = await fixtureSite(), hf = [], other = [];
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-unpinned-'));
+  const s = await askSetup(dir, 'https://models.example.com/v1', { init: `(${FAKE_RUNTIME.toString()})()` });
+  await s.ctx.route(`${HF}/**`, modelHost(hf)); await s.ctx.route('https://models.example.com/**', r => { other.push(r.request().url()); r.abort(); });
+  try {
+    await showTab(s.ctx, s.panel, `${site.base}/northwind/careers`);
+    await s.panel.click('#localSetup');
+    await s.panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'error');
+    assert.equal(await localCode(s.panel), 'unpinned_model'); assert.match(await s.panel.textContent('#localState'), /checksum|pinned/i);
+    assert.equal(await s.panel.locator('dialog').count(), 0, 'no download dialog for a download that cannot be verified');
+    await s.panel.click('#askRun'); await s.panel.waitForFunction(() => /Nothing was read\./.test(document.querySelector('#askConsent').textContent));
+    await new Promise(r => setTimeout(r, 800));
+    assert.deepEqual([hf.length, other.length, (await fake(s.panel)).creates, await cacheCount(s.panel)], [0, 0, 0, 0]);
+  } finally { await s.ctx.close(); await site.close(); }
+});
+
+test('on-device model, REAL download path with stand-in files: a file that does not match its pinned SHA-256 is refused, named, not stored, the runtime is never started, nothing falls back, and a retry succeeds', { skip: SKIP, timeout: 120000 }, async () => {
+  const site = await fixtureSite(), hf = [], other = [], tamper = { 'tokenizer.json': Buffer.from(JSON.stringify({ version: '9.9', evil: true })) };
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-integrity-')), copy = pinnedExtension();
+  const s = await askSetup(dir, 'https://models.example.com/v1', { init: `(${FAKE_RUNTIME.toString()})()`, ext: copy });
+  await s.ctx.route(`${HF}/**`, modelHost(hf, { tamper })); await s.ctx.route('https://models.example.com/**', r => { other.push(r.request().url()); r.abort(); });
+  try {
+    await showTab(s.ctx, s.panel, `${site.base}/northwind/careers`);
+    await s.panel.click('#localSetup'); await s.panel.click('dialog button[value="ok"]');
+    await s.panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'error');
+    assert.equal(await localCode(s.panel), 'integrity_failed');
+    const msg = await s.panel.textContent('#localState'); assert.match(msg, /tokenizer\.json/); assert.match(msg, /Try again/i);
+    assert.equal((await fake(s.panel)).creates, 0, 'the runtime never started');
+    assert.ok(await cacheCount(s.panel) < 3, 'the bad file is not stored');
+    assert.equal(await s.panel.evaluate(async () => { for (const k of await caches.keys()) for (const r of await (await caches.open(k)).keys()) if (r.url.endsWith('tokenizer.json')) return true; return false; }), false);
+    await s.panel.click('#askRun'); await s.panel.waitForFunction(() => /Nothing was read\./.test(document.querySelector('#askConsent').textContent));
+    await new Promise(r => setTimeout(r, 600)); assert.deepEqual(other, [], 'no hosted fallback after an integrity failure');
+    // retry once the host serves the pinned bytes: only the missing file is fetched
+    delete tamper['tokenizer.json']; hf.length = 0;
+    await s.panel.click('#localSetup'); await s.panel.click('dialog button[value="ok"]').catch(() => {});
+    await s.panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'ready');
+    assert.deepEqual(hf.map(r => r.url.split('/').pop()).sort(), ['tensor-cache.json', 'tokenizer.json'], 'the retry fetched only the two files that were not yet stored; the config was reused');
+  } finally { await s.ctx.close(); await site.close(); fs.rmSync(copy, { recursive: true, force: true }); }
+});
+
+test('on-device model, REAL download path: cancelling a download in progress stops it, shows no success, and keeps nothing half-written', { skip: SKIP, timeout: 120000 }, async () => {
+  const site = await fixtureSite(), hf = []; let release; const hold = new Promise(r => { release = r; });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-cancel-')), copy = pinnedExtension();
+  const s = await askSetup(dir, null, { init: `(${FAKE_RUNTIME.toString()})()`, ext: copy });
+  await s.ctx.route(`${HF}/**`, modelHost(hf, { hold }));
+  try {
+    await showTab(s.ctx, s.panel, `${site.base}/northwind/careers`);
+    await s.panel.click('#localSetup'); await s.panel.click('dialog button[value="ok"]');
+    await s.panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'loading');
+    await s.panel.waitForSelector('#localCancel', { state: 'visible' }); await s.panel.click('#localCancel');
+    await s.panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'unloaded');
+    release();
+    await new Promise(r => setTimeout(r, 800));
+    assert.deepEqual([await localPhase(s.panel), (await fake(s.panel)).creates, await cacheCount(s.panel)], ['unloaded', 0, 0], 'still not ready, runtime not started, nothing stored');
+    assert.doesNotMatch(await s.panel.textContent("#localState"), /\bready\b/i);
+  } finally { release(); await s.ctx.close(); await site.close(); fs.rmSync(copy, { recursive: true, force: true }); }
+});
+
 test('on-device model (FAKE runtime): nothing downloads without consent; setup shows progress and can be cancelled; the loaded model is reused by Ask Cold and Browse With Me, which use the same evaluator; nothing leaves the browser', { skip: SKIP, timeout: 240000 }, async () => {
   const site = await fixtureSite();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-device-'));
-  const s = await askSetup(dir, null, { init: `(${FAKE_RUNTIME.toString()})()` });
+  const copy = pinnedExtension(), hf = [];
+  const s = await askSetup(dir, null, { init: `(${FAKE_RUNTIME.toString()})()`, ext: copy });
   const { ctx, panel, errors } = s;
-  const outside = []; ctx.on('request', r => { const u = r.url(); if (!/^(chrome-extension|data|blob):/.test(u) && !u.startsWith(site.base) && !isIdleOllamaProbe(u)) outside.push(u); });
+  await ctx.route(`${HF}/**`, modelHost(hf));
+  const outside = []; ctx.on('request', r => { const u = r.url(); if (!/^(chrome-extension|data|blob):/.test(u) && !u.startsWith(site.base) && !u.startsWith(HF) && !isIdleOllamaProbe(u)) outside.push(u); });
   try {
     await showTab(ctx, panel, `${site.base}/northwind/careers`);
     // ---- asking before setup: nothing is read, nothing is downloaded, and the page says what to do
     await panel.click('#askRun');
     await panel.waitForFunction(() => /hasn't been downloaded/.test(document.querySelector('#askConsent').textContent));
-    assert.deepEqual([(await fake(panel)).creates, (await fake(panel)).gens.length], [0, 0]);
-    // ---- cancel a download in progress
+    assert.deepEqual([(await fake(panel)).creates, (await fake(panel)).gens.length, hf.length], [0, 0, 0]);
+    // ---- cancel while the runtime starts (the files were downloaded and verified first)
     await panel.evaluate(() => { window.__fake.hang = true; });
     await panel.click('#localSetup'); await panel.click('dialog button[value="ok"]');
-    await panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'loading' && /40%/.test(document.querySelector('#localState').textContent));
+    await panel.waitForFunction(() => window.__fake.creates === 1);
+    assert.equal(await localPhase(panel), 'loading');
     await panel.click('#localCancel');
     await panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'unloaded');
     assert.deepEqual([(await fake(panel)).aborts, await panel.isVisible('#localCancel')], [1, false]);
-    // ---- set up for real: ready, and Ask Cold works
-    await panel.evaluate(() => { window.__fake.hang = false; window.__fake.cached = false; });
-    await panel.click('#localSetup'); await panel.click('dialog button[value="ok"]');
+    assert.equal(hf.length, 3, 'the three pinned files were requested once each');
+    // ---- set up for real: the verified files are reused (no new download), ready, and Ask Cold works
+    await panel.evaluate(() => { window.__fake.hang = false; });
+    await panel.click('#localSetup'); await panel.click('dialog button[value="ok"]').catch(() => {});
     await panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'ready');
     assert.match(await panel.textContent('#askModelLine'), /Uses the on-device model .*running in this browser\. Page text is processed on this device and is not sent anywhere/);
     await panel.click('#askRun'); await panel.waitForSelector('#askResult .ask-card');
@@ -684,28 +767,36 @@ test('on-device model (FAKE runtime): nothing downloads without consent; setup s
     assert.ok(f.gens.length >= 3 && f.gens.every(p => /Cold's opportunity evaluator/.test(p) && /untrusted web content/.test(p)), 'every request to the model was the shared evaluator\'s prompt');
     for (const secret of ['Zed Unrelated', 'ElsewhereCo', 'PRIVATE-NOTE-ABOUT-ZED']) assert.ok(!f.gens.join('\n').includes(secret), `not given to the model: ${secret}`);
     assert.deepEqual(outside, [], 'no request left the browser during local evaluation');
+    assert.equal(hf.length, 3, 'evaluations and reuse never touched the model host again');
+    assert.ok(hf.every(r => r.url.includes(`/resolve/${PIN_REV}/`) && !r.url.includes('/resolve/main/')));
     // ---- remove: the files are deleted and the model needs setting up again
     await panel.click('#localRemove');
-    await panel.waitForFunction(() => /removed from this browser/i.test(document.querySelector('#localState').textContent) || document.querySelector('#localState').dataset.phase === 'unloaded');
-    assert.deepEqual((await fake(panel)).deleted.length, 1);
+    await panel.waitForFunction(() => /Removed from this browser/.test(document.querySelector('#localState').textContent));
+    assert.equal(await panel.evaluate(async () => { let n = 0; for (const k of await caches.keys()) n += (await (await caches.open(k)).keys()).length; return n; }), 0, 'removal deleted every stored model file');
     assert.deepEqual(errors, []);
-  } finally { await ctx.close(); await site.close(); }
+  } finally { await ctx.close(); await site.close(); fs.rmSync(copy, { recursive: true, force: true }); }
 });
 
 test('on-device model (FAKE runtime): a model already stored in the browser loads on first use without a prompt; a failed load is reported with a retry and nothing falls back to a hosted model', { skip: SKIP, timeout: 200000 }, async () => {
   const site = await fixtureSite(), hosted = [];
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-device2-'));
-  const s = await askSetup(dir, 'https://models.example.com/v1', { init: `(${FAKE_RUNTIME.toString()})(); window.__fake.cached = true;` });
+  const copy = pinnedExtension(), hf = [];
+  const s = await askSetup(dir, 'https://models.example.com/v1', { init: `(${FAKE_RUNTIME.toString()})()`, ext: copy });
   await s.ctx.route('https://models.example.com/**', r => { hosted.push(r.request().url()); r.abort(); });
+  await s.ctx.route(`${HF}/**`, modelHost(hf));
   const { ctx, panel } = s;
   try {
     await showTab(ctx, panel, `${site.base}/northwind/careers`);
+    await panel.click('#localSetup'); await panel.click('dialog button[value="ok"]');           // stored once, with consent
+    await panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'ready');
+    await panel.reload(); await panel.waitForSelector('#askRun', { state: 'attached' });         // a new panel session: the model is stored but not loaded
+    hf.length = 0;
     // cached: asking loads it (lazily, on first request) and answers; no download dialog
     await panel.click('#askRun'); await panel.waitForSelector('#askResult .ask-card');
-    assert.deepEqual([(await fake(panel)).creates, await panel.locator('dialog').count()], [1, 0]);
+    assert.deepEqual([(await fake(panel)).creates, await panel.locator('dialog').count(), hf.length], [1, 0, 0], 'loaded from the stored files: no prompt, no download');
     // reload the panel with a model that will fail to load
     await panel.reload(); await panel.waitForSelector('#askRun', { state: 'attached' });
-    await panel.evaluate(() => { window.__fake.cached = true; window.__fake.failNext = 1; });
+    await panel.evaluate(() => { window.__fake.failNext = 1; });
     await showTab(ctx, panel, `${site.base}/northwind/careers`); await panel.click('#askRun');
     await panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'error');
     assert.equal(await localCode(panel), 'download_failed'); assert.match(await panel.textContent('#askConsent'), /couldn't be downloaded/);
@@ -717,13 +808,14 @@ test('on-device model (FAKE runtime): a model already stored in the browser load
     await panel.click('#localSetup'); await panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'ready', null, { timeout: 15000 }).catch(async () => { await panel.click('dialog button[value="ok"]'); await panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'ready'); });
     await panel.click('#askRun'); await panel.waitForSelector('#askResult .ask-card');
     assert.deepEqual(hosted, []);
-  } finally { await ctx.close(); await site.close(); }
+  } finally { await ctx.close(); await site.close(); fs.rmSync(copy, { recursive: true, force: true }); }
 });
 
 test('on-device model (FAKE runtime) and a model server on this computer can both be configured; the user picks, and the loopback option still works', { skip: SKIP, timeout: 200000 }, async () => {
   const site = await fixtureSite(), model = await evalModel();
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-device3-'));
-  const s = await askSetup(dir, `http://127.0.0.1:${model.port}/v1`, { init: `(${FAKE_RUNTIME.toString()})()` });
+  const copy = pinnedExtension();
+  const s = await askSetup(dir, `http://127.0.0.1:${model.port}/v1`, { init: `(${FAKE_RUNTIME.toString()})()`, ext: copy });
   const { ctx, panel } = s;
   try {
     await showTab(ctx, panel, `${site.base}/northwind/careers`);
@@ -736,5 +828,5 @@ test('on-device model (FAKE runtime) and a model server on this computer can bot
     await panel.click('#askRun');
     await panel.waitForFunction(() => /hasn't been downloaded/.test(document.querySelector('#askConsent').textContent));
     assert.equal(evalPrompts(model).length, 1, 'choosing the on-device model does not quietly use the server instead');
-  } finally { await ctx.close(); await model.close(); await site.close(); }
+  } finally { await ctx.close(); await model.close(); await site.close(); fs.rmSync(copy, { recursive: true, force: true }); }
 });

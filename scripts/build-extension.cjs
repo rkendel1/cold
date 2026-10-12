@@ -37,6 +37,7 @@ async function fetchLibraries() {
 (async () => {
   await esbuild.build({ ...common, entryPoints: [path.join(root, "extension/src/panel.js")], minify: false, entryNames: "panel" });
   await esbuild.build({ ...common, entryPoints: { "llm-client": path.join(root, "extension/src/llmClient.js"), "llm-worker": path.join(root, "extension/src/llmWorker.js") }, minify: true, define: { "process.env.NODE_ENV": '"production"' } });
+  fs.copyFileSync(path.join(root, "extension/src/modelPins.json"), path.join(dist, "model-pins.json"));   // read at run time by the on-device model; tests can swap it in a copy
   const missing = await fetchLibraries();
   console.log(missing ? `Built extension/dist (${missing} model librar${missing === 1 ? "y" : "ies"} missing)` : "Built extension/dist");
 })().catch(e => { console.error(e); process.exit(1); });

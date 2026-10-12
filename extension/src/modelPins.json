@@ -1,0 +1,6 @@
+{
+  "schema": 1,
+  "status": "unpinned",
+  "reason": "No immutable revision or file digests have been recorded yet: huggingface.co was not reachable from the environment this was built in. Run `npm run pin:local-model` on a machine that can reach it, review the diff, and commit. Until then the on-device model refuses to download (fail closed).",
+  "models": {}
+}

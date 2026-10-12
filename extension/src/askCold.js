@@ -95,9 +95,13 @@ export function mountAskCold(composeRoot, { store, platform, compose }) {
 
   // ---- the on-device model: set up on request, reused afterwards ------------------------------------------------------------------
   const sizeText = m => (m.approxDownloadMB >= 1000 ? `about ${m.approxDownloadMB / 1000} GB` : `about ${m.approxDownloadMB} MB`);
+  const mb = bytes => (bytes >= 1e9 ? `${(bytes / 1e9).toFixed(2)} GB` : `${Math.round(bytes / 1e6)} MB`);
   function paintLocal() {
     const st = lm.state, m = modelByKey(localSelect.value || st.modelKey);
-    localInfo.textContent = `Runs in this browser on your graphics hardware (WebGPU), so no model server is needed. The first time, it downloads the model files (${sizeText(m)}, estimated) from ${new URL(MODEL_SOURCE.origin).host} (${MODEL_SOURCE.org}) and keeps them in this browser. License: ${m.license}. Pages and your library are never part of that download. ${m.note}`;
+    const where = `${new URL(MODEL_SOURCE.origin).host} (${MODEL_SOURCE.org})`;
+    const provenance = st.pinned === false ? " This build has no verified checksums for the model yet, so it will not download it."
+      : st.pinned ? ` Pinned to revision ${st.revision.slice(0, 12)}; every file is checked against its SHA-256 before it is used.` : "";
+    localInfo.textContent = `Runs in this browser on your graphics hardware (WebGPU), so no model server is needed. The first time, it downloads the model files (${st.pinned ? `${mb(st.totalBytes)}, exact` : `${sizeText(m)}, estimated`}) from ${where} and keeps them in this browser. License: ${m.license}. Pages and your library are never part of that download.${provenance} ${m.note}`;
     const busy = st.phase === "checking" || st.phase === "loading";
     localState.textContent = busy ? `${st.text || "Working…"}${st.phase === "loading" && st.progress ? ` (${Math.round(st.progress * 100)}%)` : ""}`
       : st.phase === "ready" ? `Ready: ${lm.label}.` : st.phase === "error" || st.phase === "unsupported" ? st.text : st.text || "Not loaded yet.";
@@ -109,16 +113,18 @@ export function mountAskCold(composeRoot, { store, platform, compose }) {
   }
   lm.subscribe(() => { paintLocal(); paintModel(); });
 
-  /** Explicit setup: says what will be downloaded and asks first, unless the files are already in this browser. */
+  /** Explicit setup: says what will be downloaded (source, exact revision, licence, size) and asks first, unless the verified files are already here. */
   async function setupDevice() {
     engine = "device"; paintModel();
     const key = localSelect.value, m = modelByKey(key);
     lm.select(key);
     const sup = await lm.support();
     if (!sup.ok) { status.textContent = sup.message; try { await lm.load({ modelKey: key }); } catch { /* the state shows why */ } return false; }
+    const info = await lm.pinInfo(key, sup.variant);
+    if (!info.entry) { status.textContent = info.problem; try { await lm.load({ modelKey: key }); } catch { /* the state shows why */ } return false; }       // fail closed: no dialog, no request
     if (!(await lm.isCached(key))) {
       const ok = await confirmDialog({ title: "Download the on-device model?", confirmLabel: "Download",
-        body: `${m.name} is ${sizeText(m)} (estimated), downloaded once from ${new URL(MODEL_SOURCE.origin).host} (${MODEL_SOURCE.org}) and kept in this browser. License: ${m.license}. It needs about ${(m.variants[sup.variant].vramMB / 1000).toFixed(1)} GB of graphics memory. Only the model files are requested: your pages and library are not part of the download.` });
+        body: `${m.name}: ${info.entry.repo} at revision ${info.entry.revision.slice(0, 12)}, ${mb(lm.state.totalBytes)} in ${Object.values(info.entry.files).filter(f => f.required !== false).length} files, from ${new URL(MODEL_SOURCE.origin).host}. License: ${m.license}. Each file is checked against its pinned SHA-256 before it is used, and discarded if it doesn't match. It needs about ${(m.variants[sup.variant].vramMB / 1000).toFixed(1)} GB of graphics memory. Only model files are requested: your pages and library are not part of the download.` });
       if (!ok) return false;
     }
     try { await lm.load({ modelKey: key }); paintModel(); return true; } catch (e) { return false; }
@@ -138,7 +144,7 @@ export function mountAskCold(composeRoot, { store, platform, compose }) {
     if (lm.state.phase === "loading" || lm.state.phase === "checking") { status.textContent = "The on-device model is still loading."; return false; }
     const sup = await lm.support();
     if (!sup.ok) { try { await lm.load(); } catch { /* the state shows why */ } deviceProblem(sup.message); return false; }
-    if (!(await lm.isCached())) { deviceProblem("The on-device model hasn't been downloaded to this browser yet. Choose “Set up the on-device model” below; it asks before downloading."); return false; }
+    if (!(await lm.isCached())) { deviceProblem(lm.state.pinned === false ? (await lm.pinInfo(lm.state.modelKey, sup.variant)).problem : "The on-device model hasn't been downloaded to this browser yet. Choose “Set up the on-device model” below; it asks before downloading."); return false; }
     status.textContent = "Loading the on-device model from this browser…";
     try { await lm.load(); return true; } catch (e) { deviceProblem(lm.state.text); return false; }
   }
