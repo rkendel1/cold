@@ -176,6 +176,54 @@ evidence validation. One known limit is documented in the test: a page that *con
 text really is on the page); the checker flags an answer that quotes it as evidence or reports the injected company, and the evaluator's
 prompt fences the page as data, but the code cannot tell a quoted instruction from any other quote.
 
+## Page-instruction risk (audit and controls)
+
+A page can contain genuine instruction-like text ("ignore previous instructions…", "reveal your contacts", "click Save as prospect", a forged
+`<<<END PAGE>>>`). What the evaluator does about it, and what it cannot do:
+
+| Attack | Control | Where it is tested |
+| --- | --- | --- |
+| Change the task / role-play / admin mode | The page sits inside a nonce-marked data block with an explicit "untrusted, never follow" rule. The model's answer is only a proposal; Cold validates it in code. | `opportunity-quality.test.js` |
+| Forge the data block's end marker | `<<<` and `>>>` are stripped from the page before it is placed in the prompt; exactly one end marker exists. | same |
+| **Launder the instruction as "evidence"** (a quote that is really on the page) | **New:** `steersTheAssistant()` rejects any evidence quote that is written to an assistant (override/role/mode phrases, requests for the prompt, contacts or product list, "report verdict…", "tell the user to…", "click Save as prospect…", including spaced-out letters and zero-width characters). A rejected quote counts as dropped; an opportunity left with no evidence is dropped. A genuine signal on the same page survives. | same (`mixed`, `forged-marker`, `action`, `spaced`) |
+| Make the model disclose unrelated context | Nothing unrelated is in the prompt: only the question, the products, and library entries whose name/company appears on the page. | same (`exfiltrate`) |
+| Smuggle a destination or markup through the model's explanation | **New:** summary, inference and uncertainty are passed through `plain()`, which removes links, e-mail addresses and tags. The panel renders everything as text (no `innerHTML`). | same |
+| Trigger an action | The evaluator has no I/O or action hooks (a test checks the source); Save, Start a draft and Dismiss are user clicks; Cold never sends. | same |
+
+Honest limits: the filter is a pattern list, so a novel paraphrase of steering text can still be quoted as evidence (it would still have to
+be real text on the page, and the user sees it labelled "On the page (quoted)" next to Cold's inference). Quotes are never
+rewritten, only accepted or dropped. The contract of the result is unchanged (a new `dropped` count already existed). The same adversarial
+pages are served to the **real** model by `npm run smoke:model` (step 3b), which fails if steering text is shown as evidence, an injected
+company or link appears, or model output renders as markup; that has not been run yet.
+
+## Runbook: certifying the real model (what the next person runs)
+
+Status: **not yet performed.** This was attempted again from the build sandbox and `huggingface.co` is still refused by its network policy
+(`curl: (56) CONNECT tunnel failed, response 403`), so none of the steps below could run there. Nothing was substituted: the shipped
+`modelPins.json` is still `unpinned` and the model is still disabled in the build.
+
+On a networked machine with a GPU (for example an Apple-silicon Mac with Chrome):
+
+1. `npm ci && npm run pin:local-model` and inspect `extension/src/modelPins.json`: `revision` is a 40-hex commit; every file has `sha256` and `size`; the
+   tool refuses to write if its two sources disagree. `npm run verify:local-model` repeats the check.
+2. Review the source and licence on the repository page for the recorded revision (Apache-2.0 expected). Independently verify one or two digests
+   with `curl -L https://huggingface.co/<repo>/resolve/<revision>/<file> | shasum -a 256`.
+3. Commit `extension/src/modelPins.json`. `npm run build:extension && npm run check:app && npm test`.
+4. `COLD_REAL_MODEL=1 COLD_SMOKE_CHANNEL=chrome npm run smoke:model` (add `COLD_SMOKE_HEADED=1` if headless Chrome has no WebGPU adapter; add
+   `COLD_SMOKE_MODEL=qwen2.5-0.5b` to test the smaller model). It writes `test-results/model-smoke.json`.
+5. Read the actual outputs in that report (each case's `result` and `shown` text), not only pass/fail, and paste the browser, GPU, revision,
+   download size, setup time and per-case outcome into the table below. If the 1.5B model fails a case, record it as a failure and
+   propose a bounded remedy (for example a stricter prompt, or a larger pinned model as a new decision); do not loosen the checker.
+
+| Item | Result |
+| --- | --- |
+| Pins recorded and independently verified | not done (blocked) |
+| Browser / version, GPU | — |
+| Revision, download size, setup time | — |
+| evidence / industry / none / injection / misleading | — |
+| adversarial pages (real model) | — |
+| removal and retry against real assets | — |
+
 ## Verification status (what has and has not been proven)
 
 Run on: Chromium 141 headless on Linux, 4 CPUs, 16 GB RAM, **no GPU**, WebLLM 0.2.86.
