@@ -15,7 +15,9 @@
     "desktop:build": "npm run build:app && electron-builder",
     "desktop:pack": "npm run build:app && electron-builder --dir",
     "build:extension": "node scripts/build-extension.cjs",
-    "pin:local-model": "node scripts/pin-local-model.cjs"
+    "pin:local-model": "node scripts/pin-local-model.cjs",
+    "verify:local-model": "node scripts/pin-local-model.cjs --verify",
+    "smoke:model": "COLD_REAL_MODEL=1 node --test test/model-smoke.test.js"
   },
   "engines": {
     "node": ">=18"

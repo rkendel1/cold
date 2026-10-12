@@ -36,7 +36,8 @@ export async function createExtensionPlatform() {
     el.onerror = () => reject({ code: "init_failed", message: "The on-device model runtime is missing from this build of the extension." });
     document.head.append(el);
   });
-  const localModel = createLocalModel({ loadRuntime, libUrl: p => chrome.runtime.getURL(`dist/${p}`) });   // build output lives in extension/dist
+  const loadPins = async () => (await fetch(chrome.runtime.getURL("dist/model-pins.json"))).json();   // shipped with the build; see modelPins.js
+  const localModel = createLocalModel({ loadRuntime, loadPins, libUrl: p => chrome.runtime.getURL(`dist/${p}`) });   // build output lives in extension/dist
   const backend = createBackend({
     link, getConfig: () => config,
     own: { ready: () => { const o = ownCfg(); return !!(o && o.ready); }, sample: ownSample, label: () => { const o = ownCfg(); return `${o.label} · ${o.model}`; },

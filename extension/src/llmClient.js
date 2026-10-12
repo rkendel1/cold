@@ -1,12 +1,10 @@
 // The WebLLM runtime, loaded on demand (llm-client.js is only fetched when the user first asks for the on-device model, so opening the
 // panel never pays for it). It talks to llm-worker.js; model execution happens in that worker, on this computer's GPU.
-import { CreateWebWorkerMLCEngine, hasModelInCache, deleteModelAllInfoInCache } from "@mlc-ai/web-llm";
+import { CreateWebWorkerMLCEngine } from "@mlc-ai/web-llm";
 
 globalThis.coldWebLLM = {
   version: "web-llm",
-  hasModelInCache: (id, appConfig) => hasModelInCache(id, appConfig),
-  deleteModelAllInfoInCache: (id, appConfig) => deleteModelAllInfoInCache(id, appConfig),
-  /** Starts a worker and loads a model into it. Aborting the signal terminates the worker, which stops any download in progress. */
+  /** Starts a worker and loads a model into it. The model files must already be in the cache (the panel downloads and verifies them first). Aborting the signal terminates the worker, which stops any download in progress. */
   async create({ modelId, appConfig, onProgress, signal }) {
     const worker = new Worker(globalThis.chrome.runtime.getURL("dist/llm-worker.js"));
     let aborted = false, onAbort;
