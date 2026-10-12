@@ -111,14 +111,17 @@ test('only what the question needs reaches the model: matched contacts, not the 
   assert.deepEqual(matchRelationships('We spoke with ZED UNRELATED yesterday', EMAILS).map(r => r.recordId), ['e2']);
 });
 
-test('where the page text would go: only a model reached at a loopback address is "local"', async () => {
-  const { localityOf, isLoopbackUrl } = await load('src/domain/opportunity.js');
+test('where the page text would go: only the in-browser model is verified local; a loopback server is on this computer but unverified', async () => {
+  const { localityOf, isLoopbackUrl, staysOnThisComputer } = await load('src/domain/opportunity.js');
   const own = (baseUrl, ready = true) => ({ ready, baseUrl, label: 'Ollama (local)', model: 'llama3.1' });
   assert.deepEqual(['http://127.0.0.1:11434', 'http://localhost:11434/v1', 'http://[::1]:11434'].map(isLoopbackUrl), [true, true, true]);
   assert.equal(isLoopbackUrl('https://api.openai.com/v1'), false);
   assert.equal(isLoopbackUrl('http://127.0.0.1.evil.example/v1'), false);
-  assert.equal(localityOf({ own: own('http://127.0.0.1:11434') }).kind, 'local');
-  assert.deepEqual(localityOf({ own: own('https://api.openai.com/v1') }), { kind: 'remote', label: 'Ollama (local) · llama3.1', host: 'api.openai.com' });
+  assert.deepEqual(localityOf({ own: own('http://127.0.0.1:11434') }), { kind: 'loopback', label: 'Ollama (local) · llama3.1', host: '127.0.0.1:11434', verified: false }, 'a loopback address is on this computer but not VERIFIED local');
+  assert.deepEqual(localityOf({ own: own('https://api.openai.com/v1') }), { kind: 'remote', label: 'Ollama (local) · llama3.1', host: 'api.openai.com', verified: false });
+  assert.deepEqual(localityOf({ own: own('https://api.openai.com/v1'), device: { ready: true, label: 'Qwen (on this device)' } }), { kind: 'in_browser', label: 'Qwen (on this device)', verified: true });
+  assert.equal(localityOf({ own: own('http://127.0.0.1:11434'), device: { ready: false } }).kind, 'loopback', 'a model that is not loaded does not count');
+  assert.deepEqual(['in_browser', 'loopback', 'remote', 'unverified', 'none'].map(kind => staysOnThisComputer({ kind })), [true, true, false, false, false]);
   assert.equal(localityOf({ own: own('http://127.0.0.1:11434', false), appAvailable: true }).kind, 'unverified');
   assert.equal(localityOf({ own: null }).kind, 'none');
 });

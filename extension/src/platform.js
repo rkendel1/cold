@@ -7,6 +7,7 @@ import { chromeReplicaStorage } from "../../src/services/replicaStorage.js";
 import { createLink } from "../../src/services/hubLink.js";
 import { createLibraries } from "../../src/services/libraries.js";
 import { sharedKeys } from "../../src/domain/constants.js";
+import { createLocalModel } from "./localModel.js";
 import { createBackend } from "../../src/services/backend.js";
 import { chromeHubStore, verifyHub } from "../../src/services/hub.js";
 import { loadModelConfig, saveModelConfig, resolveOwn, directSample, syncOriginRules } from "./model.js";
@@ -26,6 +27,16 @@ export async function createExtensionPlatform() {
   const notify = () => subs.forEach(fn => fn());
   const ownCfg = () => resolveOwn(config);
   const ownSample = directSample(ownCfg);
+  // The on-device model's runtime is a separate script, fetched from inside the extension only when the user first asks for it.
+  const loadRuntime = () => new Promise((resolve, reject) => {
+    if (globalThis.coldWebLLM) return resolve(globalThis.coldWebLLM);
+    const el = document.createElement("script");
+    el.src = chrome.runtime.getURL("dist/llm-client.js");
+    el.onload = () => (globalThis.coldWebLLM ? resolve(globalThis.coldWebLLM) : reject({ code: "init_failed", message: "The on-device model runtime didn't start." }));
+    el.onerror = () => reject({ code: "init_failed", message: "The on-device model runtime is missing from this build of the extension." });
+    document.head.append(el);
+  });
+  const localModel = createLocalModel({ loadRuntime, libUrl: p => chrome.runtime.getURL(`dist/${p}`) });   // build output lives in extension/dist
   const backend = createBackend({
     link, getConfig: () => config,
     own: { ready: () => { const o = ownCfg(); return !!(o && o.ready); }, sample: ownSample, label: () => { const o = ownCfg(); return `${o.label} · ${o.model}`; },
@@ -49,6 +60,8 @@ export async function createExtensionPlatform() {
     snapshot, backend,
     /** The extension's OWN model connection (never the paired app's or a fallback): { cfg, sample }. cfg is null until a provider is saved. */
     ownModel: () => ({ cfg: ownCfg(), sample: ownSample }),
+    /** The on-device model (WebLLM in this browser): lazy, reusable, cancellable. See extension/src/localModel.js. */
+    localModel,
     async refresh() { notify(); return snapshot(); },
     settingsApi: createSettingsApi({ getConfig: () => config, setConfig: c => { config = c; notify(); } }),
     hub: {

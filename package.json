@@ -14,12 +14,14 @@
     "desktop": "electron desktop/main.js",
     "desktop:build": "npm run build:app && electron-builder",
     "desktop:pack": "npm run build:app && electron-builder --dir",
-    "build:extension": "node scripts/build-extension.cjs"
+    "build:extension": "node scripts/build-extension.cjs",
+    "pin:local-model": "node scripts/pin-local-model.cjs"
   },
   "engines": {
     "node": ">=18"
   },
   "dependencies": {
+    "@mlc-ai/web-llm": "0.2.86",
     "twitter-text": "^3.1.0"
   },
   "devDependencies": {
