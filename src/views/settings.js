@@ -229,9 +229,18 @@ export function mountSettings(root, { store, platform }) {
   function dataSection() {
     const p = h("p", { class: "hint", id: "dataLine" });
     const paint = () => { p.textContent = `Products and drafts ${store.keptNote()}`; };   // the same sentence the footer and History use
+    // Storing is local; writing a draft is not necessarily. Say where the prompt for a draft goes, without promising more than is known.
+    const flow = h("p", { class: "hint", id: "modelFlowLine" });
+    const paintFlow = () => {
+      const sv = S.server, d = platform.backend && platform.backend.describe(), name = (sv && (sv.providerLabel || sv.provider)) || "the model provider";
+      flow.textContent = d && d.kind === "app" ? "When you write a draft, the prompt (this draft's product facts and recipient details) goes to the Cold desktop app, which sends it to its model provider."
+        : sv && sv.provider === "ollama" ? "When you write a draft, the prompt goes to your local Ollama server. Whether anything leaves your computer depends on where that runs."
+        : S.backend === "sqlite" || S.surface === "extension" ? `When you write a draft, the prompt (this draft's product facts and recipient details) is sent from ${S.surface === "extension" ? "this browser" : "this computer"} to ${name}. Your other products, drafts and notes are not sent.`
+        : `When you write a draft, the prompt (this draft's product facts and recipient details) goes through this site's server to ${name}. The server doesn't keep it; the provider's own retention terms apply. Your other products, drafts and notes are not sent.`;
+    };
 
-    paint(); store.subscribe(t => { if (t === "server" || t === "ready" || t === "surface") paint(); });
-    return p;
+    paint(); paintFlow(); store.subscribe(t => { if (t === "server" || t === "ready" || t === "surface") { paint(); paintFlow(); } });
+    return h("div", {}, p, flow);
   }
 
   async function load() {

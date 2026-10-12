@@ -24,6 +24,10 @@ Cold runs on the web, as a desktop app, and as a browser extension. **Each is co
 
 What each one needs, how optional pairing works, and the known limits are in [docs/standalone-surfaces.md](docs/standalone-surfaces.md).
 
+## Privacy in one paragraph
+
+Your products, drafts, notes and outreach history are stored on your own device (browser storage on the web, a local SQLite file on the desktop, extension storage in the extension). Cold has no accounts, no cloud database, no cloud backup and no analytics, and the only way surfaces share data is the optional pairing with the desktop app. Writing a draft is separate: the prompt for that draft (its product facts and recipient details, not your whole library) goes to the model provider you chose, and on a hosted web deployment it passes through that site's server on the way. See [docs/privacy-and-data-flow.md](docs/privacy-and-data-flow.md) for exactly what leaves the device and what is retained.
+
 ## Running it
 
 Cold runs in two modes. The page picks the right one on its own.
@@ -55,7 +59,7 @@ npm start               # http://127.0.0.1:3000
 | `PORT` | no | `3000` | |
 | `HOST` | no | `127.0.0.1` | Set `0.0.0.0` to expose it on your network |
 
-The key stays on the server: the page calls `/api/generate`, and `server.js` calls AI Gateway’s Chat Completions API by default (or the Anthropic Messages API). Each email takes two calls, a draft and an editor pass. In this mode, products and drafts are saved in the browser's localStorage. `.env` is git-ignored.
+The key stays on the server: the page calls `/api/generate`, and `server.js` calls AI Gateway’s Chat Completions API by default (or the Anthropic Messages API). Each email takes two calls, a draft and an editor pass. In this mode, products and drafts are saved in the browser's localStorage and the server keeps nothing; each draft's prompt does pass through your server to the provider. `.env` is git-ignored.
 
 ### Choosing a model
 
