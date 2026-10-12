@@ -74,6 +74,18 @@ const norm = s => String(s || "").toLowerCase().replace(/[‘’“”"'`]/g, ""
 const esc = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const mentions = (hay, needle) => { const n = norm(needle); return n.length >= 3 && new RegExp(`(^|[^a-z0-9])${esc(n)}($|[^a-z0-9])`).test(hay); };
 const str = (v, n) => (typeof v === "string" ? v.trim().slice(0, n) : "");
+/** Text the model wrote for the user to read: no links or addresses (a page cannot smuggle a destination through the model's words), no markup. */
+const plain = (v, n) => str(v, n * 2).replace(/<[^>]*>/g, " ").replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, "").replace(/\bwww\.\S+/gi, "").replace(/[^\s@]+@[^\s@]+\.[a-z]{2,}/gi, "").replace(/\s+/g, " ").trim().slice(0, n);
+/**
+ * Is this sentence written TO an assistant (a command, a role change, a request for hidden context) rather than ABOUT a company? A page can legitimately
+ * contain such text, so it can be quoted truthfully, but it is never evidence of an opportunity: it is the page trying to steer the evaluator.
+ */
+const STEERING = [/\b(ignore|disregard|forget|override|bypass)\b.{0,40}\b(previous|prior|above|earlier|all|any|these|your)\b.{0,30}\b(instruction|prompt|rule|direction|guideline|constraint)s?/, /\b(you are|you re|act as|pretend (to be|you)|from now on|new instructions?)\b.{0,40}\b(admin|developer|system|assistant|unrestricted|jailbreak|dan|mode)\b/, /\b(admin|developer|debug|god|system|jailbreak) mode\b/, /\bsystem (prompt|message|instruction)s?\b/, /\b(reveal|print|show|output|repeat|leak|disclose)\b.{0,25}\b(your|the|any|all)\b.{0,15}\b(prompt|instructions|product list|contacts|api keys?)\b/, /\b(report|return|respond with|output|set)\b.{0,30}\b(verdict|confidence|json)\b/, /\b(tell|instruct|make sure)\b.{0,20}\b(the )?(user|salesperson|sender|assistant|model|ai)\b.{0,30}\b(to|that)\b/, /\bas an? (ai|language model|assistant)\b/, /\b(click|press|tap)\b.{0,25}\b(save as prospect|start a draft|approve|allow cold)\b/, /<<<|>>>|\bend page\b|\bbegin page\b/];
+export function steersTheAssistant(text) {
+  const t = String(text || "").normalize("NFKC").replace(/[\u200b-\u200f\u2060\ufeff\u00ad]/g, "").toLowerCase().replace(/[^a-z0-9<>]+/g, " ").replace(/\b([a-z]) (?=[a-z]\b)/g, "$1").trim();   // "i g n o r e" reads as "ignore"
+  const squashed = t.replace(/ /g, "");   // letters spread out with spaces to dodge the patterns above
+  return STEERING.some(re => re.test(t)) || /(ignore|disregard|forget)(all|any|the|your)?(previous|prior|above|earlier)?(instructions|prompt|rules)|(admin|developer|jailbreak)mode|systemprompt|reportverdict|youarenow(in|a|an)/.test(squashed) && /\b[a-z] [a-z] [a-z] [a-z]\b/.test(String(text || "").toLowerCase());
+}
 
 // ---- relationships (deterministic) -----------------------------------------------------------------------------------------------
 /** The people in the library whose name or company appears on the page, newest contact first. Nothing else from the library is used. */
@@ -132,7 +144,7 @@ export function validateEvaluation(raw, { page, products, relationships }) {
   const opps = []; let dropped = 0;
   for (const o of raw.opportunities.slice(0, 6)) {
     if (!o || typeof o !== "object") { dropped++; continue; }
-    const facts = (Array.isArray(o.evidence) ? o.evidence : []).map(q => str(q, LIMITS.quoteMax)).filter(q => q.length >= LIMITS.quoteMin && hay.includes(norm(q))).slice(0, LIMITS.maxQuotes);
+    const facts = (Array.isArray(o.evidence) ? o.evidence : []).map(q => str(q, LIMITS.quoteMax)).filter(q => q.length >= LIMITS.quoteMin && hay.includes(norm(q)) && !steersTheAssistant(q)).slice(0, LIMITS.maxQuotes);   // real text, but not evidence if it is the page giving orders
     if (!facts.length) { dropped++; continue; }                                                      // no evidence on the page: not an opportunity
     const w = o.who && typeof o.who === "object" ? o.who : {};
     const seen = v => { const s = str(v, 160); return s && mentions(hay, s) ? s : ""; };               // a name not on the page is not shown
@@ -147,12 +159,12 @@ export function validateEvaluation(raw, { page, products, relationships }) {
     if (!canAct && nextAction !== "none") nextAction = "none";
     if (nextAction === "follow_up" && !rel) nextAction = canAct ? "save_prospect" : "none";
     opps.push({ type, who, relationship: rel ? { recordId: rel.recordId, name: rel.name, company: rel.company, status: rel.status } : null,
-      productId: product ? product.id : "", facts, inference: str(o.rationale, 500), confidence, uncertainty: str(o.uncertainty, 300), nextAction });
+      productId: product ? product.id : "", facts, inference: plain(o.rationale, 500), confidence, uncertainty: plain(o.uncertainty, 300), nextAction });
   }
   const top = opps.slice(0, LIMITS.maxOpportunities);
   let verdict = raw.verdict === "none" ? "none" : top.some(o => o.confidence !== "low") ? "opportunity" : top.length ? "uncertain" : "none";
-  if (verdict === "none") return none(str(raw.summary, 300) || "No meaningful opportunity found on this page.", { dropped });
-  return { verdict, summary: str(raw.summary, 300), opportunities: top, dropped };
+  if (verdict === "none") return none(plain(raw.summary, 300) || "No meaningful opportunity found on this page.", { dropped });
+  return { verdict, summary: plain(raw.summary, 300), opportunities: top, dropped };
 }
 
 /**
