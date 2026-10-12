@@ -5,7 +5,7 @@ import { STORAGE_KEYS } from "../domain/constants.js";
 import { loadAll, writeJson } from "./storage.js";
 import { normalizeProduct } from "../domain/knowledge.js";
 import { normalizeEmail, readJson } from "./storage.js";
-import { versionOf, nextVersion, reconcileSave } from "../domain/outreach.js";
+import { saveIntent, deleteIntent, applySave, compareProducts, compareEmails } from "../domain/library.js";
 
 export { uid } from "../domain/ids.js";
 
@@ -43,7 +43,7 @@ export function createStore({ storage = globalThis.localStorage, platform = null
   }
   /** The stored drafts exactly as saved (including entries this client can't read), plus a refresh of the in-memory copy. */
   const storedEmails = () => { const v = readJson(STORAGE_KEYS.emails, [], storage).value; return Array.isArray(v) ? v : []; };
-  const adoptEmails = list => { state.emails = list.map(x => normalizeEmail(x)).filter(Boolean); };
+  const adoptEmails = list => { state.emails = list.map(x => normalizeEmail(x)).filter(Boolean).sort(compareEmails); };
 
   const api = {
     state, subscribe, set, emit,
@@ -55,7 +55,7 @@ export function createStore({ storage = globalThis.localStorage, platform = null
         if (db.warnings && db.warnings.length) state.warnings = db.warnings;
         const fail = e => { if (e && e.code === "revoked") set({ notice: "Access to saved data ended. Reload to reconnect." }, "notice"); };
         db.collection("products").onSnapshot(snap => {
-          const items = snap.docs.map(d => normalizeProduct({ ...d.data(), id: d.id })).filter(Boolean).sort((a, b) => (a.order ?? 99) - (b.order ?? 99) || String(a.name).localeCompare(b.name));
+          const items = snap.docs.map(d => normalizeProduct({ ...d.data(), id: d.id })).filter(Boolean).sort(compareProducts);
           set({ products: items, ready: true }, "products");
         }, fail);
         db.collection("emails").orderBy("createdAt", "desc").limit(500).onSnapshot(snap => {
@@ -64,7 +64,7 @@ export function createStore({ storage = globalThis.localStorage, platform = null
         db.doc("settings/me").onSnapshot(snap => { if (snap.exists) set({ settings: { ...state.settings, signature: String(snap.data().signature || "") } }, "settings"); }, fail);
       } else {
         const d = loadAll(storage);
-        Object.assign(state, { products: d.products, emails: d.emails, settings: d.settings, compose: d.compose, warnings: d.warnings, ready: true });
+        Object.assign(state, { products: d.products, emails: [...d.emails].sort(compareEmails), settings: d.settings, compose: d.compose, warnings: d.warnings, ready: true });
       }
       emit("ready");
     },
@@ -102,8 +102,7 @@ export function createStore({ storage = globalThis.localStorage, platform = null
      */
     async saveEmail(e) {
       const seen = state.emails.find(x => x.id === e.id);
-      const expected = Number.isFinite(e.updatedAt) ? e.updatedAt : seen ? versionOf(seen) : null;
-      const base = seen && versionOf(seen) === expected ? seen : null;
+      const { expected, base } = saveIntent(e, seen);
       const body = JSON.parse(JSON.stringify(e)); body.updatedAt = Date.now();
       if (db) {
         const { id, ...rest } = body;
@@ -111,16 +110,16 @@ export function createStore({ storage = globalThis.localStorage, platform = null
       }
       // Local storage: change just this record in what is stored NOW (another tab may have saved since this one loaded).
       const list = storedEmails(), i = list.findIndex(x => x && x.id === e.id), stored = i >= 0 ? list[i] : null;
-      const out = reconcileSave({ base, mine: body, stored, expected });
+      const out = applySave({ id: e.id, mine: body, stored, expected, base });
       if (!out.ok) { adoptEmails(list); emit("emails"); throw out.error; }
-      const rec = { ...out.record, updatedAt: nextVersion(stored) };
+      const rec = out.record;
       writeJson(STORAGE_KEYS.emails, i >= 0 ? list.map((x, j) => (j === i ? rec : x)) : [rec, ...list], storage);
       adoptEmails(i >= 0 ? list.map((x, j) => (j === i ? rec : x)) : [rec, ...list]);
       e.updatedAt = rec.updatedAt;
       emit("emails");
     },
     async deleteEmail(id) {
-      if (db) { const seen = state.emails.find(x => x.id === id); return queue("e/" + id, () => db.doc("emails/" + id).delete({ expected: seen ? versionOf(seen) : undefined })); }
+      if (db) { const seen = state.emails.find(x => x.id === id); return queue("e/" + id, () => db.doc("emails/" + id).delete({ expected: deleteIntent(seen) })); }
       const list = storedEmails().filter(x => !(x && x.id === id));
       writeJson(STORAGE_KEYS.emails, list, storage);
       adoptEmails(list);

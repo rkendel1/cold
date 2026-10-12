@@ -357,3 +357,23 @@ test('sync (web adapter): conflicts and unreadable entries are kept in the same 
   const out = saved(ls);
   assert.deepEqual([out[0].status, out[0].futureField, out[0].note, out[1]], ['archived', 1, 'n', junk]);
 });
+
+test('sync: a record pushed to the app keeps the version the extension gave it, so an open draft can keep saving without a false conflict', async () => {
+  const { createReplica } = await load('src/services/replica.js'), { createStore } = await load('src/state/store.js');
+  const t = await boot();
+  try {
+    const replica = createReplica({ storage: memory() }); await replica.load();
+    const store = createStore({ storage: {} }); store.start({ db: replica });
+    replica.attach(t.link);
+    const rec = REC({ id: 'open' });
+    await store.saveEmail(rec);                                                   // the draft pane holds this object and its version
+    await replica.sync();
+    const stored = t.db.snapshot().emails.find(e => e.id === 'open');
+    assert.equal(stored.updatedAt, rec.updatedAt, 'the app stores the version the sender stamped');
+    assert.equal(store.state.emails.find(e => e.id === 'open').updatedAt, rec.updatedAt, 'and the extension still shows that same version after syncing');
+    rec.subject = 'edited in the open pane'; await store.saveEmail(rec);         // no conflict: nothing else changed it
+    await replica.sync();
+    assert.equal(t.db.snapshot().emails[0].subject, 'edited in the open pane');
+    assert.equal(replica.conflicts.length, 0);
+  } finally { await t.close(); }
+});

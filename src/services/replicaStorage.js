@@ -2,6 +2,7 @@
 import { STORAGE_KEYS } from "../domain/constants.js";
 import { loadAll, readJson, writeJson, normalizeEmail } from "../state/storage.js";
 import { normalizeProduct } from "../domain/knowledge.js";
+import { compareEmails, compareProducts } from "../domain/library.js";
 
 /** Extension: chrome.storage.local, one key. */
 export const chromeReplicaStorage = (key = "cold.replica") => ({
@@ -26,8 +27,8 @@ export function localReplicaStorage(storage = globalThis.localStorage) {
     },
     async set(data) {
       // Same order the web app always wrote: products by their order, newest draft first.
-      const products = Object.values(data.products).sort((a, b) => (a.order ?? 99) - (b.order ?? 99) || String(a.name).localeCompare(String(b.name)));
-      const emails = Object.values(data.emails).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      const products = Object.values(data.products).sort(compareProducts);
+      const emails = Object.values(data.emails).sort(compareEmails);
       // Entries this client can't read were skipped on load ("not deleted"): keep them in storage rather than dropping them on save.
       const unread = (key, normalize) => { const v = readJson(key, [], storage).value; return Array.isArray(v) ? v.filter(x => !normalize(x)) : []; };
       writeJson(STORAGE_KEYS.products, [...products, ...unread(STORAGE_KEYS.products, normalizeProduct)], storage);

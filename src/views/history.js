@@ -8,6 +8,7 @@ import { openInEmail, isEmail } from "../services/handoff.js";
 import { evaluate } from "../domain/rules.js";
 import { emailText } from "../domain/email.js";
 import { applyStatus, statusOf, filterOutreach, countByStatus, preview, editedSinceSent } from "../domain/outreach.js";
+import { compareEmails } from "../domain/library.js";
 import { GOALS, STATUSES, STATUS_COPY, FORMATS, UNKNOWN_STATUS } from "../domain/constants.js";
 
 export function mountHistory(root, { store, openRecord }) {
@@ -128,7 +129,7 @@ export function mountHistory(root, { store, openRecord }) {
   }
 
   function render() {
-    const all = [...S.emails].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    const all = [...S.emails].sort(compareEmails);
     paintLede();
     const counts = countByStatus(all);
     clear(filters);

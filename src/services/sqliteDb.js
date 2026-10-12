@@ -1,7 +1,8 @@
 // Browser-side client for the app's SQLite database (served by the local Cold server).
 // It exposes the same small collection/doc/onSnapshot interface the store already uses for the Claude-app database, so the
 // store and every view are unchanged. Writes show up immediately, are saved to SQLite in order, and a write that fails is undone.
-import { mergeRecords, versionOf, conflictError } from "../domain/outreach.js";
+import { mergeRecords, versionOf, conflictError } from "../domain/library.js";
+import { queryCollection } from "./collection.js";
 
 const POLL_MS = 3000;
 
@@ -70,21 +71,7 @@ export function createRemoteDb({ fetchImpl = (...a) => globalThis.fetch(...a), h
     return job;
   }
 
-  const sortBy = (arr, field, dir) => arr.sort((a, b) => { const x = a.data()[field], y = b.data()[field]; return (x < y ? -1 : x > y ? 1 : 0) * (dir === "desc" ? -1 : 1); });
-
-  function collection(name) {
-    const q = { field: null, dir: "asc", n: Infinity };
-    const api = {
-      orderBy(field, dir = "asc") { q.field = field; q.dir = dir; return api; },
-      limit(n) { q.n = n; return api; },
-      onSnapshot(cb) {
-        const fire = () => { let d = docs(name); if (q.field) sortBy(d, q.field, q.dir); cb({ docs: d.slice(0, q.n) }); };
-        listeners[name].add(fire); fire(); startPolling();
-        return () => listeners[name].delete(fire);
-      },
-    };
-    return api;
-  }
+  const collection = name => queryCollection(listeners[name], () => docs(name));
 
   function doc(path) {
     const [name, id] = path.split("/");

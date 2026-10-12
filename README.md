@@ -169,6 +169,8 @@ Web, the desktop app and the browser extension run the **same screens** (Write, 
 | Put a draft in X's tweet box | no | no | yes |
 | Pairing code, allowed web apps | no | yes | no |
 
+**What is shared in code and what in data:** [docs/library-contract.md](docs/library-contract.md).
+
 **How the surfaces share data.** The desktop app is the hub. Web and the extension each keep a full local copy, work with the app closed, and sync with it whenever it is running: changes made while it was closed are sent when it returns, the hub's newer copy of anything wins, and deletes sync too. While the desktop app is closed, web and the extension cannot sync *with each other*; each catches up when the app is back. There is no cloud service.
 
 **Connect the web app:** in the desktop app, Settings > Browser extension & web apps, add the web app's address under *Allowed web apps* (shown on the web app's own Settings page) and copy the pairing code. In the web app, Settings > Cold desktop app, paste the app's address and the code. If the hub isn't reachable you can still use everything; **Settings > Sync now** retries. When both the web server and the desktop app have a model, Settings lets you pick which one Write uses; if the chosen one disappears, the other is used automatically. Only the prompt goes to the desktop app; provider keys never leave where they are stored.

@@ -8,7 +8,8 @@
 // the hub's copy and puts this one in `conflicts` (kept, not discarded) for the user to review. Nothing newer is ever overwritten,
 // and every write to the hub names the version it saw, so the hub also refuses a write that raced with another one.
 // Deleting happens at the hub and is copied here.
-import { mergeRecords, versionOf, nextVersion, reconcileSave } from "../domain/outreach.js";
+import { mergeRecords, versionOf, nextVersion, applySave } from "../domain/library.js";
+import { queryCollection } from "./collection.js";
 
 const KINDS = ["products", "emails"];
 const MAX_CONFLICTS = 50;
@@ -67,9 +68,9 @@ export function createReplica({ storage, keepCompose = false }) {
     const prev = data[kind][id];
     let rec = { ...doc, id };
     if (opts.expected !== undefined) {
-      const out = reconcileSave({ base: opts.base, mine: rec, stored: prev, expected: opts.expected });
+      const out = applySave({ id, mine: rec, stored: prev, expected: opts.expected, base: opts.base });
       if (!out.ok) throw out.error;
-      rec = { ...out.record, id, updatedAt: nextVersion(prev) };
+      rec = out.record;
     }
     data[kind][id] = rec;
     enqueue(kind, id, "put", versionOf(prev), prev ? JSON.parse(JSON.stringify(prev)) : undefined);
@@ -146,23 +147,7 @@ export function createReplica({ storage, keepCompose = false }) {
     return syncing;
   }
 
-  function collection(name) {
-    const q = { field: null, dir: "asc", n: Infinity };
-    const api = {
-      orderBy(field, dir = "asc") { q.field = field; q.dir = dir; return api; },
-      limit(n) { q.n = n; return api; },
-      onSnapshot(cb) {
-        const fire = () => {
-          const d = docs(name);
-          if (q.field) d.sort((a, b) => { const x = a.data()[q.field], y = b.data()[q.field]; return (x < y ? -1 : x > y ? 1 : 0) * (q.dir === "desc" ? -1 : 1); });
-          cb({ docs: d.slice(0, q.n) });
-        };
-        listeners[name].add(fire); fire();
-        return () => listeners[name].delete(fire);
-      },
-    };
-    return api;
-  }
+  const collection = name => queryCollection(listeners[name], () => docs(name));
   function doc(path) {
     const [name, id] = path.split("/");
     if (name === "settings") return {
@@ -170,7 +155,7 @@ export function createReplica({ storage, keepCompose = false }) {
       onSnapshot(cb) { const fire = () => cb({ exists: !!data.settings, data: () => ({ ...(data.settings || {}) }) }); listeners["settings/me"].add(fire); fire(); return () => listeners["settings/me"].delete(fire); },
     };
     if (name === "compose") return { set: async () => {} };
-    return { set: d => write(name, id, d), delete: () => remove(name, id) };
+    return { set: (d, opts) => write(name, id, d, opts), delete: () => remove(name, id) };
   }
 
   return {
