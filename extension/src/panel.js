@@ -10,6 +10,7 @@ import { createStore } from "../../src/state/store.js";
 import { startApp } from "../../src/app.js";
 import { createExtensionPlatform } from "./platform.js";
 import { mountPageCard } from "./pageCard.js";
+import { mountAskCold } from "./askCold.js";
 
 // The web page loads X's character counter as a global (public/tweet-counter.js); the shared screens expect it.
 globalThis.tweetLength = twitterText.parseTweet;
@@ -20,6 +21,7 @@ async function boot() {
   const app = await startApp(document.getElementById("app"), {
     store, platform,
   });
+  mountAskCold(app.views.compose, { store, platform, compose: app.compose });
   mountPageCard(app.views.compose, { compose: app.compose, platform });
   // Page-driven mode changes need the shared form, so expose it for tests and debugging in one clearly named place.
   globalThis.__cold = { store, platform };

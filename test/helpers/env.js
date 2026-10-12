@@ -50,8 +50,10 @@ function startMock(behavior = {}) {
   return new Promise(r => mock.server.listen(0, "127.0.0.1", () => { mock.url = `http://127.0.0.1:${mock.server.address().port}`; r(mock); }));
 }
 
+const freePort = () => new Promise(r => { const s = require("node:net").createServer(); s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => r(p)); }); });
+
 async function startColdServer({ mockUrl, env = {}, port: fixedPort }) {
-  const port = fixedPort || 3300 + Math.floor(Math.random() * 600);
+  const port = fixedPort || await freePort();   // asked of the OS: test files run in parallel, and a guessed port can collide with another file's server
   const child = spawn("node", ["server.js"], { cwd: ROOT, stdio: "ignore", env: { ...process.env, LLM_PROVIDER: "anthropic", ANTHROPIC_API_KEY: "mock-key", ANTHROPIC_BASE_URL: mockUrl, PORT: String(port), HOST: "127.0.0.1", COLD_ACCESS_TOKEN: "", COLD_RATE_LIMIT_PER_MIN: "100000", ...env } });
   const base = `http://127.0.0.1:${port}`;
   for (let i = 0; i < 50; i++) { try { await fetch(base + "/api/config"); break; } catch { await new Promise(r => setTimeout(r, 100)); } }
