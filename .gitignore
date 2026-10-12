@@ -5,3 +5,4 @@ docs/validation/tracker/contacts.private.csv
 docs/validation/tracker/*.private.*
 dist/
 extension/dist/
+test-results/

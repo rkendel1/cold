@@ -75,14 +75,18 @@ retries on another model. Choosing the on-device model explicitly also rules out
 * **Models.** Qwen2.5 1.5B Instruct (default; about 1 GB estimated; needs about 1.7–1.9 GB of graphics memory) and Qwen2.5 0.5B Instruct
   (about 0.4 GB estimated; about 1 GB of graphics memory; weaker). Both are Apache-2.0. Sizes are estimates from parameter count and
   4-bit quantisation, not measured downloads.
-* **Where the files come from.** Weights (data only): `https://huggingface.co/mlc-ai/<model>/resolve/<revision>/`. The compiled WebGPU
-  library for each model (code) is **bundled into the extension** at build time from `mlc-ai/binary-mlc-llm-libs`, accepted only if its
-  SHA-256 matches the value pinned in `extension/src/localModels.js`, and the runtime checks the same hash again before using it. The
-  extension never downloads code at run time.
-* **Cache.** The browser's Cache API for this extension holds the files, so the download happens once. Reload, restart and reopening the
-  panel reuse it.
-* **Remove or reset.** *Remove downloaded model* in the panel deletes the files and frees memory; setting it up again downloads again.
-  Uninstalling the extension removes everything. *Cancel* stops a download; the next attempt resumes from what is cached.
+* **Where the files come from.** See *Model provenance* below: an exact Hugging Face commit, every file checked against a recorded SHA-256
+  before it is used. The compiled WebGPU library for each model (code) is **bundled into the extension** at build time from
+  `mlc-ai/binary-mlc-llm-libs`, accepted only if its SHA-256 matches the value pinned in `extension/src/localModels.js`, and the runtime
+  checks the same hash again before using it. The extension never downloads code at run time.
+* **Cache.** The browser's Cache API for this extension (`webllm/config`, `webllm/model`) holds the verified files, so the download happens
+  once. Reload, restart and reopening the panel reuse it.
+* **Cancel.** *Cancel* stops the download or the start; nothing is reported as ready. Files that were already downloaded **and verified**
+  are kept, so the next attempt fetches only what is missing. A file that was in flight is discarded.
+* **Remove or reset.** *Remove downloaded model* unloads the model and deletes every pinned file from the cache; setting it up again
+  downloads again. Uninstalling the extension removes everything.
+* **If a file fails its check.** The file is discarded (never cached, never loaded), the runtime is not started, and the panel names the
+  file and says to try again. Nothing falls back to another model or another source.
 * **Memory.** The panel checks WebGPU and picks the f16 or f32 build of the model automatically. If loading fails for lack of graphics
   memory or storage, it says so and offers the 0.5B model; it never switches on its own.
 
@@ -97,7 +101,7 @@ graphics adapter is available"; the other two options remain.
 | Data | During an on-device check |
 | --- | --- |
 | Page text, your question, product facts, matched contacts, results | stay in this browser. Not sent anywhere. |
-| Model files | downloaded **once**, from `huggingface.co` only, as plain GET requests for `mlc-chat-config.json`, `tokenizer.json`, `tensor-cache.json` and weight shards. No query string, body, cookie or page/library data (a test checks this against the real runtime). |
+| Model files | downloaded **once**, from `huggingface.co` only (its CDN may answer the redirect), as plain GET requests (`credentials: omit`, no referrer) for the pinned files at `/resolve/<commit>/`. No query string, body, cookie or page/library data (tests check this against the real runtime with stand-in files). |
 | The compiled library | read from inside the extension; no request. |
 | Telemetry, history, evaluations | none. Nothing is stored except the model files and your normal library saves. |
 
@@ -105,8 +109,72 @@ graphics adapter is available"; the other two options remain.
 
 * The extension-page CSP gains one token, `'wasm-unsafe-eval'` (Chrome's own MV3 default), because compiling the bundled WebAssembly
   needs it. It does not allow `eval`, inline scripts or remote scripts; the runtime contains no `eval`/`new Function`.
+* The model worker has a network guard (`extension/src/workerGuard.js`): inside it only extension-local URLs can be fetched; XHR, WebSocket,
+  EventSource, WebTransport, `importScripts` and cache downloads of remote URLs are disabled. The runtime therefore cannot reach the
+  network even if it tried; every model file arrives through Cold's own verified downloader.
 * No new host permissions were added. Reading pages still uses the existing per-site, user-granted permission.
 * Page text is untrusted: it is inside a data block, and only the validated result is used (see *How a check works*).
+
+## Model provenance (what is pinned, and what is not yet)
+
+**Status of this build: the weights are NOT pinned yet, so the on-device model is switched off.** `extension/src/modelPins.json` is
+shipped in the state `"unpinned"`. In that state Cold shows "this build can't verify the model files", does not show a download dialog,
+makes no request to any model host and does not start the runtime. There is no override. The reason is simple: an immutable commit id and
+per-file SHA-256 digests can only come from the real repository, and the environment this was built in cannot reach it (see *Blocked*
+below). Cold does not invent digests and does not treat `main` as immutable.
+
+**What "pinned" means once the pins are recorded** (`schema 1`, one entry per model id and variant):
+
+* `repo` and a full 40-hex `revision` (commit). Tags, branches, `main` and short ids are rejected. Every URL is
+  `https://huggingface.co/<repo>/resolve/<revision>/<file>`, so it resolves to that commit.
+* For every required file (`mlc-chat-config.json`, `tokenizer.json`, `tensor-cache.json`, every `params_shard_*.bin`): `sha256` and `size`.
+* Cold downloads each file itself, reads it with a hard size bound, hashes it, and only then stores it (`extension/src/modelPins.js`,
+  `downloadPinned`). A wrong size, wrong digest, HTTP error or network error discards the file and stops before the runtime starts. The
+  runtime is also given the digests for config and tokenizer as its own integrity check.
+* The consent dialog shows: repository, 12-character revision prefix, exact total size and file count, host, licence (Apache-2.0),
+  and the graphics memory needed.
+
+**Recording the pins** (a maintainer with network access):
+
+```
+npm run pin:local-model        # resolves main to a commit, downloads every file at that commit, hashes it, writes extension/src/modelPins.json
+npm run verify:local-model     # later: re-fetches the pinned revision and confirms every digest still matches
+npm run build:extension
+```
+
+The generator trusts nothing it cannot cross-check: it hashes the bytes it downloaded and compares them with Hugging Face's own recorded
+digest for the same commit (the git-LFS `oid` for large files, the git blob id for small ones); if the two sources disagree, or sizes
+differ, it writes nothing. The shard list is derived from the downloaded `tensor-cache.json`, not typed in.
+
+**Checking the pins yourself** (independent of Cold): for each entry, download
+`https://huggingface.co/<repo>/resolve/<revision>/<file>` with any tool, run `sha256sum <file>` and compare it with `files.<file>.sha256`
+in `modelPins.json`; also confirm on the repository page that `<revision>` is a commit of `mlc-ai/<model id>` and that the licence there is
+Apache-2.0.
+
+**Blocked in the build environment.** The sandbox's network policy denies `huggingface.co` (HTTP 403 from the proxy), so no commit id or
+digest could be obtained and `npm run pin:local-model` could not be run against the real service. The generator and the downloader are
+tested against a stand-in server (tests below), not against Hugging Face. To unblock: allow `huggingface.co` (and the CDN hosts it
+redirects to) under the environment's Network access setting, or run the commands above on any networked machine, and commit the file.
+
+## Tests and how to run them
+
+| Command | What it proves | Needs |
+| --- | --- | --- |
+| `npm test` | everything below except the real-model smoke test | Chromium for the extension tests (`xvfb-run -a npm test` on a headless box) |
+| `node --test test/model-pins.test.js` | pin rules (immutable commit only, digest + size per file), the downloader (success, reuse, mismatch, wrong size, HTTP/network errors, retry fetches only what is missing, cancel), the worker guard, the pin generator and `--verify` against a stand-in Hugging Face | nothing |
+| `node --test test/local-model.test.js` | the adapter: lazy start, verified download then runtime start, reuse, cancel, remove, fail-closed when unpinned, error classification, no fallback, same evaluator, data minimisation | nothing |
+| `node --test test/opportunity-quality.test.js` | the five quality cases (evidence-backed, industry-relevant without a need, none, injection, misleading) with scripted answers: quotes on the page, names from the page, evidence vs inference, uncertainty, no invented need, injected instructions not followed; the checker itself is tested | nothing |
+| `node --test --test-name-pattern=on-device test/extension.test.js` | the **real extension and real runtime**: no-GPU, software WebGPU under the CSP, library tamper, unpinned build fails closed, digest mismatch, cancel mid-download, reuse, removal empties the cache, no hosted fallback, no stray requests, requests only for pinned URLs | Chromium + built extension |
+| `npm run smoke:model` | **the decisive check**: real extension, real WebLLM in its worker, real pinned model from Hugging Face on the five fixture pages through the product's evaluator; reuse; removal; cancel; no other network traffic. Writes `test-results/model-smoke.json` (browser, GPU, revision, timings, per-case result) | pins recorded, network to Hugging Face, WebGPU (a GPU, or `COLD_SMOKE_SOFTWARE_GPU=1` for SwiftShader: very slow); ~1 GB download |
+
+`npm run smoke:model` **skips with the exact reason** when something is missing (not requested, no browser, extension not built, pins not
+recorded, Hugging Face unreachable, no WebGPU adapter); a skip is reported as BLOCKED, never as a pass. Options: `COLD_SMOKE_MODEL=qwen2.5-0.5b`,
+`COLD_SMOKE_REPORT=<path>`, `COLD_SMOKE_CHANNEL=chrome` (installed Chrome with a real GPU), `CHROMIUM=<path>`.
+
+The quality checks assert structure and safety, not wording, so a real model may phrase things as it likes. They do not weaken Cold's
+evidence validation. One known limit is documented in the test: a page that *contains* instruction text can be quoted legitimately (the
+text really is on the page); the checker flags an answer that quotes it as evidence or reports the injected company, and the evaluator's
+prompt fences the page as data, but the code cannot tell a quoted instruction from any other quote.
 
 ## Verification status (what has and has not been proven)
 
@@ -119,23 +187,31 @@ Run on: Chromium 141 headless on Linux, 4 CPUs, 16 GB RAM, **no GPU**, WebLLM 0.
 | No WebGPU adapter: clear message, runtime not loaded, nothing sent, hosted model not contacted | **real runtime** in the real extension | pass |
 | The real runtime starts inside the extension under its CSP, picks the f32 build on a software adapter, creates a WebGPU device, loads the bundled library and asks the model host only for model files | **real runtime**, software WebGPU (SwiftShader), **stand-in** model files | pass up to the point where it asks for weights (the stand-in has none) |
 | A library that doesn't match its pinned hash is refused | **real runtime**, one bit flipped in a throwaway copy | pass (`integrity_failed`) |
-| **A real model downloads, loads and completes an opportunity check** | not possible here | **NOT VERIFIED** |
+| The weights are pinned to a commit with per-file digests | `npm run pin:local-model` | **NOT DONE**: blocked, no access to Hugging Face. The build ships `unpinned` and the model is disabled |
+| The verified downloader: only pinned URLs, digest/size/HTTP failures discard the file, retry, cancel, remove | unit tests and **real extension + real runtime** against stand-in files with synthetic pins | pass (the stand-in is not a real model; its revision `a1b2c3d4e5…` is made up) |
+| An unpinned build refuses to download | real extension | pass |
+| **A real model downloads from the pinned revision, passes the integrity check, starts, and completes an opportunity check** | `npm run smoke:model` | **NOT VERIFIED**: blocked (no Hugging Face access, no GPU) |
+| Quality of a real model on the five cases | `npm run smoke:model` | **NOT VERIFIED** |
 
-**Blocker for the last row.** This environment's network policy denies `huggingface.co` (HTTP 403 from the proxy), so no real weights
-could be downloaded, and the sandbox has no GPU (only a software adapter, which has no `shader-f16`). To close it, run the extension
-on a machine with a GPU and network access to huggingface.co, press *Set up the on-device model*, then *Ask about this page* on a
-page that mentions a company hiring for something you sell, and note the browser, GPU, model, load time and result in this table.
-In a cloud environment the host to allow is `huggingface.co` (Network access → Allowed domains).
+Real-run record (fill in after a successful `npm run smoke:model`; copy from `test-results/model-smoke.json`): browser and version —;
+GPU / adapter —; model id —; revision —; setup time —; per-case result (evidence / industry / none / injection / misleading) —. **No
+successful real-model run has been recorded.**
+
+**Blocker for the last rows.** This environment's network policy denies `huggingface.co` (HTTP 403 from the proxy), so no real weights
+could be downloaded and no pins recorded, and the sandbox has no GPU (only a software adapter, which has no `shader-f16`). The unblock
+steps are in *Model provenance* and *Tests*.
 
 ## Unresolved limitations
 
 * **A real model has not been run.** Everything above the table's last row is verified; real-model quality, speed, memory use and the
   exact download size are not. Expect a 1.5B (and especially 0.5B) model to be weaker than a hosted one: it will miss subtle
   opportunities and return more "uncertain" or "none". Validation removes unsupported claims but cannot add insight.
-* **Weights are not pinned to a commit.** `MODEL_SOURCE.revision` is `"main"` and the config/tokenizer checksums are empty, because the
-  commit could not be looked up here. The compiled libraries *are* pinned and verified. Run `npm run pin:local-model` on a networked
-  machine and commit its output to close this; until then the weights follow the upstream repository. (The runtime has no checksum for
-  weight shards.)
+* **Weights are not pinned yet** (see *Model provenance*): until a maintainer runs `npm run pin:local-model`, the on-device model is
+  disabled in the shipped build. The compiled libraries *are* pinned and verified. The pin generator, downloader and `--verify` have been
+  exercised only against a stand-in server, never against the real service.
+* **`npm run smoke:model` has never been executed end to end.** Its gating and skip reasons have been run; its body (dialog text, real
+  download, inference on five pages, reuse, removal, cancel) is written against the same selectors as the extension tests but could not be
+  run here. Expect to adjust it on its first real run.
 * **Download size and graphics-memory figures are estimates** (memory figures come from WebLLM's own model list).
 * **Size.** The extension package grows by about 35 MB (the runtime, its worker and four compiled libraries).
 * **One generation at a time** and no streaming to the UI; a check on integrated graphics can take many seconds.
