@@ -3,7 +3,7 @@ import { h, $, $$, clear, autosize } from "../components/dom.js";
 import { field, textInput, textArea, button, chip, toast, notice } from "../components/ui.js";
 import { confirmDialog } from "../components/dialog.js";
 import { PROOF_TYPES, PROOF_STRENGTHS } from "../domain/constants.js";
-import { readiness, externalProof } from "../domain/knowledge.js";
+import { readiness, externalProof, normalizeHandle } from "../domain/knowledge.js";
 import { uid } from "../domain/ids.js";
 
 export function mountKnowledge(root, { store, navigate }) {
@@ -88,11 +88,14 @@ export function mountKnowledge(root, { store, navigate }) {
     mk("kCat", { label: "Category", control: textInput({ value: p.category }) });
     mk("kStatus", { label: "Status", control: textInput({ value: p.status, placeholder: "e.g. Private beta" }) });
     mk("kWeb", { label: "Website", control: (id, d) => h("input", { type: "url", id, value: p.website || "", "aria-describedby": d }) });
+    mk("kX", { label: "X (Twitter) handle", hint: "Tweets can tag or mention it, like @acme.", control: textInput({ value: p.xHandle, placeholder: "@yourproduct" }) });
+    mk("kLinks", { label: "Other links", hint: "One per line, as “Label: link”, e.g. LinkedIn: https://linkedin.com/company/acme. Tweets may include these.", control: textArea({ rows: 3 }) });
     mk("kRepo", { label: "Repository", control: (id, d) => h("input", { type: "url", id, value: p.repo || "", "aria-describedby": d }) });
     mk("kShort", { label: "Short description", control: textArea({ rows: 2 }) });
     mk("kLong", { label: "Long description", hint: "Background the generator may draw on (first 2,500 characters are used).", control: textArea({ rows: 4 }) });
+    refs.kX.input.addEventListener("change", () => { const n = normalizeHandle(refs.kX.input.value); if (n) refs.kX.input.value = n; });
     const set = (k, v) => { refs[k].input.value = v || ""; };
-    set("kWhat", p.what); set("kWho", p.who); set("kProblem", p.problem); set("kTech", lines(p.techFacts)); set("kApproved", lines(p.approved)); set("kDont", lines(p.dontSay)); set("kShort", p.shortDesc); set("kLong", p.longDesc);
+    set("kLinks", lines(p.socials)); set("kWhat", p.what); set("kWho", p.who); set("kProblem", p.problem); set("kTech", lines(p.techFacts)); set("kApproved", lines(p.approved)); set("kDont", lines(p.dontSay)); set("kShort", p.shortDesc); set("kLong", p.longDesc);
 
     const rows = (p.proof || []).map(x => ({ ...x }));
     const proofHost = h("div", { class: "form" });
@@ -105,7 +108,7 @@ export function mountKnowledge(root, { store, navigate }) {
       const lines = k => refs[k].input.value.split("\n").map(s => s.trim()).filter(Boolean);
       return {
         ...p, _new: undefined, id: p.id, order: p.order ?? S.products.length,
-        name: val("kName"), status: val("kStatus"), oneLiner: val("kOne"), category: val("kCat"), website: val("kWeb"), repo: val("kRepo"),
+        name: val("kName"), status: val("kStatus"), oneLiner: val("kOne"), category: val("kCat"), website: val("kWeb"), repo: val("kRepo"), xHandle: normalizeHandle(val("kX")), socials: lines("kLinks"),
         what: val("kWhat"), who: val("kWho"), problem: val("kProblem"), shortDesc: val("kShort"), longDesc: val("kLong"),
         techFacts: lines("kTech"), approved: lines("kApproved"), dontSay: lines("kDont"),
         proof: rows.filter(r => r.claim.trim()).map(r => ({ id: r.id, claim: r.claim.trim(), evidence: (r.evidence || "").trim(), type: r.type, strength: r.strength, external: !!r.external })),
@@ -168,7 +171,8 @@ export function mountKnowledge(root, { store, navigate }) {
         h("p", { class: "hint" }, "Proof points are the claims Cold can use to make the \"why it matters\" sentence credible. Choose carefully who can use each one."),
         proofHost, h("div", {}, button("Add proof", { id: "kAddProof", onclick: () => { const r = { id: uid("pr"), claim: "", evidence: "", type: "Technical", strength: "Medium", external: true }; rows.push(r); markDirty(); renderProof(); proofHost.querySelector(`[data-rid="${r.id}"] .pClaim`)?.focus(); } }))),
       h("section", { "aria-labelledby": "words-title" }, h("h2", { id: "words-title" }, "Facts and wording"), refs.kTech, refs.kApproved, refs.kDont),
-      h("details", { class: "panel" }, h("summary", {}, "More detail ", h("span", { class: "opt" }, "(optional)")), h("div", { class: "in" }, h("div", { class: "grid2" }, refs.kCat, refs.kStatus, refs.kWeb, refs.kRepo), refs.kShort, refs.kLong)),
+      h("details", { class: "panel" }, h("summary", {}, "More detail ", h("span", { class: "opt" }, "(optional)")), h("div", { class: "in" }, h("div", { class: "grid2" }, refs.kCat, refs.kStatus, refs.kRepo), refs.kShort, refs.kLong)),
+      h("details", { class: "panel", open: !!(p.website || p.xHandle || (p.socials || []).length) }, h("summary", {}, "Links and social ", h("span", { class: "opt" }, "(used in tweets)")), h("div", { class: "in" }, h("div", { class: "grid2" }, refs.kWeb, refs.kX), refs.kLinks)),
       h("div", { class: "savebar" }, saveBtn,
         button("Write an email with this", { kind: "ghost", id: "kCompose", onclick: () => { if (sel?.dirty) toast("Unsaved edits aren't used in drafts until you save."); navigate("compose", { productId: p.id }); } }),
         status, button("Delete", { kind: "ghost danger", id: "kDelete", onclick: () => remove(p) })));

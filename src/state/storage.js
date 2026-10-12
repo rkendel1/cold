@@ -31,7 +31,7 @@ export function normalizeEmail(raw) {
     ...raw, id,
     status: STATUSES.includes(raw.status) ? raw.status : "draft",
     createdAt: Number.isFinite(raw.createdAt) ? raw.createdAt : 0,
-    recipient: { name: str(rec.name), role: str(rec.role), company: str(rec.company), why: str(rec.why) },
+    recipient: { name: str(rec.name), role: str(rec.role), company: str(rec.company), why: str(rec.why), profileUrl: str(rec.profileUrl), profile: str(rec.profile) },
     productName: str(raw.productName), goal: str(raw.goal) || "advice",
     subject: str(raw.subject), what: str(raw.what), why: str(raw.why), ask: str(raw.ask),
     checks: Array.isArray(raw.checks) ? raw.checks.filter(c => c && typeof c === "object") : [],

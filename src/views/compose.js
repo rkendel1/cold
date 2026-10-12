@@ -2,13 +2,13 @@
 import { h, $, $$, clear } from "../components/dom.js";
 import { field, textInput, textArea, button, notice, chip, announce, toast } from "../components/ui.js";
 import { confirmDialog } from "../components/dialog.js";
-import { GOALS, FORMATS } from "../domain/constants.js";
+import { GOALS, FORMAT_CHOICES } from "../domain/constants.js";
 import { readiness } from "../domain/knowledge.js";
 import { uid } from "../domain/ids.js";
 import { generateEmail, improveEmail, generateTweet, describeError } from "../services/generation.js";
 import { createDraftPane } from "./draft.js";
-
-const TWEET_URL = /^https:\/\/(?:www\.)?(?:x\.com|twitter\.com)\/[^/]+\/status\/\d+(?:[/?#].*)?$/;
+import { createRecipientAssist } from "./recipient.js";
+import { createTweetForm } from "./tweetForm.js";
 
 export function mountCompose(root, { store, platform, navigate }) {
   const S = store.state;
@@ -24,14 +24,15 @@ export function mountCompose(root, { store, platform, navigate }) {
       hint: "The specific reason you're contacting them: something they wrote, built or said. Cold uses this as the only connection between you and won't invent one.",
       control: textArea({ rows: 3, placeholder: "e.g. They've written about how hard it is to move workloads between cloud and edge." }),
     }),
+    profileUrl: field({ id: "rProfileUrl", label: "Their LinkedIn or X profile", hint: "Paste a link and Cold reads the public profile to fill in who they are. Nothing is posted or sent to them.", control: textInput({ placeholder: "linkedin.com/in/sarahchen or x.com/sarahchen", inputmode: "url" }) }),
+    profilePaste: field({ id: "rProfilePaste", label: "Or paste their profile text", required: null, hint: "Copy their headline, About section or recent posts from the profile. Use this when the link can't be read.", control: textArea({ rows: 4 }) }),
+    profile: field({ id: "rProfile", label: "What Cold learned from their profile", required: null, hint: "Cold treats this as facts you supplied and can use it for the reason you're writing. Edit or delete anything that's wrong.", control: textArea({ rows: 4 }) }),
     goalOther: field({ id: "goalOther", label: "Describe what you want from them", required: true, control: textInput({}), className: "goal-other" }),
     convey: field({ id: "rConvey", label: "Anything specific to get across?", hint: "A point you want in the draft. Cold treats it as a fact you supplied.", control: textArea({ rows: 2 }) }),
-    tweetUrl: field({ id: "tweetUrl", label: "Tweet link", hint: "Optional, for replies. Links are saved as a reference only; Cold doesn't fetch them.", control: textInput({ placeholder: "https://x.com/username/status/123" }) }),
-    tweetContext: field({ id: "tweetContext", label: "Tweet to reply to, or your topic", required: true, hint: "Paste the tweet text (replies) or describe what you want to say (original tweet).", control: textArea({ rows: 4 }) }),
     pName: field({ id: "pName", label: "Product or offer name", required: true, control: textInput({}) }),
     pWhat: field({ id: "pWhat", label: "What it does, in one plain sentence", required: true, hint: "Sentence 1 of the draft is built from this. It's saved to Knowledge, so you only enter it once.", control: textArea({ rows: 2 }) }),
   };
-  const formatRadios = Object.entries(FORMATS).map(([k, v]) => h("label", {}, h("input", { type: "radio", name: "format", value: k, id: `fmt-${k}` }), v.label));
+  const formatRadios = Object.entries(FORMAT_CHOICES).map(([k, v]) => h("label", {}, h("input", { type: "radio", name: "format", value: k, id: `fmt-${k}` }), v.label));
   const goalRadios = Object.entries(GOALS).map(([k, g]) => h("label", {}, h("input", { type: "radio", name: "goal", value: k, id: `goal-${k}` }), g.label));
   const productSelect = h("select", { "aria-describedby": "productReady" });
   const productReady = h("div", { id: "productReady", class: "hint", "aria-live": "polite" });
@@ -49,14 +50,18 @@ export function mountCompose(root, { store, platform, navigate }) {
   const genHint = h("p", { class: "hint", id: "genHint", role: "status" });
   genBtn.setAttribute("aria-describedby", "genHint");
 
-  const socialGroup = h("div", { class: "form", id: "socialGroup" }, f.tweetUrl, f.tweetContext, h("p", { class: "hint" }, "Drafts stay within X's 280 weighted-character limit. You review and post it yourself."));
+  const tw = createTweetForm({ platform, persist: () => persistForm() });
+  const socialGroup = tw.el;
+  const assist = createRecipientAssist({ f, S, store, platform, readForm: () => readForm(), persist: () => persistForm(), getProduct: () => reasoningProduct(), pName: f.pName, pWhat: f.pWhat });
   const emailGroup = h("div", { class: "form", id: "emailGroup" },
+    assist.profileBlock,
     h("fieldset", {}, h("legend", {}, "Who are you writing to?"), h("div", { class: "row3" }, f.name, f.company, f.role)),
-    f.why,
+    f.why, assist.reasonEl,
     h("fieldset", {}, h("legend", {}, "What do you want from them?"), h("div", { class: "pills" }, goalRadios), f.goalOther),
   );
+  const productTitle = h("div", { class: "group-title" }, "What are you offering?");
   const productGroup = h("div", { class: "form", id: "productGroup" },
-    h("div", { class: "group-title" }, "What are you offering?"),
+    productTitle,
     h("div", { id: "inlineProduct", class: "form" }, f.pName, f.pWhat,
       h("p", { class: "hint" }, "Want to add proof, who it's for, or phrases to avoid? Do that in Knowledge after your first draft.")),
     h("div", { id: "pickProduct", class: "form" }, productFieldWrap, productReady));
@@ -67,10 +72,10 @@ export function mountCompose(root, { store, platform, navigate }) {
       h("p", { class: "lede" }, "Tell Cold who you're writing to and why they should care. It drafts a short, editable message from the product facts you've saved. It never sends anything.")),
     errorSummary,
     h("fieldset", {}, h("legend", { class: "sr-only" }, "Format"), h("div", { class: "pills", role: "radiogroup", "aria-label": "Format" }, formatRadios)),
-    emailGroup, socialGroup, productGroup,
+    emailGroup, socialGroup, productGroup, tw.useField,
     h("details", { class: "panel" }, h("summary", {}, "More context ", h("span", { class: "opt" }, "(optional)")), h("div", { class: "in" }, f.convey)),
     h("details", { class: "panel", id: "connectionPanel" }, h("summary", {}, "Connection and model"), connection),
-    h("div", { class: "actions" }, genBtn, button("Clear form", { kind: "ghost", id: "clearBtn", onclick: () => { clearForm(); f.name.input.focus(); } })),
+    h("div", { class: "actions" }, genBtn, button("Clear all", { kind: "ghost", id: "clearBtn", onclick: () => clearAll() })),
     genHint);
 
   const pane = createDraftPane({
@@ -93,34 +98,57 @@ export function mountCompose(root, { store, platform, navigate }) {
 
   function readForm() {
     return {
-      mode: checked("format") || "email", tweetUrl: val(f.tweetUrl), tweetContext: val(f.tweetContext),
+      ...tw.read(), mode: (checked("format") || "email") === "email" ? "email" : tw.read().mode,
       name: val(f.name), role: val(f.role), company: val(f.company), productId: productSelect.value,
       why: val(f.why), goal: checked("goal") || "advice", goalOther: val(f.goalOther), convey: val(f.convey),
+      profileUrl: val(f.profileUrl), profile: val(f.profile),
     };
   }
   function fillForm(d) {
-    radio("format", FORMATS[d.mode] ? d.mode : "email");
-    f.tweetUrl.input.value = d.tweetUrl || ""; f.tweetContext.input.value = d.tweetContext || "";
+    radio("format", d.mode && d.mode !== "email" ? "tweet" : "email"); tw.fill(d);
     f.name.input.value = d.name || ""; f.role.input.value = d.role || ""; f.company.input.value = d.company || "";
+    f.profileUrl.input.value = d.profileUrl || ""; f.profile.input.value = d.profile || ""; assist.reset();
     f.why.input.value = d.why || ""; f.convey.input.value = d.convey || ""; f.goalOther.input.value = d.goalOther || "";
     radio("goal", GOALS[d.goal] ? d.goal : "advice");
     if (d.productId && [...productSelect.options].some(o => o.value === d.productId)) productSelect.value = d.productId;
     syncMode(); renderProduct();
   }
   const formFromRecord = e => e.mode && e.mode !== "email"
-    ? { mode: e.mode, tweetUrl: e.tweetUrl, tweetContext: e.tweetContext, productId: e.productId, goal: e.goal, convey: e.convey }
-    : ({ mode: e.mode, tweetUrl: e.tweetUrl, tweetContext: e.tweetContext, name: e.recipient.name, role: e.recipient.role, company: e.recipient.company, why: e.recipient.why, productId: e.productId, goal: e.goal, goalOther: e.goalOther, convey: e.convey });
-  function clearForm() { fillForm({ goal: "advice", productId: productSelect.value }); clearErrors(); persistForm(); }
+    ? { mode: e.mode, tweetUrl: e.tweetUrl, tweetContext: e.tweetContext, tweetAuthor: e.tweetAuthor, tweetPoint: e.tweetPoint, tweetUse: e.tweetUse, productId: e.productId, goal: e.goal, convey: e.convey }
+    : ({ mode: e.mode, tweetUrl: e.tweetUrl, tweetContext: e.tweetContext, name: e.recipient.name, role: e.recipient.role, company: e.recipient.company, why: e.recipient.why, profileUrl: e.recipient.profileUrl, profile: e.recipient.profile, productId: e.productId, goal: e.goal, goalOther: e.goalOther, convey: e.convey });
+  /** Empties everything in Write: inputs, helper results, the shown draft and any error. Saved drafts stay in History. */
+  async function clearAll() {
+    const edited = S.current && S.current.edited;
+    if (edited && !(await confirmDialog({ title: "Clear everything?", body: "This clears the form and the draft on screen. Your edited draft stays in History.", confirmLabel: "Clear all" }))) return;
+    if (ctl) ctl.abort();                       // stop a draft that is still being written
+    f.pName.input.value = ""; f.pWhat.input.value = "";
+    fillForm({ goal: "advice", productId: productSelect.value });
+    clearErrors(); setError(null);
+    store.set({ current: null, undo: null, busy: false, step: 0 }, "current");
+    persistForm(); pane.invalidate(); renderAll(); renderProduct();
+    announce("Cleared. Starting fresh."); f.name.input.focus();
+  }
   const persistForm = () => store.saveCompose(readForm());
 
   function syncMode() {
     const social = (checked("format") || "email") !== "email";
-    emailGroup.hidden = social; socialGroup.hidden = !social;
+    emailGroup.hidden = social; socialGroup.hidden = !social; tw.sync();
+    productTitle.textContent = social ? "Product to feature or mention" : "What are you offering?";
+    tw.useField.hidden = !social;
+    for (const w of [productFieldWrap, f.pName, f.pWhat]) { const m = w.querySelector("label span"); if (m) { m.className = social ? "opt" : "req"; m.textContent = social ? " Optional" : " Required"; } }
     f.goalOther.hidden = checked("goal") !== "other";
     genBtn.textContent = S.busy ? "Generating…" : social ? "Generate tweet" : "Generate draft";
   }
   form.addEventListener("input", () => { persistForm(); });
-  form.addEventListener("change", e => { if (e.target.name === "format" || e.target.name === "goal") syncMode(); if (e.target === productSelect) { if (productSelect.value === "__new") { productSelect.value = S.products[0]?.id || ""; navigate("knowledge", { newProduct: true }); return; } renderProduct(); } persistForm(); });
+  form.addEventListener("change", e => { if (["format", "goal", "tweetKind"].includes(e.target.name)) syncMode(); if (e.target === productSelect) { if (productSelect.value === "__new") { productSelect.value = S.products[0]?.id || ""; navigate("knowledge", { newProduct: true }); return; } renderProduct(); } persistForm(); });
+
+  /** The product to reason about: the selected one, or the inline one typed on a first run. */
+  function reasoningProduct() {
+    const p = store.productById(productSelect.value);
+    if (p) return p;
+    if (S.products.length === 0 && val(f.pName) && val(f.pWhat)) return { id: "draft", name: val(f.pName), what: val(f.pWhat), proof: [], techFacts: [], approved: [], dontSay: [] };
+    return null;
+  }
 
   /* ---------- product area ---------- */
   function renderProduct() {
@@ -145,14 +173,15 @@ export function mountCompose(root, { store, platform, navigate }) {
   function renderConnection() {
     clear(connection);
     const srv = S.server;
-    connection.append(h("p", { class: "hint" }, srv ? (srv.ready ? `Generating through ${srv.provider} with ${srv.model}. Products and drafts are saved in this browser only; they are not backed up or synced.` : `Generation is off: configure ${srv.keySetting || "the provider key"} on the server.`) : S.backend === "db" ? "Running in the Claude app." : "No Cold server found. Run it with npm start, or open Cold in the Claude app, to generate drafts."));
-    if (srv && srv.provider === "ai-gateway") connection.append(h("div", { class: "field" }, h("label", { for: "gatewayModel" }, "AI Gateway model"), modelSelect, modelHint));
+    connection.append(h("p", { class: "hint" }, srv ? (srv.ready ? `Generating through ${srv.providerLabel || srv.provider} with ${srv.model}. Products and drafts are saved in this browser only; they are not backed up or synced.` : (srv.settingsEnabled ? "Generation is off: add an API key or pick a provider in Settings." : `Generation is off: configure ${srv.keySetting || "the provider key"} on the server.`)) : S.backend === "db" ? "Running in the Claude app." : "No Cold server found. Run it with npm start, or open Cold in the Claude app, to generate drafts."));
+    if (srv && srv.settingsEnabled) connection.append(h("p", { class: "hint" }, "Change the provider, model or API keys in ", h("a", { href: "#/settings" }, "Settings"), "."));
+    if (srv && srv.provider === "ai-gateway" && !srv.settingsEnabled) connection.append(h("div", { class: "field" }, h("label", { for: "gatewayModel" }, "AI Gateway model"), modelSelect, modelHint));
     if (srv && srv.accessRequired) connection.append(h("div", { class: "field" }, h("label", { for: "accessCode" }, "Access code ", h("span", { class: "req" }, "Required by this server")), h("p", { class: "hint", id: "accessHint" }, "The server checks this code before it will generate. It's kept for this browser tab only."), accessInput));
     if (srv && srv.experimental) connection.append(notice("warn", "Experimental provider: live compatibility is unverified and generation may fail."));
-    if (srv && !srv.accessRequired && srv.provider) connection.append(notice("warn", h("strong", {}, "This server has no access code."), h("p", {}, "Anyone who can open this address can generate drafts on your AI credits. Set COLD_ACCESS_TOKEN on the server before sharing the link.")));
+    if (srv && !srv.accessRequired && srv.provider && !srv.settingsEnabled) connection.append(notice("warn", h("strong", {}, "This server has no access code."), h("p", {}, "Anyone who can open this address can generate drafts on your AI credits. Set COLD_ACCESS_TOKEN on the server before sharing the link.")));
   }
   async function loadModels() {
-    if (S.server?.provider !== "ai-gateway") return;
+    if (S.server?.provider !== "ai-gateway" || S.server?.settingsEnabled) return;
     modelSelect.append(h("option", { value: "" }, `Server default: ${S.server.model}`));
     modelHint.textContent = "Loading available models…";
     try {
@@ -176,7 +205,7 @@ export function mountCompose(root, { store, platform, navigate }) {
     genHint.textContent = S.busy ? "Writing your draft…"
       : st === "pending" ? "Connecting…"
       : st === "none" ? "Generation needs the Cold server (npm start) or the Claude app."
-      : st === "noconfig" ? "The server has no provider key yet. See “Connection and model”."
+      : st === "noconfig" ? (S.server?.settingsEnabled ? "No provider is set up yet. Open Settings to add a key or pick a local model." : "The server has no provider key yet. See “Connection and model”.")
       : st === "blocked" ? "Claude access was declined for this page. Reload to allow it."
       : "Takes a minute or less: a draft, then an editor pass. You can edit the result.";
     genBtn.disabled = S.busy || ["none", "blocked", "noconfig", "pending"].includes(st);
@@ -185,7 +214,7 @@ export function mountCompose(root, { store, platform, navigate }) {
   }
 
   /* ---------- validation ---------- */
-  function clearErrors() { Object.values(f).forEach(c => c.setError("")); productFieldWrap.setError(""); errorSummary.hidden = true; clear(errorSummary); }
+  function clearErrors() { Object.values(f).forEach(c => c.setError("")); tw.clearErrors(); productFieldWrap.setError(""); errorSummary.hidden = true; clear(errorSummary); }
   function validate(v) {
     const errs = [];
     const need = (ctl, ok, msg, label) => { if (!ok) errs.push({ ctl, msg, label }); else ctl.setError(""); };
@@ -195,8 +224,7 @@ export function mountCompose(root, { store, platform, navigate }) {
       need(f.why, v.why, "Say why this person should care. Cold won't invent a reason.", "Why should this person care");
       if (v.goal === "other") need(f.goalOther, v.goalOther, "Describe what you want from them.", "What you want");
     } else {
-      need(f.tweetContext, v.tweetContext, v.mode === "reply" ? "Paste the tweet you're replying to. A link alone can't be read." : "Add a topic or rough draft.", "Tweet or topic");
-      need(f.tweetUrl, !v.tweetUrl || TWEET_URL.test(v.tweetUrl), "Use a valid x.com or twitter.com status link, or leave it empty.", "Tweet link");
+      tw.validate(v, need);
     }
     if (S.products.length === 0) {
       if (v.mode === "email") { need(f.pName, val(f.pName), "Name what you're offering.", "Product or offer name"); need(f.pWhat, val(f.pWhat), "Describe what it does in one sentence.", "What it does"); }
@@ -237,7 +265,7 @@ export function mountCompose(root, { store, platform, navigate }) {
       }
       const rec = v.mode === "email"
         ? await generateEmail({ sample: S.sample, product, form: v, signal: ctl.signal, onStep: n => { store.set({ step: n }, "busy"); pane.render(); } })
-        : await generateTweet({ sample: S.sample, product: store.productById(v.productId) || null, form: v, tweetLength: t => globalThis.tweetLength(t), signal: ctl.signal });
+        : await generateTweet({ sample: S.sample, product: reasoningProduct(), form: v, tweetLength: t => globalThis.tweetLength(t), signal: ctl.signal });
       store.set({ current: rec, undo: null }, "current");
       try { await store.saveEmail(rec); } catch (e) { toast(e && e.code === "quota_exceeded" ? "Draft shown, but browser storage is full so it isn't in History. Copy it now." : "Draft shown, but couldn't be saved to History."); }
       announce("Draft ready. Review the checks below before sending.");

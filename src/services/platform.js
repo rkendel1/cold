@@ -14,6 +14,13 @@ export function createPlatform() {
     setModel(v) { settings.model = v; try { localStorage.setItem(STORAGE_KEYS.gatewayModel, v); } catch {} },
     savedModel() { return safeGet(globalThis.localStorage || {}, STORAGE_KEYS.gatewayModel); },
 
+    /** Re-reads the server's config after Settings changed it. */
+    async refresh() {
+      const server = await api.config();
+      const sample = server && server.ready ? api.sample : null;
+      return { server, sample, sampleState: sample ? "ready" : server ? "noconfig" : "none" };
+    },
+
     /** Resolves { db, user, sample, server, sampleState }. */
     async detect() {
       const cl = globalThis.claude;

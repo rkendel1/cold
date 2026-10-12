@@ -1,7 +1,7 @@
 // Generation pipelines. `sample` is any function with the shape of api.sample (including `.json`),
 // so the provider/transport stays behind that boundary and these functions stay testable without a network.
 import { buildKnowledge } from "../domain/knowledge.js";
-import { draftPrompt, editorPrompt, tweetPrompt } from "../domain/prompts.js";
+import { draftPrompt, editorPrompt, tweetPrompt, tweetUseOf, profilePrompt, reasonPrompt } from "../domain/prompts.js";
 import { evaluate } from "../domain/rules.js";
 import { uid } from "../domain/ids.js";
 
@@ -28,7 +28,7 @@ const trim = v => String(v || "").trim();
 function emailRecord({ id, createdAt, status, form, product, fin, draft, ed, prev }) {
   const rec = {
     id, createdAt, status,
-    recipient: { name: form.name, role: form.role, company: form.company, why: form.why },
+    recipient: { name: form.name, role: form.role, company: form.company, why: form.why, profileUrl: form.profileUrl || "", profile: form.profile || "" },
     productId: product.id, productName: product.name, goal: form.goal, goalOther: form.goalOther || "", convey: form.convey || "",
     subject: trim(fin.subject), what: trim(fin.what), why: trim(fin.why), ask: trim(fin.ask),
     relevance: prev ? prev.relevance : (draft.relevance || null),
@@ -46,6 +46,31 @@ function emailRecord({ id, createdAt, status, form, product, fin, draft, ed, pre
   if (prev && prev.repliedAt) rec.repliedAt = prev.repliedAt;
   rec.score = evaluate(rec, product).score;
   return rec;
+}
+
+/** Reads raw public-profile text into { name, role, company, notes }. Never invents: empty fields stay empty. */
+export async function extractProfile({ sample, text, signal }) {
+  const r = await sample.json(profilePrompt(text), { signal, cache: false });
+  if (!r || typeof r !== "object") throw { code: "invalid_json" };
+  const s = v => (typeof v === "string" ? v.trim() : "");
+  return { name: s(r.name).slice(0, 120), role: s(r.role).slice(0, 160), company: s(r.company).slice(0, 160), notes: s(r.notes).slice(0, 800) };
+}
+
+const WORDS = s => (String(s || "").toLowerCase().match(/[a-z0-9]{4,}/g) || []);
+
+/**
+ * Asks the model who the recipient is and for reasons they might care. A suggestion survives only if the profile text it cites
+ * (its "basis") actually appears in what the sender supplied, so a stretched or invented reason is dropped, not shown.
+ */
+export async function suggestReasons({ sample, product, form, signal }) {
+  const r = await sample.json(reasonPrompt(buildKnowledge(product), form), { signal, cache: false });
+  if (!r || typeof r !== "object") throw { code: "invalid_json" };
+  const source = new Set(WORDS([form.profile, form.role, form.company, form.name].join(" ")));
+  const grounded = s => { const w = [...new Set(WORDS(s))]; return w.length > 0 && w.filter(x => source.has(x)).length / w.length >= 0.6; };
+  const list = (Array.isArray(r.suggestions) ? r.suggestions : [])
+    .filter(x => x && typeof x.why === "string" && x.why.trim() && grounded(x.basis))
+    .slice(0, 3).map(x => ({ why: x.why.trim().slice(0, 300), basis: String(x.basis).trim().slice(0, 300), signal: typeof x.signal === "string" ? x.signal.trim().slice(0, 60) : "" }));
+  return { who: typeof r.who === "string" ? r.who.trim().slice(0, 300) : "", suggestions: list, dropped: (Array.isArray(r.suggestions) ? r.suggestions.length : 0) - list.length };
 }
 
 /** Two model calls: draft, then editor pass. Returns the record; never mutates inputs. */
@@ -73,8 +98,17 @@ export async function improveEmail({ sample, product, current, focus, signal, on
   return emailRecord({ id: current.id, createdAt: current.createdAt, status: current.status || "draft", form, product, fin, draft, ed: ed || {}, prev: current });
 }
 
+/** @handles and links in a tweet that came from neither the sender's material nor the product's saved links. */
+export function tweetWarnings(text, allowedSources) {
+  const allowed = allowedSources.filter(Boolean).join("\n").toLowerCase();
+  const found = [...new Set(String(text).match(/@\w{1,15}|https?:\/\/[^\s)]+/g) || [])];
+  return found.filter(x => !allowed.includes(x.toLowerCase().replace(/[.,;:!?]+$/, ""))).map(x => `“${x}” isn't in your product links or the tweet you supplied. Check it before posting.`);
+}
+
 export async function generateTweet({ sample, product, form, tweetLength, signal }) {
-  const prompt = tweetPrompt(form, product ? buildKnowledge(product).text : "None");
+  const use = tweetUseOf(form);
+  const k = product && use !== "none" ? buildKnowledge(product) : null;
+  const prompt = tweetPrompt(form, k ? k.text : "None", k ? k.links : "");
   let result = await sample.json(prompt, { signal, cache: false });
   let text = trim(result?.text);
   if (!tweetLength(text).valid) {
@@ -82,10 +116,11 @@ export async function generateTweet({ sample, product, form, tweetLength, signal
     text = trim(result?.text);
   }
   if (!text || !tweetLength(text).valid) throw { code: "api_error", message: "The model did not produce a valid tweet within 280 characters." };
+  const warnings = tweetWarnings(text, [form.tweetContext, form.tweetAuthor, form.tweetUrl, form.tweetPoint, form.convey, k && k.links]);
   return {
-    id: uid("e"), createdAt: Date.now(), status: "draft", mode: form.mode, tweetUrl: form.tweetUrl, tweetContext: form.tweetContext,
+    id: uid("e"), createdAt: Date.now(), status: "draft", mode: form.mode, tweetUrl: form.tweetUrl, tweetContext: form.tweetContext, tweetAuthor: form.tweetAuthor || "", tweetPoint: form.tweetPoint || "", tweetUse: form.tweetUse || "", warnings,
     recipient: { name: form.mode === "reply" ? "Tweet reply" : "Original tweet", role: "", company: "", why: form.tweetContext },
-    productId: product?.id || "", productName: product?.name || "", goal: form.goal, convey: form.convey,
+    productId: product && product.id !== "draft" ? product.id : "", productName: product?.name || "", goal: form.goal, convey: form.convey,
     subject: form.mode === "reply" ? "Tweet reply" : "Original tweet", what: text, why: "", ask: "",
   };
 }

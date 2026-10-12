@@ -368,7 +368,7 @@ test("saving fails loudly when browser storage is full, and nothing is reported 
 test("tweet mode: validation, generation, counter and copy", { skip: SKIP }, async () => {
   mock.tweet = "Nice point. Moving workloads is the hard part.";
   const t = await open({ seed: SEED }); const { page } = t;
-  await page.check("#fmt-reply");
+  await page.check("#fmt-tweet"); await page.check("#tk-reply");
   assert.equal(await page.isVisible("#emailGroup"), false);
   await page.fill("#tweetUrl", "https://example.com/nope"); await page.fill("#tweetContext", "Moving workloads is hard");
   await page.click("#genBtn");

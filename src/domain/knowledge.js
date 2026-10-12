@@ -4,6 +4,25 @@ import { PROOF_TYPES } from "./constants.js";
 const str = v => (typeof v === "string" ? v : v == null ? "" : String(v));
 const strList = v => (Array.isArray(v) ? v.map(str).map(s => s.trim()).filter(Boolean) : []);
 
+/** "@acme", "acme", "x.com/acme" or "https://twitter.com/acme" -> "@acme"; anything else -> "". */
+export function normalizeHandle(v) {
+  const m = str(v).trim().match(/^(?:https?:\/\/)?(?:(?:www\.|mobile\.)?(?:x|twitter)\.com\/)?@?([A-Za-z0-9_]{1,15})\/?$/i);
+  return m ? `@${m[1]}` : "";
+}
+
+/** The product's public links as [label, value] pairs: X handle, website, repository, then any "Label: url" lines. */
+export function productLinks(p) {
+  const out = [];
+  const h = normalizeHandle(p?.xHandle); if (h) out.push(["X handle", h]);
+  if (str(p?.website).trim()) out.push(["Website", str(p.website).trim()]);
+  if (str(p?.repo).trim()) out.push(["Repository", str(p.repo).trim()]);
+  for (const line of strList(p?.socials)) {
+    const m = line.match(/^([^:]{1,30}):\s*(\S.*)$/);
+    out.push(m && !/^https?$/i.test(m[1]) ? [m[1].trim(), m[2].trim()] : ["Link", line]);
+  }
+  return out;
+}
+
 export function externalProof(p) { return (p?.proof || []).filter(x => x && x.external && x.claim); }
 export function internalProof(p) { return (p?.proof || []).filter(x => x && !x.external && x.claim); }
 
@@ -53,7 +72,9 @@ export function buildKnowledge(p) {
   const ds = (p.dontSay || []).filter(Boolean);
   L.push("DO NOT SAY:"); ds.length ? ds.forEach(t => L.push(`- ${t}`)) : L.push("- (none recorded)");
   L.push("- Don't claim production customers, revenue, users or partners unless a PROOF item states them.");
-  return { text: L.join("\n"), facts };
+  // Public links are kept apart from `text` so email prompts are unchanged; only tweets use them.
+  const links = productLinks(p).map(([k, v]) => `- ${k}: ${v}`).join("\n");
+  return { text: L.join("\n"), facts, links };
 }
 
 /** Coerce one saved product into the documented shape without losing unknown fields. Returns null if unusable. */
@@ -64,7 +85,7 @@ export function normalizeProduct(raw, index = 0) {
   return {
     ...raw, id,
     name: str(raw.name), oneLiner: str(raw.oneLiner), category: str(raw.category), status: str(raw.status),
-    website: str(raw.website), repo: str(raw.repo), what: str(raw.what), who: str(raw.who), problem: str(raw.problem),
+    website: str(raw.website), repo: str(raw.repo), xHandle: normalizeHandle(raw.xHandle), socials: strList(raw.socials), what: str(raw.what), who: str(raw.who), problem: str(raw.problem),
     shortDesc: str(raw.shortDesc), longDesc: str(raw.longDesc),
     order: Number.isFinite(raw.order) ? raw.order : index,
     techFacts: strList(raw.techFacts), approved: strList(raw.approved), dontSay: strList(raw.dontSay),

@@ -24,6 +24,18 @@ export function createApi({ fetchImpl = (...a) => globalThis.fetch(...a), getAcc
     return Array.isArray(models) ? models : [];
   }
 
+  async function settingsCall(path, init = {}) {
+    const r = await fetchImpl(path, { ...init, headers: { ...headers(), ...(init.headers || {}) } });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw { code: (data.error && data.error.code) || "api_error", message: (data.error && data.error.message) || `The server returned ${r.status}.` };
+    return data;
+  }
+  const profile = url => settingsCall("api/profile", { method: "POST", body: JSON.stringify({ url }) });
+  const tweet = url => settingsCall("api/tweet", { method: "POST", body: JSON.stringify({ url }) });
+  const getSettings = () => settingsCall("api/settings");
+  const saveSettings = patch => settingsCall("api/settings", { method: "PUT", body: JSON.stringify(patch) });
+  const providerModels = id => settingsCall(`api/settings/models?provider=${encodeURIComponent(id)}`).then(d => d.models || []);
+
   async function sample(prompt, opts = {}) {
     let r;
     try {
@@ -38,5 +50,5 @@ export function createApi({ fetchImpl = (...a) => globalThis.fetch(...a), getAcc
   }
   sample.json = async (prompt, opts) => parseLooseJson((await sample(prompt, opts)).text);
 
-  return { config, models, sample };
+  return { config, models, sample, profile, tweet, getSettings, saveSettings, providerModels };
 }

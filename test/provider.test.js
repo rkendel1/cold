@@ -3,10 +3,11 @@ const assert = require('node:assert/strict');
 const http = require('node:http');
 
 test('providers keep credentials server-side and normalize responses', async () => {
-  for (const provider of ['ai-gateway', 'anthropic']) {
+  for (const provider of ['ai-gateway', 'anthropic', 'ollama']) {
     process.env.LLM_PROVIDER = provider;
     process.env.AI_GATEWAY_API_KEY = 'test-gateway';
     process.env.ANTHROPIC_API_KEY = 'test-anthropic';
+    process.env.OLLAMA_MODEL = 'llama3.1'; process.env.OLLAMA_BASE_URL = 'http://127.0.0.1:11434';
     delete require.cache[require.resolve('../server')];
     const server = require('../server');
     await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -28,12 +29,15 @@ test('providers keep credentials server-side and normalize responses', async () 
         const body = JSON.parse(options.body);
         assert.equal(body.model, expectedModel);
         assert.equal(body.messages.at(-1).content, 'Hello');
-        if (provider === 'ai-gateway') {
+        if (provider === 'ollama') {
+          assert.equal(url, 'http://127.0.0.1:11434/v1/chat/completions');
+          assert.equal(options.headers.authorization, undefined);
+        } else if (provider === 'ai-gateway') {
           assert.equal(url, 'https://ai-gateway.vercel.sh/v1/chat/completions');
           assert.equal(options.headers.authorization, 'Bearer test-gateway');
           assert.equal(body.messages[0].role, 'system');
         } else assert.equal(options.headers['x-api-key'], 'test-anthropic');
-        return { ok: status === 200, status, json: async () => provider === 'ai-gateway'
+        return { ok: status === 200, status, json: async () => provider !== 'anthropic'
           ? { choices: [{ message: { content: 'Draft' }, finish_reason: 'length' }] }
           : { content: [{ type: 'text', text: 'Draft' }], stop_reason: 'max_tokens' } };
       };
@@ -66,4 +70,4 @@ test('providers keep credentials server-side and normalize responses', async () 
   }
 });
 
-function configModel(provider) { return provider === "ai-gateway" ? "anthropic/claude-sonnet-4.5" : "claude-sonnet-5-5"; }
+function configModel(provider) { return provider === "ai-gateway" ? "anthropic/claude-sonnet-4.5" : provider === "ollama" ? "llama3.1" : "claude-sonnet-5-5"; }

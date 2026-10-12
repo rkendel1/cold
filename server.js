@@ -1,4 +1,4 @@
-// Cold: server-side LLM generation via AI Gateway or Anthropic.
+// Cold: server-side LLM generation via AI Gateway, Anthropic, or a local Ollama server.
 // No dependencies. Requires Node 18+ (built-in fetch).
 
 const http = require("node:http");
@@ -25,22 +25,31 @@ function loadEnv(file) {
 loadEnv(path.join(ROOT, ".env"));
 
 const prototypeConfig = require("./provider-config.json");
-const PROVIDER = (process.env.VERCEL_ENV === "preview" ? prototypeConfig.previewProvider : null) || prototypeConfig.provider || process.env.LLM_PROVIDER || "ai-gateway";
-if (!["ai-gateway", "anthropic", "hf-ssh"].includes(PROVIDER)) throw new Error("Provider must be ai-gateway, anthropic, or hf-ssh");
-const IS_HF = PROVIDER === "hf-ssh";
-const IS_GATEWAY = PROVIDER === "ai-gateway";
-const credential = () => IS_GATEWAY
-  ? process.env.AI_GATEWAY_API_KEY || process.env.VERCEL_OIDC_TOKEN || ""
-  : process.env.ANTHROPIC_API_KEY || "";
-const MODEL = IS_GATEWAY
-  ? process.env.AI_GATEWAY_MODEL || "anthropic/claude-sonnet-4.5"
-  : process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5";
+const { BY_ID } = require("./lib/providers");
+const { createSettings } = require("./lib/settings");
+// Settings (provider, model, API keys) are editable from the UI only when COLD_SETTINGS_FILE is set, i.e. on a local
+// or desktop install. A hosted deployment keeps configuring through environment variables.
+const settings = process.env.COLD_SETTINGS_FILE ? createSettings({ file: process.env.COLD_SETTINGS_FILE }) : null;
+const baseProvider = () => (process.env.VERCEL_ENV === "preview" ? prototypeConfig.previewProvider : null) || prototypeConfig.provider || process.env.LLM_PROVIDER || "ai-gateway";
+const validProvider = id => id === "hf-ssh" || !!BY_ID[id];
+if (!validProvider(baseProvider())) throw new Error(`Provider must be one of: hf-ssh, ${Object.keys(BY_ID).join(", ")}`);
 const MAX_TOKENS = parseInt(process.env.LLM_MAX_TOKENS || process.env.ANTHROPIC_MAX_TOKENS || "2000", 10);
-const KEY_SETTING = IS_GATEWAY ? "AI_GATEWAY_API_KEY (or Vercel OIDC authentication)" : "ANTHROPIC_API_KEY";
-const MODEL_SETTING = IS_GATEWAY ? "AI_GATEWAY_MODEL" : "ANTHROPIC_MODEL";
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const HOST = process.env.HOST || "127.0.0.1";
-const API_URL = process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com";
+
+/** The effective provider settings for this request: saved settings win over environment defaults. */
+function resolve() {
+  const id = (settings && settings.active()) || baseProvider();
+  if (id === "hf-ssh") return { id, hf: true, label: "hf-ssh", model: "hf-ssh/unknown", key: "", ready: true, keySetting: "Experimental: SSH client, verified host key, and live protocol validation required (no API key)", modelSetting: "" };
+  const def = BY_ID[id], env = def.env;
+  const saved = settings || { key: () => "", model: () => "", baseUrl: () => "" };
+  const key = saved.key(id) || (env.key && process.env[env.key]) || (id === "ai-gateway" ? process.env.VERCEL_OIDC_TOKEN || "" : "");
+  const model = saved.model(id) || (env.model && process.env[env.model]) || def.defaultModel;
+  const baseUrl = (saved.baseUrl(id) || (env.url && process.env[env.url]) || def.baseUrl).replace(/\/+$/, "");
+  const keySetting = id === "ollama" ? "OLLAMA_BASE_URL (no API key needed)" : id === "custom" ? "a base URL for the custom provider" : id === "ai-gateway" ? "AI_GATEWAY_API_KEY (or Vercel OIDC authentication)" : (env.key || "an API key");
+  return { id, def, kind: def.kind, label: def.label, key, model, baseUrl, keySetting, modelSetting: env.model || "the model",
+    ready: !!baseUrl && (!def.needsKey || !!key) && !!model };
+}
 
 const SYSTEM = "You are the writing engine inside Cold, a cold-email generator. Follow the instructions in the user message exactly. When asked for JSON, reply with only the JSON value: no preamble, no code fence.";
 
@@ -103,13 +112,13 @@ function guardGenerate(req) {
   return null;
 }
 
-function apiErrorMessage(status, data, model = MODEL) {
+function apiErrorMessage(status, data, cfg, model = cfg.model) {
   const msg = data && data.error && data.error.message;
-  if (status === 401) return `Authentication was rejected. Check ${KEY_SETTING}.`;
-  if (status === 404) return `Model "${model}" wasn't found. Check ${MODEL_SETTING}.`;
+  if (status === 401 || status === 403) return `Authentication was rejected. Check ${cfg.keySetting}.`;
+  if (status === 404) return `Model "${model}" wasn't found. Check ${cfg.modelSetting}.`;
   if (status === 429) return "Rate limited by the API. Wait a minute and try again.";
   if (status === 529 || status >= 500) return "The API is overloaded or unavailable right now. Try again shortly.";
-  return msg ? `API error: ${msg}` : `API error (${status}).`;
+  return typeof msg === "string" && msg ? `API error: ${msg}` : `API error (${status}).`;
 }
 
 let modelCache = null;
@@ -129,15 +138,49 @@ async function gatewayModels() {
   return models;
 }
 
+function authHeaders(cfg) {
+  if (cfg.kind === "anthropic") return { "x-api-key": cfg.key, "anthropic-version": "2023-06-01" };
+  return cfg.key ? { authorization: `Bearer ${cfg.key}` } : {};
+}
+
+/** Live model list for one provider, using its saved key. Returns [{ id, name }]. */
+async function providerModels(cfg) {
+  const r = await fetch(cfg.baseUrl + cfg.def.modelsPath, { headers: authHeaders(cfg), signal: AbortSignal.timeout(10000) });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(apiErrorMessage(r.status, data, cfg)), { status: r.status });
+  const rows = Array.isArray(data.models) ? data.models : Array.isArray(data.data) ? data.data : [];
+  const seen = new Set();
+  return rows.map(m => {
+    const raw = typeof m === "string" ? m : m.id || m.name || m.model;
+    if (typeof raw !== "string") return null;
+    const id = raw.replace(/^models\//, "");
+    return { id, name: m.display_name || id };
+  }).filter(m => m && !seen.has(m.id) && seen.add(m.id)).sort((a, b) => a.id.localeCompare(b.id));
+}
+
+// Looks up a LinkedIn / X profile link, or a single tweet. Same abuse controls as /api/generate; only those two sites are ever fetched.
+async function profileRoute(req, res, fn = "lookupProfile") {
+  const denied = guardGenerate(req);
+  if (denied) return send(res, denied.status, { error: { code: denied.code, message: denied.message } });
+  let link;
+  try { link = JSON.parse(await readBody(req, 8 * 1024)).url; } catch { return send(res, 400, { error: { message: "Bad request." } }); }
+  if (typeof link !== "string" || !link.trim() || link.length > 300) return send(res, 400, { error: { message: "Enter a profile link." } });
+  const result = await require("./lib/profile")[fn](link, (...a) => fetch(...a));
+  send(res, 200, result);   // a failed lookup is a normal outcome the UI explains, not a request error
+}
+
 async function generate(req, res) {
   const denied = guardGenerate(req);
   if (denied) return send(res, denied.status, { error: { code: denied.code, message: denied.message } });
-  if (!IS_HF && !credential()) return send(res, 400, { error: { message: `Missing ${KEY_SETTING}.` } });
-  let prompt, model = MODEL;
+  const cfg = resolve();
+  if (!cfg.ready) return send(res, 400, { error: { message: `Missing ${cfg.keySetting}.` } });
+  const isGateway = cfg.id === "ai-gateway";
+  let prompt, model = cfg.model;
   try {
     const body = JSON.parse(await readBody(req, MAX_BODY));
     prompt = String(body.prompt || "");
-    if (IS_GATEWAY && body.model != null) {
+    // Per-request model choice is the hosted AI Gateway picker; local installs choose the model in Settings.
+    if (isGateway && !settings && body.model != null) {
       if (typeof body.model !== "string" || !/^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._:-]+$/.test(body.model) || body.model.length > 200)
         return send(res, 400, { error: { message: "Invalid AI Gateway model." } });
       model = body.model;
@@ -147,7 +190,7 @@ async function generate(req, res) {
   }
   if (!prompt.trim()) return send(res, 400, { error: { message: "Empty prompt." } });
 
-  if (IS_HF) {
+  if (cfg.hf) {
     const ctl = new AbortController();
     res.on("close", () => { if (!res.writableEnded) ctl.abort(); });
     try {
@@ -159,7 +202,7 @@ async function generate(req, res) {
     }
   }
 
-  if (IS_GATEWAY && model !== MODEL) {
+  if (isGateway && model !== cfg.model) {
     try {
       if (!(await gatewayModels()).some(m => m.id === model))
         return send(res, 400, { error: { message: "Select a language model from the AI Gateway catalog." } });
@@ -170,46 +213,104 @@ async function generate(req, res) {
   const ctl = new AbortController();
   res.on("close", () => { if (!res.writableEnded) ctl.abort(); });
 
+  const openai = cfg.kind === "openai";
   try {
-    const r = await fetch(IS_GATEWAY ? "https://ai-gateway.vercel.sh/v1/chat/completions" : `${API_URL}/v1/messages`, {
+    const r = await fetch(cfg.baseUrl + cfg.def.chatPath, {
       method: "POST",
       signal: ctl.signal,
-      headers: {
-        "content-type": "application/json",
-        ...(IS_GATEWAY ? { authorization: `Bearer ${credential()}` } : { "x-api-key": credential(), "anthropic-version": "2023-06-01" }),
-      },
+      headers: { "content-type": "application/json", ...authHeaders(cfg) },
       body: JSON.stringify({
         model,
         max_tokens: MAX_TOKENS,
-        ...(IS_GATEWAY
-          ? { messages: [{ role: "system", content: SYSTEM }, { role: "user", content: prompt }], stream: false }
+        ...(openai
+          // Ollama: skip hidden "thinking" (it can burn the whole token budget) and force valid JSON.
+          ? { messages: [{ role: "system", content: SYSTEM }, { role: "user", content: prompt }], stream: false, ...(cfg.id === "ollama" ? { reasoning_effort: "none", response_format: { type: "json_object" } } : {}) }
           : { system: SYSTEM, messages: [{ role: "user", content: prompt }] }),
       }),
     });
     const data = await r.json().catch(() => ({}));
-    if (!r.ok) return send(res, 502, { error: { message: apiErrorMessage(r.status, data, model) } });
+    if (!r.ok) return send(res, 502, { error: { message: apiErrorMessage(r.status, data, cfg, model) } });
     const choice = data.choices && data.choices[0];
-    const text = IS_GATEWAY ? choice?.message?.content : (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+    const text = openai ? choice?.message?.content : (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
     if (typeof text !== "string" || !text.trim()) return send(res, 502, { error: { message: "The provider returned no text. Try again." } });
-    send(res, 200, { text, truncated: IS_GATEWAY ? choice.finish_reason === "length" : data.stop_reason === "max_tokens", model: data.model });
+    send(res, 200, { text, truncated: openai ? choice.finish_reason === "length" : data.stop_reason === "max_tokens", model: data.model });
   } catch (e) {
     if (ctl.signal.aborted) return;
-    send(res, 502, { error: { message: `Couldn't reach ${PROVIDER} from the server.` } });
+    send(res, 502, { error: { message: cfg.id === "ollama" ? `Couldn't reach Ollama at ${cfg.baseUrl}. Is it running (ollama serve) and is "${model}" pulled?` : `Couldn't reach ${cfg.label} from the server.` } });
   }
+}
+
+// ---- Settings API (local/desktop installs only) ----------------------------------------------------------------
+const { PROVIDERS } = require("./lib/providers");
+const LOCAL_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/;
+
+function guardSettings(req) {
+  if (!settings) return { status: 404, code: "settings_disabled", message: "Settings are only available in the desktop app or a local install." };
+  // Block DNS-rebinding and cross-site pages from reading or changing keys.
+  if (!LOCAL_HOST.test(String(req.headers.host || ""))) return { status: 403, code: "bad_origin", message: "Settings can only be used from this computer." };
+  const origin = req.headers.origin;
+  if (origin) { let host = ""; try { host = new URL(origin).host; } catch {} if (host !== req.headers.host) return { status: 403, code: "bad_origin", message: "Cross-site requests are not allowed." }; }
+  if (accessToken() && !tokenMatches(req.headers["x-cold-access"])) return { status: 401, code: "access_required", message: "This server requires an access code." };
+  return null;
+}
+
+function settingsSnapshot() {
+  const active = resolve().id;
+  return {
+    enabled: true, active, keyStorage: settings.storage,
+    providers: PROVIDERS.map(def => {
+      const id = def.id, key = settings.key(id), env = def.env;
+      const envKey = !!(env.key && process.env[env.key]);
+      return {
+        id, label: def.label, needsKey: def.needsKey, editableUrl: !!def.editableUrl,
+        hasKey: !!key || envKey, keyHint: key ? key.slice(-4) : "", keyFromEnv: !key && envKey,
+        model: settings.model(id) || (env.model && process.env[env.model]) || "", defaultModel: def.defaultModel,
+        baseUrl: settings.baseUrl(id) || (env.url && process.env[env.url]) || "", defaultBaseUrl: def.baseUrl,
+      };
+    }),
+  };
+}
+
+async function settingsRoute(req, res, url) {
+  const denied = guardSettings(req);
+  if (denied) return send(res, denied.status, { error: { code: denied.code, message: denied.message } });
+  if (req.method === "GET" && url.pathname === "/api/settings") return send(res, 200, settingsSnapshot());
+  if (req.method === "PUT" && url.pathname === "/api/settings") {
+    try {
+      let body; try { body = JSON.parse(await readBody(req, MAX_BODY)); } catch (e) { if (e.status) throw e; throw new Error("Bad request."); }
+      settings.update(body);
+    } catch (e) { return send(res, e.status || 400, { error: { message: e.message || "Bad request." } }); }
+    return send(res, 200, settingsSnapshot());
+  }
+  if (req.method === "GET" && url.pathname === "/api/settings/models") {
+    const id = url.searchParams.get("provider") || "";
+    const def = BY_ID[id];
+    if (!def) return send(res, 400, { error: { message: "Unknown provider." } });
+    const saved = { key: settings.key(id) || (def.env.key && process.env[def.env.key]) || "", baseUrl: (settings.baseUrl(id) || (def.env.url && process.env[def.env.url]) || def.baseUrl).replace(/\/+$/, "") };
+    if (!saved.baseUrl) return send(res, 400, { error: { message: "Enter a base URL first." } });
+    if (def.needsKey && !saved.key) return send(res, 400, { error: { message: "Save an API key first." } });
+    try { return send(res, 200, { models: await providerModels({ id, def, kind: def.kind, key: saved.key, baseUrl: saved.baseUrl, keySetting: "the API key", modelSetting: "the model" }) }); }
+    catch (e) { return send(res, 502, { error: { message: e.status ? e.message : `Couldn't reach ${def.label}${id === "ollama" ? ". Is Ollama running?" : "."}` } }); }
+  }
+  return send(res, 404, { error: { message: "Not found" } });
 }
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   try {
+    if (url.pathname === "/api/settings" || url.pathname.startsWith("/api/settings/")) return settingsRoute(req, res, url);
     if (req.method === "GET" && url.pathname === "/api/config") {
-      return send(res, 200, { app: "cold", ready: IS_HF ? true : !!credential(), experimental: IS_HF, model: IS_HF ? "hf-ssh/unknown" : MODEL, provider: PROVIDER, accessRequired: !!accessToken(), keySetting: IS_HF ? "Experimental: SSH client, verified host key, and live protocol validation required (no API key)" : KEY_SETTING });
+      const cfg = resolve();
+      return send(res, 200, { app: "cold", ready: cfg.ready, experimental: !!cfg.hf, model: cfg.model, provider: cfg.id, providerLabel: cfg.label, accessRequired: !!accessToken(), keySetting: cfg.keySetting, settingsEnabled: !!settings });
     }
     if (req.method === "GET" && url.pathname === "/api/models") {
-      if (!IS_GATEWAY) return send(res, 200, { models: [] });
+      if (resolve().id !== "ai-gateway" || settings) return send(res, 200, { models: [] });
       try { return send(res, 200, { models: await gatewayModels() }); }
       catch { return send(res, 503, { error: { message: "Could not load AI Gateway models. The server default is still available." } }); }
     }
     if (req.method === "POST" && url.pathname === "/api/generate") return generate(req, res);
+    if (req.method === "POST" && url.pathname === "/api/profile") return profileRoute(req, res);
+    if (req.method === "POST" && url.pathname === "/api/tweet") return profileRoute(req, res, "lookupTweet");
     if (req.method === "GET" && url.pathname === "/tweet-counter.js") {
       return send(res, 200, fs.readFileSync(path.join(ROOT, "public/tweet-counter.js")), "application/javascript; charset=utf-8");
     }
@@ -230,9 +331,11 @@ const server = http.createServer(async (req, res) => {
 });
 
 if (require.main === module) server.listen(PORT, HOST, () => {
+  const cfg = resolve();
   console.log(`Cold is running at http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${PORT}`);
-  console.log(credential() ? `Generating via ${PROVIDER} with ${MODEL}` : `Missing ${KEY_SETTING}: generation is off.`);
+  console.log(cfg.ready ? `Generating via ${cfg.id} with ${cfg.model}` : `Missing ${cfg.keySetting}: generation is off.`);
   if (!accessToken() && HOST !== "127.0.0.1") console.warn("WARNING: COLD_ACCESS_TOKEN is not set and the server is reachable beyond localhost: anyone who can reach it can spend your AI credits.");
 });
 
+server.settings = settings;   // the desktop shell attaches an encryption codec before listening
 module.exports = server;

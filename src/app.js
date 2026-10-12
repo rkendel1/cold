@@ -7,6 +7,7 @@ import { createRouter } from "./navigation.js";
 import { mountCompose } from "./views/compose.js";
 import { mountKnowledge } from "./views/knowledge.js";
 import { mountHistory } from "./views/history.js";
+import { mountSettings } from "./views/settings.js";
 
 export async function startApp(rootEl = document.getElementById("app")) {
   const store = createStore();
@@ -17,13 +18,16 @@ export async function startApp(rootEl = document.getElementById("app")) {
     compose: h("section", { id: "view-compose", "aria-labelledby": "compose-title" }),
     knowledge: h("section", { id: "view-knowledge", "aria-labelledby": "knowledge-title", hidden: true }),
     history: h("section", { id: "view-history", "aria-labelledby": "history-title", hidden: true }),
+    settings: h("section", { id: "view-settings", "aria-labelledby": "settings-title", hidden: true }),
   };
-  const links = [["compose", "Write"], ["knowledge", "Knowledge"], ["history", "History"]].map(([r, label]) => h("a", { href: `#/${r}`, dataset: { route: r }, id: `nav-${r}` }, label));
+  const links = [["compose", "Write"], ["knowledge", "Knowledge"], ["history", "History"], ["settings", "Settings"]].map(([r, label]) => h("a", { href: `#/${r}`, dataset: { route: r }, id: `nav-${r}` }, label));
+  const settingsLink = links.find(a => a.dataset.route === "settings");
+  settingsLink.hidden = true;   // shown once the server reports that Settings are enabled
   const notices = h("div", { id: "notices", class: "notices" });
   rootEl.append(
     h("a", { class: "skip", href: "#main" }, "Skip to content"),
     h("header", { class: "app-header" }, h("div", { class: "brand" }, "Cold"), h("nav", { class: "primary-nav", "aria-label": "Primary" }, links)),
-    h("main", { id: "main", tabindex: "-1" }, notices, views.compose, views.knowledge, views.history),
+    h("main", { id: "main", tabindex: "-1" }, notices, views.compose, views.knowledge, views.history, views.settings),
     h("footer", { class: "app-footer" }, "Cold writes drafts; you send them. Products and drafts are saved in this browser only and are not backed up or synced to other devices."));
 
   const router = createRouter({ views, links });
@@ -38,6 +42,8 @@ export async function startApp(rootEl = document.getElementById("app")) {
   knowledge = mountKnowledge(views.knowledge, { store, navigate });
   const history = mountHistory(views.history, { store, openRecord: rec => { if (rec) compose.open(rec); navigate("compose"); } });
 
+  const settings = mountSettings(views.settings, { store, platform });
+
   const renderNotices = () => {
     while (notices.firstChild) notices.removeChild(notices.firstChild);
     S.warnings.forEach(w => notices.append(notice("warn", h("strong", {}, "Some saved data couldn't be read"), h("p", {}, w))));
@@ -48,7 +54,8 @@ export async function startApp(rootEl = document.getElementById("app")) {
   const boot = await platform.detect();
   store.start({ db: boot.db });
   store.set({ server: boot.server, sample: boot.sample, sampleState: boot.sampleState }, "server");
-  compose.init(); knowledge.init(); history.init();
+  settingsLink.hidden = !(boot.server && boot.server.settingsEnabled);
+  compose.init(); knowledge.init(); history.init(); settings.init();
   router.start();
   return { store, platform, router };
 }

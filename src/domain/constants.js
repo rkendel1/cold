@@ -29,6 +29,17 @@ export const STATUS_COPY = {
   replied: { label: "Reply recorded", detail: "You recorded a reply" },
 };
 
+// What the Write screen offers. Replies and original tweets are one "tweet" choice with a sub-choice; saved records keep
+// the finer-grained FORMATS below ("reply" / "tweet") so History and older drafts read the same as before.
+export const FORMAT_CHOICES = { email: { label: "Cold email" }, tweet: { label: "Tweet" } };
+export const TWEET_KINDS = { reply: { label: "Reply to a tweet" }, original: { label: "Original tweet" } };
+export const TWEET_USE = {
+  auto: "Automatic",
+  feature: "Feature the product",
+  relevant: "Mention it only if it fits",
+  none: "Don't mention the product",
+};
+
 export const FORMATS = {
   email: { label: "Cold email" },
   reply: { label: "Tweet reply" },

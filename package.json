@@ -10,7 +10,10 @@
     "build:app": "node scripts/build-app.cjs",
     "check:app": "node scripts/build-app.cjs --check",
     "test:hf-ssh": "node scripts/hf-ssh-smoke.cjs",
-    "build:tweet-counter": "esbuild scripts/tweet-counter.cjs --bundle --minify --outfile=public/tweet-counter.js"
+    "build:tweet-counter": "esbuild scripts/tweet-counter.cjs --bundle --minify --outfile=public/tweet-counter.js",
+    "desktop": "electron desktop/main.js",
+    "desktop:build": "npm run build:app && electron-builder",
+    "desktop:pack": "npm run build:app && electron-builder --dir"
   },
   "engines": {
     "node": ">=18"
@@ -20,7 +23,44 @@
   },
   "devDependencies": {
     "axe-core": "4.10.2",
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2",
     "playwright-core": "1.56.1"
+  },
+  "author": "Kendel Consulting <randy@kendelconsulting.com>",
+  "build": {
+    "appId": "com.kendelconsulting.cold",
+    "productName": "Cold",
+    "extraMetadata": {
+      "main": "desktop/main.js"
+    },
+    "files": [
+      "desktop/**",
+      "lib/**",
+      "public/**",
+      "index.html",
+      "server.js",
+      "provider-config.json",
+      "scripts/hf-ssh-provider.cjs",
+      "package.json"
+    ],
+    "directories": {
+      "output": "dist"
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "linux": {
+      "target": "AppImage",
+      "category": "Office"
+    }
   }
 }

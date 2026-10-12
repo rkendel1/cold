@@ -18,7 +18,7 @@ function corpusFor({ product, recipient = {}, convey = "" }) {
   const parts = [p.name, p.oneLiner, p.category, p.status, p.what, p.who, p.problem, p.shortDesc, p.longDesc,
     ...(p.techFacts || []), ...(p.approved || []),
     ...externalProof(p).flatMap(x => [x.claim, x.evidence]),
-    recipient.name, recipient.role, recipient.company, recipient.why, convey];
+    recipient.name, recipient.role, recipient.company, recipient.why, recipient.profile, convey];
   const text = parts.filter(Boolean).join("\n");
   return { text, lower: norm(text), words: new Set(wordsOf(text)), numbers: new Set(numbersOf(text)) };
 }
@@ -77,7 +77,7 @@ export function checkGrounding(draft, ctx) {
   const facts = ctx.facts || {};
   const claims = (ctx.claims || []).filter(x => x && x.text).map(x => {
     const source = String(x.source || "");
-    const ref = facts[source] ?? (source === "RECIPIENT" ? ctx.recipient?.why : source === "CONVEY" ? ctx.convey : undefined);
+    const ref = facts[source] ?? (source === "RECIPIENT" ? ctx.recipient?.why : source === "PROFILE" ? ctx.recipient?.profile : source === "CONVEY" ? ctx.convey : undefined);
     if (!ref) return { text: x.text, source, status: "no_record", detail: "The model cited a record that does not exist in your knowledge." };
     const cw = [...new Set(contentWords(x.text))];
     const rw = new Set(contentWords(ref));

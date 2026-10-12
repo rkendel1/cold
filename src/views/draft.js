@@ -208,6 +208,7 @@ export function createDraftPane({ store, handlers }) {
     return h("article", { class: "card", "aria-labelledby": "draft-title" },
       h("div", { class: "draft-head" }, h("h2", { id: "draft-title", tabindex: "-1" }, rec.mode === "reply" ? "Your tweet reply" : "Your tweet"), statusSelect(rec)),
       h("div", { class: "field" }, h("label", { for: "tweetDraft" }, "Draft"), ta), count,
+      (rec.warnings || []).length ? notice("warn", h("strong", {}, "Check before posting"), h("ul", {}, rec.warnings.map(w => h("li", {}, w)))) : null,
       h("div", { class: "actions" }, copyBtn, button("Regenerate", { kind: "ghost", onclick: () => handlers.regenerate(rec) }), saveStatus),
       h("p", { class: "next-step" }, h("strong", {}, "Next: "), "paste it into X and post it yourself. Cold never posts."));
   }

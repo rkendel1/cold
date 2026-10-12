@@ -35,6 +35,8 @@ npm start               # http://127.0.0.1:3000
 | `LLM_PROVIDER` | no | `ai-gateway` | `ai-gateway` or `anthropic` |
 | `AI_GATEWAY_API_KEY` | locally | | AI Gateway key; on Vercel, falls back to `VERCEL_OIDC_TOKEN` |
 | `AI_GATEWAY_MODEL` | no | `anthropic/claude-sonnet-4.5` | Gateway model ID (`provider/model`) |
+| `OLLAMA_MODEL` | no | `llama3.1` | Local model name (only with `LLM_PROVIDER=ollama`) |
+| `OLLAMA_BASE_URL` | no | `http://127.0.0.1:11434` | Ollama (or any OpenAI-compatible local server, e.g. LM Studio) |
 | `LLM_MAX_TOKENS` | no | `2000` | Per call, overrides `ANTHROPIC_MAX_TOKENS` |
 | `ANTHROPIC_MODEL` | no | `claude-sonnet-5-5` | Any Messages API model, e.g. `claude-opus-5-5` or `claude-haiku-4-5-20251001` |
 | `ANTHROPIC_MAX_TOKENS` | no | `2000` | Per call |
@@ -85,3 +87,25 @@ npm test               # unit, server, bundle/deploy-config and browser tests
 ```
 
 Browser tests need Chromium (`PLAYWRIGHT_BROWSERS_PATH`, or `CHROMIUM=/path/to/chrome`); they are skipped when it is unavailable. They use a **mock** model, so they verify UI behaviour and plumbing, not output quality.
+
+## Local models (Ollama)
+
+```
+ollama pull llama3.1
+echo "LLM_PROVIDER=ollama" >> .env
+npm start
+```
+
+No API key needed. Set `OLLAMA_MODEL` to use a different model. Note `provider-config.json` overrides `LLM_PROVIDER` if its `provider` is set.
+
+## Desktop app
+
+```
+npm install
+npm run desktop         # run the app
+npm run desktop:build   # package a .dmg / installer into dist/
+```
+
+Cold runs its own server inside the app on `127.0.0.1:47821` (override with `COLD_PORT`; saved drafts are tied to the port, so keep it stable).
+
+**Settings** (menu: Cold > Settings, or `Cmd/Ctrl+,`) lets you pick the provider and model and save API keys for Ollama, Anthropic, OpenAI, Google Gemini, OpenRouter, Groq, Mistral, Vercel AI Gateway, or any OpenAI-compatible server (LM Studio, vLLM, llama.cpp). Models are listed live from the provider. Keys are encrypted with the OS keychain (Electron `safeStorage`), saved in the app's data folder, and never sent back to the page. The same screen is available to a local `npm start` by setting `COLD_SETTINGS_FILE=/path/to/settings.json` (keys are then stored in that file, mode 0600). Hosted deployments leave it unset and keep using environment variables.
