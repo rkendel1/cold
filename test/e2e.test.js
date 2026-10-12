@@ -821,7 +821,7 @@ test("desktop UI: the hub's Settings shows the model form, the pairing code, and
     // the code can be replaced, which cuts every paired surface off until it is re-entered
     const old = db.extensionToken();
     await page.click("text=Create a new code"); await page.click("button:has-text('Create new code')");
-    await page.waitForFunction(o => document.querySelector("#extCode").value !== o, old);
+    await page.waitForFunction(o => { const el = document.querySelector("#extCode"); return !!el && el.value !== o; }, old);   // the section repaints, so the field is briefly absent
     assert.notEqual(db.extensionToken(), old);
   } finally { await t.close(); hub.stop(); db.close(); }
 });

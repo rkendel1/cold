@@ -42,7 +42,7 @@ function mockModel() {
       res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(answer) }, finish_reason: 'stop' }] }));
     });
   });
-  return new Promise(r => server.listen(0, '127.0.0.1', () => r({ prompts, port: server.address().port, close: () => new Promise(x => server.close(x)) })));
+  return new Promise(r => server.listen(0, '127.0.0.1', () => r({ prompts, port: server.address().port, close: () => new Promise(x => { server.closeAllConnections(); server.close(x); }) })));
 }
 
 /** The Cold app: a real server + SQLite file that can be stopped and started again on the same port. */
@@ -353,12 +353,12 @@ function evalModel() {
       res.end(JSON.stringify({ choices: [{ message: { content: JSON.stringify(answer) }, finish_reason: 'stop' }] }));
     });
   });
-  return new Promise(r => server.listen(0, '127.0.0.1', () => r({ prompts, port: server.address().port, close: () => new Promise(x => server.close(x)) })));
+  return new Promise(r => server.listen(0, '127.0.0.1', () => r({ prompts, port: server.address().port, close: () => new Promise(x => { server.closeAllConnections(); server.close(x); }) })));
 }
 function fixtureSite() {
   const hits = [];
   const server = http.createServer((req, res) => { hits.push(req.url); const body = FIXTURES[req.url.split('?')[0]]; res.writeHead(body ? 200 : 404, { 'content-type': 'text/html' }); res.end(body || 'not found'); });
-  return new Promise(r => server.listen(0, '127.0.0.1', () => r({ hits, base: `http://127.0.0.1:${server.address().port}`, close: () => new Promise(x => server.close(x)) })));
+  return new Promise(r => server.listen(0, '127.0.0.1', () => r({ hits, base: `http://127.0.0.1:${server.address().port}`, close: () => new Promise(x => { server.closeAllConnections(); server.close(x); }) })));
 }
 const LIBRARY = {
   products: { p1: { id: 'p1', name: 'Acme Edge', order: 0, what: 'Acme Edge runs scheduled batch jobs on edge servers.', who: 'Platform teams', problem: 'Batch jobs are slow to move to the edge.', proof: [], techFacts: [], approved: [], dontSay: [], updatedAt: 1 } },
@@ -375,6 +375,8 @@ async function askSetup(dir, baseUrl, opts) {
   await l.panel.reload(); await l.panel.waitForSelector('#askRun', { state: 'attached' });
   return l;
 }
+// The panel itself asks a default local Ollama for its model list (GET, loopback, no body, nothing from any page). It is not part of a check, and whether a test sees it depends on timing.
+const isIdleOllamaProbe = u => /^http:\/\/127\.0\.0\.1:11434\/api\/tags$/.test(u);
 const showTab = async (ctx, panel, url) => { const p = await ctx.newPage(); await p.goto(url); await panel.evaluate(async u => { const [t] = await chrome.tabs.query({ url: u }); await chrome.tabs.update(t.id, { active: true }); }, url); return p; };
 const evalPrompts = m => m.prompts.filter(p => /Cold's opportunity evaluator/.test(p));
 
@@ -433,7 +435,7 @@ test('Ask Cold keeps page text on this computer: with no local model it explains
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-askremote-'));
   // ---- no model at all
   let s = await askSetup(dir, null);
-  const seen = []; s.ctx.on('request', r => { if (!/^(chrome-extension|data|blob):/.test(r.url()) && !r.url().startsWith(site.base)) seen.push(r.url()); });
+  const seen = []; s.ctx.on('request', r => { if (!/^(chrome-extension|data|blob):/.test(r.url()) && !r.url().startsWith(site.base) && !isIdleOllamaProbe(r.url())) seen.push(r.url()); });
   try {
     await showTab(s.ctx, s.panel, `${site.base}/northwind/careers`);
     await s.panel.click('#askRun');
@@ -559,7 +561,7 @@ test('on-device model, REAL runtime on a software WebGPU adapter and STAND-IN mo
   const site = await fixtureSite(), hf = [], other = [];
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-softgpu-'));
   const s = await askSetup(dir, 'https://models.example.com/v1', { args: SOFT_GPU });
-  const outside = []; s.ctx.on('request', r => { const u = r.url(); if (!/^(chrome-extension|data|blob):/.test(u) && !u.startsWith(site.base) && !u.startsWith(HF) && !u.startsWith('https://models.example.com')) outside.push(u); });
+  const outside = []; s.ctx.on('request', r => { const u = r.url(); if (!/^(chrome-extension|data|blob):/.test(u) && !u.startsWith(site.base) && !u.startsWith(HF) && !u.startsWith('https://models.example.com') && !isIdleOllamaProbe(u)) outside.push(u); });
   await s.ctx.route(`${HF}/**`, modelHost(hf));
   await s.ctx.route('https://models.example.com/**', r => { other.push(r.request().url()); r.abort(); });
   if (!(await hasAdapter(s.panel))) { await s.ctx.close(); await site.close(); return t_skip('no software WebGPU adapter in this browser'); }
@@ -646,7 +648,7 @@ test('on-device model (FAKE runtime): nothing downloads without consent; setup s
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-device-'));
   const s = await askSetup(dir, null, { init: `(${FAKE_RUNTIME.toString()})()` });
   const { ctx, panel, errors } = s;
-  const outside = []; ctx.on('request', r => { const u = r.url(); if (!/^(chrome-extension|data|blob):/.test(u) && !u.startsWith(site.base)) outside.push(u); });
+  const outside = []; ctx.on('request', r => { const u = r.url(); if (!/^(chrome-extension|data|blob):/.test(u) && !u.startsWith(site.base) && !isIdleOllamaProbe(u)) outside.push(u); });
   try {
     await showTab(ctx, panel, `${site.base}/northwind/careers`);
     // ---- asking before setup: nothing is read, nothing is downloaded, and the page says what to do
