@@ -45,7 +45,7 @@ export async function startApp(rootEl = document.getElementById("app"), { store 
 
   const settings = mountSettings(views.settings, { store, platform });
   const paintFooter = () => { footer.textContent = `Cold writes drafts; you send them. Products and drafts ${store.keptNote()}`; };
-  const syncSurface = () => store.set({ surface: platform.hub ? platform.hub.kind : S.backend === "sqlite" ? "desktop" : "web", paired: !!(platform.hub && platform.hub.link.state.conn) }, "surface");
+  const syncSurface = () => store.set({ surface: platform.hub ? platform.hub.kind : S.backend === "sqlite" ? "desktop" : "web", paired: !!platform.hub && platform.hub.libs.kind === "synced", library: platform.hub ? platform.hub.libs.kind : S.backend === "sqlite" ? "desktop" : "standalone" }, "surface");
 
   const renderNotices = () => {
     while (notices.firstChild) notices.removeChild(notices.firstChild);

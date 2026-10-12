@@ -8,6 +8,7 @@ import { openInEmail, isEmail } from "../services/handoff.js";
 import { evaluate } from "../domain/rules.js";
 import { emailText } from "../domain/email.js";
 import { applyStatus, statusOf, filterOutreach, countByStatus, preview, editedSinceSent } from "../domain/outreach.js";
+import { compareEmails } from "../domain/library.js";
 import { GOALS, STATUSES, STATUS_COPY, FORMATS, UNKNOWN_STATUS } from "../domain/constants.js";
 
 export function mountHistory(root, { store, openRecord }) {
@@ -16,7 +17,7 @@ export function mountHistory(root, { store, openRecord }) {
   const openIds = new Set();            // rows whose details are showing (kept across re-renders)
   const messages = new Map();           // per-row status line, e.g. the result of "Open in email"
   const held = new Map();               // id -> the user's own text from a save that was refused because the record changed elsewhere
-  let deferred = false;
+  let deferred = false, settling = false;   // settling: a box was just left; hold the redraw so the click that moved focus still lands
   const filters = h("div", { class: "hfilters", role: "group", "aria-label": "Filter by status" });
   const search = h("input", { type: "search", id: "histSearch", "aria-label": "Search outreach", placeholder: "Search name, company, email, subject, notes" });
   const listHost = h("ul", { class: "hist", "aria-label": "Outreach" });
@@ -60,9 +61,14 @@ export function mountHistory(root, { store, openRecord }) {
     if (await save(e.id, cur => applyStatus(cur, st, { signature: S.settings.signature }), "Couldn't update the status.")) { toast(`Status set to “${STATUS_COPY[st].label}”`); announce(`Status set to ${STATUS_COPY[st].label}`); }
   }
 
-  const timers = new Map();
-  function saveLater(id, change) { clearTimeout(timers.get(id)); timers.set(id, setTimeout(() => save(id, change), 600)); }
-  const flush = id => { if (timers.has(id)) { clearTimeout(timers.get(id)); timers.delete(id); } };
+  const timers = new Map();   // id -> { t, run }: the change waiting for its 600 ms pause
+  function saveLater(id, change) {
+    const prev = timers.get(id); if (prev) clearTimeout(prev.t);
+    const run = () => { timers.delete(id); save(id, change); };
+    timers.set(id, { t: setTimeout(run, 600), run });
+  }
+  /** Leaving a box saves what was typed in it now; it must never throw the edit away. */
+  const flush = id => { const p = timers.get(id); if (p) { clearTimeout(p.t); p.run(); } };
 
   async function emailIt(e, toInput, msgEl, expand) {
     const cur = latest(e.id) || e;
@@ -95,7 +101,7 @@ export function mountHistory(root, { store, openRecord }) {
     });
     const noteIn = h("textarea", { class: "hNote", rows: 3, "aria-label": `Notes for ${e.recipient?.name || "this draft"}`, placeholder: "Why they fit, what you actually sent, what the reply said, what to follow up on…" }); noteIn.value = (held.get(e.id)?.note ?? e.note) || "";
     noteIn.addEventListener("input", () => saveLater(e.id, { note: noteIn.value }));
-    for (const el of [toIn, noteIn]) { el.dataset.keep = "1"; el.addEventListener("blur", () => flush(e.id)); }
+    for (const el of [toIn, noteIn]) { el.dataset.keep = "1"; el.addEventListener("blur", () => { settling = true; flush(e.id); setTimeout(() => { settling = false; if (deferred && !typing()) { deferred = false; render(); } }, 400); }); }
     const edited = editedSinceSent(e, S.settings.signature);
     const details = h("div", { class: "hdetails", hidden: !openIds.has(e.id) },
       isSocial ? null : h("div", { class: "field" }, h("label", {}, "Email address ", h("span", { class: "opt" }, "Optional")), toIn, toMsg),
@@ -128,7 +134,7 @@ export function mountHistory(root, { store, openRecord }) {
   }
 
   function render() {
-    const all = [...S.emails].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    const all = [...S.emails].sort(compareEmails);
     paintLede();
     const counts = countByStatus(all);
     clear(filters);
@@ -143,6 +149,6 @@ export function mountHistory(root, { store, openRecord }) {
   // Saving a note re-renders the list; don't pull the text box out from under someone who is typing in it.
   const typing = () => listHost.contains(document.activeElement) && document.activeElement.dataset.keep === "1";
   listHost.addEventListener("focusout", () => { if (deferred) setTimeout(() => { if (!typing()) { deferred = false; render(); } }, 0); });
-  store.subscribe(topic => { if (!["emails", "ready", "settings"].includes(topic)) return; if (typing()) { deferred = true; return; } render(); });
+  store.subscribe(topic => { if (!["emails", "ready", "settings"].includes(topic)) return; if (typing() || settling) { deferred = true; return; } render(); });
   return { init: render, render };
 }

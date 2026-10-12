@@ -5,6 +5,8 @@ import lookups from "../../lib/profile.js";
 import { createReplica } from "../../src/services/replica.js";
 import { chromeReplicaStorage } from "../../src/services/replicaStorage.js";
 import { createLink } from "../../src/services/hubLink.js";
+import { createLibraries } from "../../src/services/libraries.js";
+import { sharedKeys } from "../../src/domain/constants.js";
 import { createBackend } from "../../src/services/backend.js";
 import { chromeHubStore, verifyHub } from "../../src/services/hub.js";
 import { loadModelConfig, saveModelConfig, resolveOwn, directSample, syncOriginRules } from "./model.js";
@@ -13,10 +15,13 @@ import { insertIntoBox } from "./page.js";
 
 export async function createExtensionPlatform() {
   let config = await loadModelConfig();
-  const replica = createReplica({ storage: chromeReplicaStorage(), keepCompose: true });
-  await replica.load();
-  const link = createLink({ replica });
+  const link = createLink();
   const store = chromeHubStore();
+  // Standalone: the extension's own library. Shared: a working copy of the Cold Desktop library (see src/services/libraries.js).
+  const libs = createLibraries({ hubStore: store, link, makeReplica: (kind, origin) => (kind === "shared"
+    ? createReplica({ storage: chromeReplicaStorage(`cold.shared@${origin}`), keepCompose: true, pushLocalFirst: false })
+    : createReplica({ storage: chromeReplicaStorage(), keepCompose: true })) });
+  const active = await libs.init();
   const subs = new Set();
   const notify = () => subs.forEach(fn => fn());
   const ownCfg = () => resolveOwn(config);
@@ -44,11 +49,11 @@ export async function createExtensionPlatform() {
     async refresh() { notify(); return snapshot(); },
     settingsApi: createSettingsApi({ getConfig: () => config, setConfig: c => { config = c; notify(); } }),
     hub: {
-      link, replica, store, kind: "extension", origin: "",
+      link, libs, store, kind: "extension", get replica() { return libs.db; }, origin: "",
       get prefer() { return config.prefer || "app"; },
       setPrefer(v) { config = { ...config, prefer: v === "own" ? "own" : "app" }; saveModelConfig(config); notify(); },
-      async connect(addr, code) { const conn = await verifyHub(addr, code, { who: "extension" }); await store.set(conn); await link.connect(conn); notify(); },
-      async disconnect() { await store.clear(); link.disconnect(); notify(); },
+      async connect(addr, code) { const conn = await verifyHub(addr, code, { who: "extension" }); await libs.connect(conn); await link.connect(conn); notify(); },
+      async disconnect() { link.disconnect(); await libs.disconnect(); notify(); },
     },
     /** Things only an extension can do. */
     pageActions: {
@@ -58,7 +63,7 @@ export async function createExtensionPlatform() {
         catch { return { ok: false, message: "Couldn't reach the page. Copy the text instead." }; }
       },
     },
-    async detect() { return { db: replica, user: null, warning: "", ...snapshot() }; },
+    async detect() { return { db: active.db, user: null, warning: "", ...snapshot() }; },
   };
   link.subscribe(notify);
   syncOriginRules(config).catch(() => {});

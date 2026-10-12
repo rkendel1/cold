@@ -5,7 +5,7 @@ import { hubFetch } from "./hub.js";
 
 const CHECK_MS = 4000;
 
-export function createLink({ replica }) {
+export function createLink({ replica = null } = {}) {
   const state = { conn: null, online: false, config: null, rejected: false };
   const subs = new Set();
   let api = null, timer = null, checking = false;
@@ -20,8 +20,8 @@ export function createLink({ replica }) {
   function set(online, config, rejected = false) {
     const changed = online !== state.online || rejected !== state.rejected || (online && config && state.config && config.model !== state.config.model);
     state.online = online; state.config = config; state.rejected = rejected;
-    if (online && !api) { api = createApi({ fetchImpl: hubFetch(state.conn), remote: true }); replica.attach(appData(state.conn)); }
-    if (!online && api) { api = null; replica.attach(null); }
+    if (online && !api) { api = createApi({ fetchImpl: hubFetch(state.conn), remote: true }); if (replica) replica.attach(appData(state.conn)); }
+    if (!online && api) { api = null; if (replica) replica.attach(null); }
     if (changed) emit();
   }
 
@@ -38,7 +38,7 @@ export function createLink({ replica }) {
         if (!ping.ok) return set(false, null);
         const { version } = await ping.json();
         set(true, cfg);
-        if (version !== replica.appVersion) replica.sync().catch(() => {});   // something changed in the app (or we've never synced)
+        if (replica && version !== replica.appVersion) replica.sync().catch(() => {});   // something changed in the app (or we've never synced)
       } catch { set(false, null); }
     } finally { checking = false; }
   }
@@ -48,9 +48,15 @@ export function createLink({ replica }) {
     get api() { return api; },
     subscribe(fn) { subs.add(fn); return () => subs.delete(fn); },
     check,
+    /** Choose which library copy follows the app (or none: the standalone library does not sync). The old one is detached. */
+    setReplica(next) {
+      if (replica) replica.attach(null);
+      replica = next || null;
+      if (replica && state.online && state.conn) replica.attach(appData(state.conn));
+    },
     start() { if (!timer) { timer = setInterval(check, CHECK_MS); } return check(); },
     stop() { clearInterval(timer); timer = null; },
-    async connect(conn) { state.conn = conn; api = null; replica.attach(null); state.online = false; await check(); emit(); },
-    disconnect() { state.conn = null; api = null; replica.attach(null); state.online = false; state.config = null; state.rejected = false; emit(); },
+    async connect(conn) { state.conn = conn; api = null; if (replica) replica.attach(null); state.online = false; await check(); emit(); },
+    disconnect() { state.conn = null; api = null; if (replica) replica.attach(null); state.online = false; state.config = null; state.rejected = false; emit(); },
   };
 }

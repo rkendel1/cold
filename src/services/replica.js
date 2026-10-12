@@ -8,13 +8,14 @@
 // the hub's copy and puts this one in `conflicts` (kept, not discarded) for the user to review. Nothing newer is ever overwritten,
 // and every write to the hub names the version it saw, so the hub also refuses a write that raced with another one.
 // Deleting happens at the hub and is copied here.
-import { mergeRecords, versionOf, nextVersion, reconcileSave } from "../domain/outreach.js";
+import { versionOf, nextVersion, applySave, saveWithMerge } from "../domain/library.js";
+import { queryCollection } from "./collection.js";
 
 const KINDS = ["products", "emails"];
 const MAX_CONFLICTS = 50;
 
 /** @param {{ storage: { get(): Promise<object|null>, set(data: object): Promise<void> } }} opts */
-export function createReplica({ storage, keepCompose = false }) {
+export function createReplica({ storage, keepCompose = false, pushLocalFirst = true }) {
   let data = { products: {}, emails: {}, settings: null, outbox: [], lastSync: 0, conflicts: [] };
   let extra = { warnings: [], compose: undefined };
   const listeners = { products: new Set(), emails: new Set(), "settings/me": new Set() };
@@ -67,9 +68,9 @@ export function createReplica({ storage, keepCompose = false }) {
     const prev = data[kind][id];
     let rec = { ...doc, id };
     if (opts.expected !== undefined) {
-      const out = reconcileSave({ base: opts.base, mine: rec, stored: prev, expected: opts.expected });
+      const out = applySave({ id, mine: rec, stored: prev, expected: opts.expected, base: opts.base });
       if (!out.ok) throw out.error;
-      rec = { ...out.record, id, updatedAt: nextVersion(prev) };
+      rec = out.record;
     }
     data[kind][id] = rec;
     enqueue(kind, id, "put", versionOf(prev), prev ? JSON.parse(JSON.stringify(prev)) : undefined);
@@ -90,24 +91,20 @@ export function createReplica({ storage, keepCompose = false }) {
    * in `conflicts`. Network failures throw (the change stays queued); conflicts never lose the local copy.
    */
   async function push(o, remote) {
-    let cur = remote, base = o.baseDoc, mine = data[o.kind][o.id];
-    for (let tries = 0; tries < 4; tries++) {
-      if (o.op === "delete") {
-        if (!cur) return;
-        if (versionOf(cur) > o.base) { keepConflict({ kind: o.kind, id: o.id, fields: ["(deleted here, changed there)"], mine: base || null, theirs: cur }); return; }
-        try { await app.del(url(o, versionOf(cur))); return; } catch (e) { if (isConflict(e)) { cur = e.body.current; continue; } throw e; }
-      }
-      if (!mine) return;                                                             // removed again before it was sent
-      let body = mine;
-      if (cur && versionOf(cur) > o.base) {                                          // the hub moved on after this edit began
-        const m = mergeRecords(base, mine, cur);
-        if (m.conflicts.length) { keepConflict({ kind: o.kind, id: o.id, fields: m.conflicts, mine, theirs: cur }); return; }
-        body = m.record;
-      }
-      try { await app.put(url(o, cur ? versionOf(cur) : null), body); return; }
-      catch (e) { if (isConflict(e)) { if (cur) base = cur; mine = body; cur = e.body.current; continue; } throw e; }   // the hub moved between reading and writing: merge again
+    if (o.op === "delete") {
+      if (!remote) return;
+      if (versionOf(remote) > o.base) { keepConflict({ kind: o.kind, id: o.id, fields: ["(deleted here, changed there)"], mine: o.baseDoc || null, theirs: remote }); return; }
+      try { await app.del(url(o, versionOf(remote))); } catch (e) { if (!isConflict(e)) throw e; keepConflict({ kind: o.kind, id: o.id, fields: ["(deleted here, changed there)"], mine: o.baseDoc || null, theirs: e.body.current }); }
+      return;
     }
-    keepConflict({ kind: o.kind, id: o.id, fields: ["(busy)"], mine, theirs: cur });
+    const mine = data[o.kind][o.id];
+    if (!mine) return;                                                               // removed again before it was sent
+    const r = await saveWithMerge({
+      send: (body, exp) => app.put(url(o, exp), body), conflictOf: e => (isConflict(e) ? e.body.current : null),
+      base: o.baseDoc, mine, expected: remote ? versionOf(remote) : null,
+      current: remote && versionOf(remote) > o.base ? remote : null,                 // the hub moved on after this edit began: merge first
+    });
+    if (!r.ok) keepConflict({ kind: o.kind, id: o.id, fields: r.error.conflicts, mine, theirs: r.error.current });
   }
 
   /** Send queued changes, then adopt the hub's data. Safe to call often; overlapping calls are merged. */
@@ -120,7 +117,7 @@ export function createReplica({ storage, keepCompose = false }) {
           again = false;
           let snap = await app.get("api/data");
           // First contact: everything that exists only here is new to the hub. Offer it all; the newer copy of anything in both wins.
-          if (!data.lastSync) for (const kind of KINDS) for (const [id, d] of Object.entries(data[kind])) if (!data.outbox.some(o => o.kind === kind && o.id === id)) enqueue(kind, id, "put", d.updatedAt || 0);
+          if (pushLocalFirst && !data.lastSync) for (const kind of KINDS) for (const [id, d] of Object.entries(data[kind])) if (!data.outbox.some(o => o.kind === kind && o.id === id)) enqueue(kind, id, "put", d.updatedAt || 0);
           const done = new Set();
           try {
             for (const o of [...data.outbox]) {
@@ -146,23 +143,7 @@ export function createReplica({ storage, keepCompose = false }) {
     return syncing;
   }
 
-  function collection(name) {
-    const q = { field: null, dir: "asc", n: Infinity };
-    const api = {
-      orderBy(field, dir = "asc") { q.field = field; q.dir = dir; return api; },
-      limit(n) { q.n = n; return api; },
-      onSnapshot(cb) {
-        const fire = () => {
-          const d = docs(name);
-          if (q.field) d.sort((a, b) => { const x = a.data()[q.field], y = b.data()[q.field]; return (x < y ? -1 : x > y ? 1 : 0) * (q.dir === "desc" ? -1 : 1); });
-          cb({ docs: d.slice(0, q.n) });
-        };
-        listeners[name].add(fire); fire();
-        return () => listeners[name].delete(fire);
-      },
-    };
-    return api;
-  }
+  const collection = name => queryCollection(listeners[name], () => docs(name));
   function doc(path) {
     const [name, id] = path.split("/");
     if (name === "settings") return {
@@ -170,7 +151,7 @@ export function createReplica({ storage, keepCompose = false }) {
       onSnapshot(cb) { const fire = () => cb({ exists: !!data.settings, data: () => ({ ...(data.settings || {}) }) }); listeners["settings/me"].add(fire); fire(); return () => listeners["settings/me"].delete(fire); },
     };
     if (name === "compose") return { set: async () => {} };
-    return { set: d => write(name, id, d), delete: () => remove(name, id) };
+    return { set: (d, opts) => write(name, id, d, opts), delete: () => remove(name, id) };
   }
 
   return {
