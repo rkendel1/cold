@@ -6,15 +6,14 @@
 // Rules covered here: record version (`updatedAt`), what version an edit was based on, whether a save may overwrite what is stored
 // (merge different fields, refuse the same field), how a saved record is stamped, and how lists are ordered. Status transitions,
 // timestamps and the sent snapshot stay in domain/outreach.js (`applyStatus`), which these functions never bypass.
-import { versionOf, nextVersion, mergeRecords, reconcileSave, conflictError } from "./outreach.js";
+import { mergeRecords, reconcileSave, conflictError } from "./outreach.js";
+import rules from "../../lib/library-rules.cjs";   // the rules the server shares: version, stale test, list order
 
-export { versionOf, nextVersion, mergeRecords, conflictError };
+export const { versionOf, nextVersion, isStale, compareEmails, compareProducts } = rules;
+export { mergeRecords, conflictError };
 
 export const LIBRARY_KINDS = ["products", "emails"];
 
-/** Newest draft first; products by their own order, then name. (SQLite orders the same way in SQL: see lib/db.js.) */
-export const compareEmails = (a, b) => (b.createdAt || 0) - (a.createdAt || 0);
-export const compareProducts = (a, b) => (a.order ?? 99) - (b.order ?? 99) || String(a.name).localeCompare(String(b.name));
 
 /**
  * What a save is based on. `rec` is the record being saved, `seen` the copy this client last read (if any).
@@ -34,4 +33,27 @@ export function applySave({ id, mine, stored, expected, base = null, now }) {
   const out = reconcileSave({ base, mine, stored, expected });
   if (!out.ok) return out;
   return { ok: true, merged: !!out.merged, record: { ...out.record, id, updatedAt: nextVersion(stored, now) } };
+}
+
+/**
+ * Send one save to a store that can refuse it as stale, merging and retrying when the stored record moved. Every transport (the
+ * desktop database over HTTP, the replica pushing to the paired app) uses this, so a stale save is resolved the same way everywhere.
+ *  - `send(body, expected)` performs the write for that version and throws if the store reports a newer record;
+ *  - `conflictOf(error)` returns that newer stored record from such an error, or null for any other failure (which is rethrown);
+ *  - `current` is a stored copy the caller already knows is newer than `base`: merge with it before the first send.
+ * Returns { ok: true, value, record } (`record` is what was sent) or { ok: false, error } with a `conflict` error when the same
+ * field changed on both sides (or the store kept changing). Nothing is written in the failing case.
+ */
+export async function saveWithMerge({ send, conflictOf, base = null, mine, expected, current = null, tries = 4 }) {
+  let body = mine, exp = expected, was = base, cur = current;
+  for (let n = 0; n < tries; n++) {
+    if (cur) {
+      const m = mergeRecords(was, body, cur);
+      if (m.conflicts.length) return { ok: false, error: conflictError(m.conflicts, mine, cur) };
+      was = cur; body = m.record; exp = versionOf(cur); cur = null;
+    }
+    try { return { ok: true, value: await send(body, exp), record: body }; }
+    catch (e) { cur = conflictOf(e); if (!cur) throw e; }
+  }
+  return { ok: false, error: conflictError(["(busy)"], mine, cur) };
 }

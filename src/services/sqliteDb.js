@@ -1,7 +1,7 @@
 // Browser-side client for the app's SQLite database (served by the local Cold server).
 // It exposes the same small collection/doc/onSnapshot interface the store already uses for the Claude-app database, so the
 // store and every view are unchanged. Writes show up immediately, are saved to SQLite in order, and a write that fails is undone.
-import { mergeRecords, versionOf, conflictError } from "../domain/library.js";
+import { saveWithMerge } from "../domain/library.js";
 import { queryCollection } from "./collection.js";
 
 const POLL_MS = 3000;
@@ -91,16 +91,11 @@ export function createRemoteDb({ fetchImpl = (...a) => globalThis.fetch(...a), h
      * retried, and a change to the same field is refused with a "conflict" error that carries both versions.
      */
     async function put(data, { expected, base = null } = {}) {
-      let body = data, exp = expected, was = base;
-      for (let tries = 0; ; tries++) {
-        try { return { ...(await call(url + baseQ(exp), { method: "PUT", body: JSON.stringify(body) })), record: body }; }
-        catch (e) {
-          if (!e || e.code !== "conflict" || exp === undefined) throw e;
-          const m = tries < 3 ? mergeRecords(was, body, e.current) : { conflicts: ["(busy)"] };
-          if (m.conflicts.length) throw { ...conflictError(m.conflicts, data, e.current), status: 409 };
-          was = e.current; body = m.record; exp = versionOf(e.current);
-        }
-      }
+      const send = (body, exp) => call(url + baseQ(exp), { method: "PUT", body: JSON.stringify(body) });
+      if (expected === undefined) return { ...(await send(data)), record: data };              // an unversioned save, as older callers make
+      const r = await saveWithMerge({ send, conflictOf: e => (e && e.code === "conflict" ? e.current : null), base, mine: data, expected });
+      if (!r.ok) throw { ...r.error, status: 409 };
+      return { ...r.value, record: r.record };
     }
     return {
       set: (data, opts = {}) => {

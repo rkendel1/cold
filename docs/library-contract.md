@@ -34,13 +34,20 @@ fields a newer or older client added. Surfaces exchange them only through the ex
 `docs/standalone-surfaces.md`, `docs/data-integrity.md`, `docs/privacy-and-data-flow.md`). Unpaired surfaces share nothing. There
 is no migration: an existing record is read in place and rewritten in place, never transformed.
 
-## Remaining duplication, and why
+## What used to be duplicated, and where it lives now
 
-* **`lib/db.js` repeats the version rules** (`versionOf`, stale check, strictly-newer stamp, about ten lines) because it is a
-  CommonJS module in a package that ships `lib/` but not `src/`; importing the ES-module contract would need a packaging change.
-  `test/library-parity.test.js` pins it to the shared functions so it cannot drift.
-* **SQL ordering** (`ORDER BY created_at DESC`, `position, name`) mirrors `compareEmails`/`compareProducts` because SQLite sorts
-  and limits in the query. The parity test checks the resulting order.
-* **The two retry loops** (`sqliteDb.js` `put`, `replica.js` `push`) differ in transport (one request vs an outbox with deletes and
-  first-contact rules); both call the same merge. Merging them would need a transport abstraction, which this change avoids.
-* **Settings and compose-form storage** are not part of the library contract and keep their own simple per-surface storage.
+* **Version, stale test, list order:** one definition in `lib/library-rules.cjs`. It is CommonJS under `lib/` so the server
+  (`lib/db.js`) and the desktop package can load it, and `src/domain/library.js` re-exports it for the app code and both bundles.
+  SQLite no longer sorts: the server returns rows ordered by the same comparators as every other surface.
+* **Merge-and-retry on a stale save:** one driver, `saveWithMerge` in `src/domain/library.js`, used by the desktop-database client
+  and by the replica's push to the paired app. Each supplies only its `send` and how to recognise "stored record is newer".
+* **The query helper** and **save/stamp/intent rules** are in `services/collection.js` and `domain/library.js` as before.
+
+## What is deliberately left
+
+* **Deleting through the replica** (`push` for `delete`) is a single conditional request with its own conflict note; the database
+  client's delete goes through its optimistic-write path. They share the version rule, and a retry loop would add nothing for a
+  request that either applies or reports the newer record.
+* **Settings and the compose form** are not library records and each medium keeps its own one-line storage for them.
+* **The `status` column in SQLite** (`'draft'` default) is an index column for people using `sqlite3`; the stored JSON is the record,
+  and status meaning stays in `outreach.js`.

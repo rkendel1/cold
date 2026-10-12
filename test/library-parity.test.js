@@ -99,7 +99,7 @@ test('the same operations give the same results on browser storage, the web repl
   assert.deepEqual(ref.finalOrder, ['fresh', 'future', 'legacy']);
 });
 
-test('the desktop database stamps versions exactly as the shared contract does (its CommonJS copy of the rule cannot drift)', async () => {
+test('the desktop database applies the same version, stale and ordering rules as the app code (one definition in lib/library-rules.cjs)', async () => {
   const { createDb } = require('../lib/db');
   const lib = await load('src/domain/library.js');
   const db = createDb(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'cold-stamp-')), 'c.db'));
@@ -121,4 +121,29 @@ test('the desktop database stamps versions exactly as the shared contract does (
     assert.equal(lib.applySave({ id: 'a', mine: { id: 'a', n: 'clash' }, stored: cur, expected: null }).ok, false, 'a "new" record that already exists');
     assert.equal(lib.applySave({ id: 'a', mine: { id: 'a', note: 'x' }, stored: cur, expected: lib.versionOf(cur) }).ok, true);
   } finally { db.close(); }
+});
+
+test('saveWithMerge: one retry loop for every transport (merge different fields, refuse the same field, give up when the store keeps moving, rethrow real failures)', async () => {
+  const { saveWithMerge, versionOf } = await load('src/domain/library.js');
+  const store = { rec: { id: 'a', note: 'n0', status: 'draft', updatedAt: 1 } };
+  const bump = patch => { store.rec = { ...store.rec, ...patch, updatedAt: store.rec.updatedAt + 1 }; };
+  const stale = { code: 'stale' };
+  const send = (body, exp) => { if (exp !== versionOf(store.rec)) throw Object.assign(new Error('409'), { ...stale, current: store.rec }); store.rec = { ...body, updatedAt: versionOf(store.rec) + 1 }; return { updatedAt: store.rec.updatedAt }; };
+  const conflictOf = e => (e && e.code === 'stale' ? e.current : null);
+  const base = { ...store.rec };
+  bump({ status: 'replied' });                                                                          // someone else changed the status
+  let r = await saveWithMerge({ send, conflictOf, base, mine: { ...base, note: 'mine' }, expected: 1 });  // I changed the note, from version 1
+  assert.deepEqual([r.ok, store.rec.status, store.rec.note], [true, 'replied', 'mine']);
+  const before = JSON.stringify(store.rec);
+  r = await saveWithMerge({ send, conflictOf, base, mine: { ...base, note: 'clash' }, expected: 1 });
+  assert.deepEqual([r.ok, r.error.code, r.error.conflicts, JSON.stringify(store.rec)], [false, 'conflict', ['note'], before]);
+  // already known to be newer: merged before the first send, so the stale version is never offered
+  const sent = []; r = await saveWithMerge({ send: (b, e) => { sent.push(e); return send(b, e); }, conflictOf, base, mine: { ...base, status: 'sent', note: store.rec.note, extra: 1 }, expected: 1, current: store.rec });
+  assert.equal(r.ok, false);                                                                            // status moved to different values on both sides
+  assert.deepEqual(sent, []);
+  // a store that keeps changing is reported, not looped on forever
+  let n = 0; r = await saveWithMerge({ send: () => { n++; throw Object.assign(new Error('409'), { ...stale, current: { ...store.rec, updatedAt: store.rec.updatedAt + n, [`f${n}`]: n } }); }, conflictOf, base: store.rec, mine: { ...store.rec, mineField: 1 }, expected: versionOf(store.rec), tries: 3 });
+  assert.deepEqual([r.ok, r.error.conflicts, n], [false, ['(busy)'], 3]);
+  // failures that are not "stale" are not swallowed
+  await assert.rejects(saveWithMerge({ send: () => { throw new Error('network'); }, conflictOf, mine: {}, expected: 1 }), /network/);
 });

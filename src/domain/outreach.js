@@ -2,6 +2,7 @@
 // below is called only from an explicit user action (a button or the status menu), never from copying, opening or editing.
 import { STATUSES, UNKNOWN_STATUS } from "./constants.js";
 import { emailText } from "./email.js";
+import rules from "../../lib/library-rules.cjs";
 
 /**
  * draft | sent | replied, or "unknown" for a status this client doesn't recognise. Only a record with NO status at all gets the
@@ -59,9 +60,7 @@ export const preview = (e, n = 120) => {
 // Every surface (web, desktop, extension) saves a whole record, but a record's `updatedAt` is its version: a save says which
 // version it was based on, and a save based on an older version is merged field by field or refused, never written over the top.
 
-export const versionOf = r => (r && Number.isFinite(r.updatedAt) ? r.updatedAt : 0);
-/** Strictly newer than the stored record, so two saves in the same millisecond still get different versions. */
-export const nextVersion = (stored, now = Date.now()) => Math.max(now, versionOf(stored) + 1);
+export const { versionOf, nextVersion } = rules;
 
 const isObj = v => !!v && typeof v === "object" && !Array.isArray(v);
 const eq = (a, b) => {

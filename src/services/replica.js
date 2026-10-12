@@ -8,7 +8,7 @@
 // the hub's copy and puts this one in `conflicts` (kept, not discarded) for the user to review. Nothing newer is ever overwritten,
 // and every write to the hub names the version it saw, so the hub also refuses a write that raced with another one.
 // Deleting happens at the hub and is copied here.
-import { mergeRecords, versionOf, nextVersion, applySave } from "../domain/library.js";
+import { versionOf, nextVersion, applySave, saveWithMerge } from "../domain/library.js";
 import { queryCollection } from "./collection.js";
 
 const KINDS = ["products", "emails"];
@@ -91,24 +91,20 @@ export function createReplica({ storage, keepCompose = false }) {
    * in `conflicts`. Network failures throw (the change stays queued); conflicts never lose the local copy.
    */
   async function push(o, remote) {
-    let cur = remote, base = o.baseDoc, mine = data[o.kind][o.id];
-    for (let tries = 0; tries < 4; tries++) {
-      if (o.op === "delete") {
-        if (!cur) return;
-        if (versionOf(cur) > o.base) { keepConflict({ kind: o.kind, id: o.id, fields: ["(deleted here, changed there)"], mine: base || null, theirs: cur }); return; }
-        try { await app.del(url(o, versionOf(cur))); return; } catch (e) { if (isConflict(e)) { cur = e.body.current; continue; } throw e; }
-      }
-      if (!mine) return;                                                             // removed again before it was sent
-      let body = mine;
-      if (cur && versionOf(cur) > o.base) {                                          // the hub moved on after this edit began
-        const m = mergeRecords(base, mine, cur);
-        if (m.conflicts.length) { keepConflict({ kind: o.kind, id: o.id, fields: m.conflicts, mine, theirs: cur }); return; }
-        body = m.record;
-      }
-      try { await app.put(url(o, cur ? versionOf(cur) : null), body); return; }
-      catch (e) { if (isConflict(e)) { if (cur) base = cur; mine = body; cur = e.body.current; continue; } throw e; }   // the hub moved between reading and writing: merge again
+    if (o.op === "delete") {
+      if (!remote) return;
+      if (versionOf(remote) > o.base) { keepConflict({ kind: o.kind, id: o.id, fields: ["(deleted here, changed there)"], mine: o.baseDoc || null, theirs: remote }); return; }
+      try { await app.del(url(o, versionOf(remote))); } catch (e) { if (!isConflict(e)) throw e; keepConflict({ kind: o.kind, id: o.id, fields: ["(deleted here, changed there)"], mine: o.baseDoc || null, theirs: e.body.current }); }
+      return;
     }
-    keepConflict({ kind: o.kind, id: o.id, fields: ["(busy)"], mine, theirs: cur });
+    const mine = data[o.kind][o.id];
+    if (!mine) return;                                                               // removed again before it was sent
+    const r = await saveWithMerge({
+      send: (body, exp) => app.put(url(o, exp), body), conflictOf: e => (isConflict(e) ? e.body.current : null),
+      base: o.baseDoc, mine, expected: remote ? versionOf(remote) : null,
+      current: remote && versionOf(remote) > o.base ? remote : null,                 // the hub moved on after this edit began: merge first
+    });
+    if (!r.ok) keepConflict({ kind: o.kind, id: o.id, fields: r.error.conflicts, mine, theirs: r.error.current });
   }
 
   /** Send queued changes, then adopt the hub's data. Safe to call often; overlapping calls are merged. */
