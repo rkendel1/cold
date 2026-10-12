@@ -118,6 +118,13 @@ test('extension works with the app closed, then syncs with it when it starts, su
     await panel.waitForSelector('#hubMsg :text("rejected that pairing code")');
     await panel.fill('#hubCode', app.token); await panel.click('#hubConnect');
     await until(() => hubOnline(panel));
+    // connecting alone sends nothing: the extension's own library (made while the app was closed) stays separate until the user copies it
+    await new Promise(r => setTimeout(r, 1500));
+    assert.deepEqual([app.db.snapshot().emails.length, app.db.snapshot().products.length], [0, 0]);
+    await nav(panel, 'settings'); assert.match(await panel.textContent('#libraryLine'), /The Cold Desktop library/);
+    await panel.click('#importStandalone');
+    assert.match(await panel.textContent('dialog'), /1 product \(Offline Co\) and 1 draft/);
+    await panel.click('dialog button[value="ok"]');
     await until(() => app.db.snapshot().emails.length === 1 && app.db.snapshot().products.length === 1);
     const snap = app.db.snapshot();
     assert.deepEqual([snap.products[0].name, snap.products[0].xHandle, snap.emails[0].what, snap.emails[0].status], ['Offline Co', '@offlineco', 'We just shipped scheduled jobs on edge servers.', 'sent']);
@@ -229,9 +236,11 @@ test('extension paired with a running app: reads pages into the shared Write scr
       const status = await panel.evaluate(async ([origin, t, m, path]) => (await fetch(`${origin}${path}`, { method: m, headers: { authorization: `Bearer ${t}`, 'content-type': 'application/json' }, body: m === 'PUT' ? '{"origins":[]}' : undefined })).status, [`http://127.0.0.1:${app.port}`, app.token, method, p]);
       assert.equal(status, 403, p);
     }
-    // ---- disconnect: the extension keeps its copy and keeps working
+    // ---- disconnect: the extension goes back to its own library (which pairing never touched, so it is empty here); the desktop library is untouched
+    const appEmails = app.db.snapshot().emails.length;
     await nav(panel, 'settings'); await panel.click('#hubDisconnect'); await panel.waitForSelector('#hubCode');
-    await nav(panel, 'history'); assert.equal(await panel.locator('.hrow').count(), 2);
+    await nav(panel, 'history'); assert.equal(await panel.locator('.hrow').count(), 0);
+    assert.equal(app.db.snapshot().emails.length, appEmails);
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); await app.stop().catch(() => {}); app.db.close(); await model1.close(); }
 });
@@ -263,6 +272,53 @@ test('extension paired to an app that then stops, with no model of its own: says
     // the app comes back with its own data intact, and receives what was made meanwhile
     await app.start(); await until(() => hubOnline(panel));
     await until(() => app.db.snapshot().products.some(p => p.name === 'Still Here'));
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); await app.stop().catch(() => {}); app.db.close(); await appModel.close(); }
+});
+
+test('extension and desktop share one library: edits go both ways, offline edits wait and merge, and the extension\'s own library is never mixed in', { skip: SKIP, timeout: 180000 }, async () => {
+  const appModel = await mockModel();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-extshare-'));
+  const app = await coldApp(appModel, dir);
+  const rec = (o = {}) => ({ id: 'e1', createdAt: 1000, status: 'draft', mode: 'email', productId: 'p1', productName: 'Acme', recipient: { name: 'Sam Ortiz', company: 'TrialCo' }, subject: 'hello', what: 'We help.', why: 'You wrote it.', ask: 'Could I ask?', note: '', ...o });
+  app.db.put('products', 'p1', { id: 'p1', name: 'Acme', order: 0, what: 'Acme does things.', proof: [], techFacts: [], approved: [], dontSay: [], updatedAt: 5 });
+  app.db.put('emails', 'e1', rec({ updatedAt: 5 }));
+  const { ctx, panel, errors } = await launch(dir);
+  try {
+    // the extension's own library gets a record first; connecting must neither send it nor mix it in
+    await panel.evaluate(() => chrome.storage.local.set({ 'cold.replica': { products: {}, emails: { own1: { id: 'own1', createdAt: 5, status: 'draft', recipient: { name: 'Own Person', company: 'OwnCo' }, subject: 's', what: 'w', why: 'y', ask: 'a?' } }, outbox: [], lastSync: 0 } }));
+    await panel.reload(); await panel.waitForSelector('#genBtn', { state: 'attached' });
+    await nav(panel, 'history'); await panel.waitForFunction(() => /Own Person/.test(document.body.innerText));
+    await nav(panel, 'settings');
+    await panel.fill('#hubAddress', `127.0.0.1:${app.port}`); await panel.fill('#hubCode', app.token); await panel.click('#hubConnect');
+    await until(() => hubOnline(panel));
+    await nav(panel, 'history'); await panel.waitForFunction(() => /Sam Ortiz/.test(document.body.innerText) && !/Own Person/.test(document.body.innerText));
+    await new Promise(r => setTimeout(r, 1500));
+    assert.deepEqual(app.db.snapshot().emails.map(e => e.id), ['e1'], 'the extension\'s own library did not reach the app');
+    // an edit in the extension reaches the desktop database; a change in the desktop shows up in the extension
+    const row = panel.locator('.hrow', { hasText: 'Sam Ortiz' });
+    await row.locator('.hToggle').click(); await row.locator('.hNote').fill('note from the extension');
+    await until(() => app.db.snapshot().emails.find(e => e.id === 'e1').note === 'note from the extension');
+    const cur = app.db.snapshot().emails.find(e => e.id === 'e1');
+    app.db.put('emails', 'e1', { ...cur, status: 'replied', repliedAt: 9, updatedAt: cur.updatedAt + 1 });
+    await panel.waitForFunction(() => /Reply recorded/.test(document.querySelector('.hrow').textContent), null, { timeout: 25000 });
+    // the app closes; the extension keeps working on its copy, and what it did waits for the app
+    await app.stop(); await until(async () => !(await hubOnline(panel)));
+    await panel.locator('.hrow', { hasText: 'Sam Ortiz' }).locator('.hNote').fill('written while the app was closed');
+    await nav(panel, 'settings'); await panel.waitForFunction(() => /\d+ changes? waiting to sync/.test(document.querySelector('#syncLine').textContent));
+    assert.equal(app.db.snapshot().emails.find(e => e.id === 'e1').note, 'note from the extension');
+    await app.start(); await until(() => hubOnline(panel));
+    await until(() => app.db.snapshot().emails.find(e => e.id === 'e1').note === 'written while the app was closed');
+    assert.equal(app.db.snapshot().emails.find(e => e.id === 'e1').status, 'replied', 'the reply recorded in the app survived the extension\'s older copy');
+    // switching to the extension's own library and back changes neither
+    const own = () => panel.evaluate(async () => JSON.stringify((await chrome.storage.local.get('cold.replica'))['cold.replica'].emails));
+    const ownBefore = await own();
+    await nav(panel, 'settings'); await panel.click('#useStandalone'); await panel.click('dialog button[value="ok"]');
+    await nav(panel, 'history'); await panel.waitForFunction(() => /Own Person/.test(document.body.innerText) && !/Sam Ortiz/.test(document.body.innerText));
+    assert.equal(await own(), ownBefore);
+    await nav(panel, 'settings'); await panel.click('#useShared'); await panel.click('dialog button[value="ok"]');
+    await nav(panel, 'history'); await panel.waitForFunction(() => /Sam Ortiz/.test(document.body.innerText));
+    assert.deepEqual(app.db.snapshot().emails.map(e => e.id), ['e1']);
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); await app.stop().catch(() => {}); app.db.close(); await appModel.close(); }
 });

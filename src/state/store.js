@@ -25,7 +25,8 @@ export function createStore({ storage = globalThis.localStorage, platform = null
     warnings: [],
     notice: "",
     surface: "web",          // web | desktop | extension: only used for wording about where data lives
-    paired: false,           // is the Cold desktop app paired (web and extension)
+    paired: false,           // a pairing made before shared mode: the standalone library synced with the app
+    library: "standalone",   // standalone | shared (the Cold Desktop library) | synced | desktop (this IS the desktop library)
   };
   const subscribe = fn => { listeners.add(fn); return () => listeners.delete(fn); };
   const emit = topic => listeners.forEach(fn => fn(topic, state));
@@ -45,23 +46,41 @@ export function createStore({ storage = globalThis.localStorage, platform = null
   const storedEmails = () => { const v = readJson(STORAGE_KEYS.emails, [], storage).value; return Array.isArray(v) ? v : []; };
   const adoptEmails = list => { state.emails = list.map(x => normalizeEmail(x)).filter(Boolean).sort(compareEmails); };
 
+  let unsubs = [];
+  /** Point the store at a database: show what it holds now and follow its changes. */
+  function attach(next) {
+    db = next; state.backend = db.kind || "db";
+    if (db.initialCompose !== undefined) state.compose = db.initialCompose;   // stores that keep the form (SQLite, web replica)
+    if (db.warnings && db.warnings.length) state.warnings = db.warnings;
+    const fail = e => { if (e && e.code === "revoked") set({ notice: "Access to saved data ended. Reload to reconnect." }, "notice"); };
+    unsubs = [
+      db.collection("products").onSnapshot(snap => {
+        const items = snap.docs.map(d => normalizeProduct({ ...d.data(), id: d.id })).filter(Boolean).sort(compareProducts);
+        set({ products: items, ready: true }, "products");
+      }, fail),
+      db.collection("emails").orderBy("createdAt", "desc").limit(500).onSnapshot(snap => {
+        set({ emails: snap.docs.map(d => normalizeEmail({ ...d.data(), id: d.id })).filter(Boolean) }, "emails");
+      }, fail),
+      db.doc("settings/me").onSnapshot(snap => { if (snap.exists) set({ settings: { ...state.settings, signature: String(snap.data().signature || "") } }, "settings"); }, fail),
+    ];
+  }
+
   const api = {
     state, subscribe, set, emit,
 
+    /**
+     * Show a different library (a deliberate choice in Settings). The old one is only detached, never written to or deleted; the draft
+     * open in Write belonged to it, so it is closed.
+     */
+    switchLibrary(next) {
+      unsubs.forEach(off => { try { off(); } catch { /* ignore */ } });
+      Object.assign(state, { products: [], emails: [], current: null, undo: null, settings: { signature: "" } });
+      attach(next); emit("ready");
+    },
+
     start(boot) {
       if (boot.db) {
-        db = boot.db; state.backend = db.kind || "db";
-        if (db.initialCompose !== undefined) state.compose = db.initialCompose;   // stores that keep the form (SQLite, web replica)
-        if (db.warnings && db.warnings.length) state.warnings = db.warnings;
-        const fail = e => { if (e && e.code === "revoked") set({ notice: "Access to saved data ended. Reload to reconnect." }, "notice"); };
-        db.collection("products").onSnapshot(snap => {
-          const items = snap.docs.map(d => normalizeProduct({ ...d.data(), id: d.id })).filter(Boolean).sort(compareProducts);
-          set({ products: items, ready: true }, "products");
-        }, fail);
-        db.collection("emails").orderBy("createdAt", "desc").limit(500).onSnapshot(snap => {
-          set({ emails: snap.docs.map(d => normalizeEmail({ ...d.data(), id: d.id })).filter(Boolean) }, "emails");
-        }, fail);
-        db.doc("settings/me").onSnapshot(snap => { if (snap.exists) set({ settings: { ...state.settings, signature: String(snap.data().signature || "") } }, "settings"); }, fail);
+        attach(boot.db);
       } else {
         const d = loadAll(storage);
         Object.assign(state, { products: d.products, emails: [...d.emails].sort(compareEmails), settings: d.settings, compose: d.compose, warnings: d.warnings, ready: true });
@@ -74,6 +93,7 @@ export function createStore({ storage = globalThis.localStorage, platform = null
     whereFrom: () => (state.backend === "sqlite" ? "this computer" : state.surface === "extension" ? "this extension" : "this browser"),
     /** One sentence fragment, "Products and drafts ___", used by every surface so the wording can't drift. */
     keptNote: () => (state.backend === "sqlite" ? "are stored in the Cold desktop app's database on this computer and are not synced to other devices."
+      : state.library === "shared" ? `are in your Cold Desktop library. ${state.surface === "extension" ? "This extension" : "This browser"} keeps a working copy, so you can keep working while the app is closed and changes sync when it is back.`
       : state.paired ? `are saved ${api.where()} and sync with the Cold desktop app whenever it is running.`
       : `are saved ${api.where()} only and are not backed up or synced to other devices${state.surface === "extension" ? " until you connect the Cold desktop app" : ""}.`),
 

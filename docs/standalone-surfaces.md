@@ -27,8 +27,8 @@ a draft, edit it, find it again in History, mark it sent / record a reply yourse
 * **Not paired, or the app isn't running:** nothing is disabled. The web app and extension keep working from their own copy and
   catch up when the app returns. If the surface also has no model of its own, Write says that the paired app isn't running and
   what to do (open it, or set up a model here) while Knowledge and History stay usable.
-* **Adding a surface later:** pair it and its existing products and drafts are offered to the desktop app on first contact (the
-  newer copy of anything in both wins; unmergeable edits are set aside, not lost).
+* **Adding a surface later:** pair it and it switches to the Cold Desktop library; its own library is left as it is. Copying it
+  across is a separate, previewed action (see `docs/shared-library.md`).
 
 ## Dependency audit (what was checked, and what it showed)
 

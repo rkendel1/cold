@@ -169,7 +169,7 @@ Web, the desktop app and the browser extension run the **same screens** (Write, 
 | Put a draft in X's tweet box | no | no | yes |
 | Pairing code, allowed web apps | no | yes | no |
 
-**What is shared in code and what in data:** [docs/library-contract.md](docs/library-contract.md).
+**Sharing one library with the desktop app:** [docs/shared-library.md](docs/shared-library.md). **What is shared in code and what in data:** [docs/library-contract.md](docs/library-contract.md).
 
 **How the surfaces share data.** The desktop app is the hub. Web and the extension each keep a full local copy, work with the app closed, and sync with it whenever it is running: changes made while it was closed are sent when it returns, the hub's newer copy of anything wins, and deletes sync too. While the desktop app is closed, web and the extension cannot sync *with each other*; each catches up when the app is back. There is no cloud service.
 
@@ -186,7 +186,7 @@ npm run build:extension      # bundles extension/dist
 Then in Chrome, Edge or Brave: `chrome://extensions` > turn on Developer mode > **Load unpacked** > choose the `extension/` folder. Click the Cold icon to open the side panel.
 
 - **On its own:** Settings > Model works like the desktop app's: pick a provider (Ollama, Anthropic, OpenAI, Gemini, OpenRouter, Groq, Mistral, AI Gateway, or any OpenAI-compatible server), add a key if it needs one, choose a model. The extension calls the provider directly. Keys saved here live in the browser profile's extension storage and are *not* encrypted. Local Ollama needs no setup: the extension removes the browser-extension `Origin` header from its own requests to the Ollama address you configure, since Ollama otherwise answers 403.
-- **With the desktop app:** Settings > Cold desktop app, paste the address and pairing code. Products, drafts, statuses, notes and sent copies sync both ways automatically.
+- **With the desktop app:** Settings > Cold desktop app, paste the address and pairing code. Connecting switches the extension to the Cold Desktop library (products, drafts, statuses, notes and sent copies are read and written there, with a working copy that keeps going while the app is closed). The extension's own library is left as it is; copying it across is a separate, previewed step.
 - **This page:** open a tweet and click *Read this page* to reply (optionally say what you want to say back); on a LinkedIn or X profile it fills in who they are and suggests reasons they'd care. *Put it in the tweet box* types the draft into X's reply box and you press Reply yourself. Pages are read only when you click.
 - **Security:** with the app, the extension authenticates with the pairing code and can only read and write products and drafts, generate, and look up public profiles and tweets. It cannot read or change the app's provider keys, the provider choice, the allowed web apps or the code. Creating a new code in the app disconnects every paired surface. The extension reads x.com, twitter.com and linkedin.com pages only when you click *Read this page*, and talks only to `127.0.0.1` / `localhost` for the app.
 

@@ -53,12 +53,12 @@ function readList(key, normalize, storage) {
 }
 
 /** Load everything once at boot. `warnings` is shown to the user; nothing is deleted from storage. */
-export function loadAll(storage = globalThis.localStorage) {
-  const products = readList(STORAGE_KEYS.products, normalizeProduct, storage);
-  const emails = readList(STORAGE_KEYS.emails, normalizeEmail, storage);
-  const s = readJson(STORAGE_KEYS.settings, {}, storage);
+export function loadAll(storage = globalThis.localStorage, keys = STORAGE_KEYS) {
+  const products = readList(keys.products, normalizeProduct, storage);
+  const emails = readList(keys.emails, normalizeEmail, storage);
+  const s = readJson(keys.settings, {}, storage);
   const settings = s.value && typeof s.value === "object" && !Array.isArray(s.value) ? s.value : {};
-  const c = readJson(STORAGE_KEYS.compose, null, storage);
+  const c = readJson(keys.compose, null, storage);
   const compose = c.value && typeof c.value === "object" && !Array.isArray(c.value) ? c.value : null;
   return {
     products: products.items, emails: emails.items,

@@ -15,7 +15,7 @@ const KINDS = ["products", "emails"];
 const MAX_CONFLICTS = 50;
 
 /** @param {{ storage: { get(): Promise<object|null>, set(data: object): Promise<void> } }} opts */
-export function createReplica({ storage, keepCompose = false }) {
+export function createReplica({ storage, keepCompose = false, pushLocalFirst = true }) {
   let data = { products: {}, emails: {}, settings: null, outbox: [], lastSync: 0, conflicts: [] };
   let extra = { warnings: [], compose: undefined };
   const listeners = { products: new Set(), emails: new Set(), "settings/me": new Set() };
@@ -117,7 +117,7 @@ export function createReplica({ storage, keepCompose = false }) {
           again = false;
           let snap = await app.get("api/data");
           // First contact: everything that exists only here is new to the hub. Offer it all; the newer copy of anything in both wins.
-          if (!data.lastSync) for (const kind of KINDS) for (const [id, d] of Object.entries(data[kind])) if (!data.outbox.some(o => o.kind === kind && o.id === id)) enqueue(kind, id, "put", d.updatedAt || 0);
+          if (pushLocalFirst && !data.lastSync) for (const kind of KINDS) for (const [id, d] of Object.entries(data[kind])) if (!data.outbox.some(o => o.kind === kind && o.id === id)) enqueue(kind, id, "put", d.updatedAt || 0);
           const done = new Set();
           try {
             for (const o of [...data.outbox]) {

@@ -142,6 +142,10 @@ test("pairing is the only cross-surface path: before it, the paired app receives
     await go(page, "settings");
     await page.fill("#hubAddress", `127.0.0.1:${hubPort}`); await page.fill("#hubCode", hubDb.extensionToken()); await page.click("#hubConnect");
     await page.waitForFunction(() => /Connected/.test(document.querySelector("#view-settings").innerText), null, { timeout: 20000 });
+    // connecting does not send the browser's own library: that takes a separate, confirmed copy
+    await new Promise(r => setTimeout(r, 1500));
+    assert.deepEqual([hubDb.snapshot().products.length, hubDb.snapshot().emails.length], [0, 0]);
+    await page.click("#importStandalone"); await page.click('dialog button[value="ok"]');
     for (let i = 0; i < 100 && hubDb.snapshot().products.length < 2; i++) await new Promise(r => setTimeout(r, 100));
     assert.deepEqual(hubDb.snapshot().products.map(p => p.id).sort(), ["p1", "p2"]);
     // after pairing, library traffic goes to the paired app and nowhere else; the web server still sees no library writes

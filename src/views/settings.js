@@ -144,6 +144,47 @@ export function mountSettings(root, { store, platform }) {
     const box = h("div", { class: "form" });
     const line = h("p", { class: "hint", role: "status", id: "syncLine" });
     let shown = 0;
+    const here = hub.kind === "web" ? "this browser" : "this extension";
+    /** Show the library the pairing now selects. The library that is no longer shown is only detached: it is not written to or deleted. */
+    const applyLibrary = () => { store.switchLibrary(hub.replica); store.set({ library: hub.libs.kind, paired: hub.libs.kind === "synced" }, "surface"); };
+    const LIBRARY_LABEL = {
+      shared: () => `The Cold Desktop library. ${here[0].toUpperCase()}${here.slice(1)} keeps a working copy, so you can keep working while the app is closed.`,
+      standalone: () => `${here[0].toUpperCase()}${here.slice(1)}'s own library. It is not shared: what you change here does not reach the Cold Desktop library.`,
+      synced: () => `${here[0].toUpperCase()}${here.slice(1)}'s library, kept in sync with the Cold Desktop app (connected before shared libraries existed).`,
+    };
+    /** Copy the standalone library into the shared one, only after showing exactly what will be copied. Nothing is overwritten or removed. */
+    async function importStandalone() {
+      const snap = await hub.libs.readStandalone();
+      const haveP = new Set(S.products.map(p => p.id)), haveE = new Set(S.emails.map(e => e.id));
+      const newP = snap.products.filter(p => !haveP.has(p.id)), newE = snap.emails.filter(e => !haveE.has(e.id));
+      const skipped = snap.products.length - newP.length + snap.emails.length - newE.length;
+      if (!newP.length && !newE.length) { toast(skipped ? "Everything in this library is already in the shared library." : `${here[0].toUpperCase()}${here.slice(1)}'s own library is empty.`); return; }
+      const names = (list, f) => list.slice(0, 5).map(f).filter(Boolean).join(", ") + (list.length > 5 ? ", …" : "");
+      const body = `${newP.length} product${newP.length === 1 ? "" : "s"}${newP.length ? ` (${names(newP, p => p.name)})` : ""} and ${newE.length} draft${newE.length === 1 ? "" : "s"}${newE.length ? ` (${names(newE, e => (e.recipient && e.recipient.name) || e.subject)})` : ""} will be copied. `
+        + `${skipped ? `${skipped} item${skipped === 1 ? " is" : "s are"} already in the shared library and will not be touched. ` : ""}The library in ${here} is not changed or deleted.`;
+      if (!(await confirmDialog({ title: "Copy into the shared library?", body, confirmLabel: "Copy" }))) return;
+      let failed = 0;
+      for (const p of newP) { try { await store.saveProduct(p); } catch { failed++; } }
+      for (const e of newE) { try { await store.saveEmail({ ...e }); } catch { failed++; } }
+      toast(failed ? `Copied, but ${failed} item${failed === 1 ? "" : "s"} could not be saved.` : `Copied ${newP.length + newE.length} item${newP.length + newE.length === 1 ? "" : "s"} into the shared library.`);
+    }
+    async function chooseLibrary(library) {
+      const toShared = library === "shared";
+      if (!(await confirmDialog({ title: toShared ? "Use the Cold Desktop library?" : `Use ${here}'s own library?`,
+        body: toShared ? `You will see and edit the library kept in Cold Desktop. The library in ${here} is not changed, and you can switch back.`
+          : `You will see ${here}'s own library again. The Cold Desktop library is not changed or deleted, and what you change here will not reach it until you switch back.`,
+        confirmLabel: toShared ? "Use the desktop library" : "Use this library" }))) return;
+      try { await hub.libs.use(library); applyLibrary(); toast(toShared ? "Using the Cold Desktop library" : `Using ${here}'s own library`); paint(); }
+      catch (e) { toast(e.message || "Couldn't switch libraries."); }
+    }
+    function libraryBlock() {
+      const k = hub.libs.kind;
+      return h("div", { class: "stack", id: "libraryBlock" }, h("strong", {}, "Library in use"), h("p", { id: "libraryLine" }, LIBRARY_LABEL[k]()),
+        h("div", { class: "actions" },
+          k === "shared" ? button("Switch to " + here + "'s own library", { id: "useStandalone", onclick: () => chooseLibrary("standalone") }) : null,
+          k === "standalone" ? button("Use the Cold Desktop library", { id: "useShared", onclick: () => chooseLibrary("shared") }) : null,
+          k === "shared" ? button(`Copy ${here}'s library into the shared one…`, { id: "importStandalone", onclick: importStandalone }) : null));
+    }
     const KIND = { emails: "draft", products: "product" };
     /** Edits that couldn't be merged with a newer change at the app: the app's version was kept, this one is set aside until the user decides. */
     function conflictsBlock() {
@@ -162,20 +203,22 @@ export function mountSettings(root, { store, platform }) {
       clear(box);
       const s = hub.link.state;
       const when = hub.replica.lastSync ? new Date(hub.replica.lastSync).toLocaleString() : "never";
-      line.textContent = `${hub.replica.pending ? `${hub.replica.pending} change${hub.replica.pending === 1 ? "" : "s"} waiting to sync. ` : "Nothing waiting to sync. "}Last synced: ${when}.`;
+      line.textContent = hub.libs.kind === "standalone" ? "Syncing is off: this library is not shared with the app."
+        : `${hub.replica.pending ? `${hub.replica.pending} change${hub.replica.pending === 1 ? "" : "s"} waiting to sync. ` : "Nothing waiting to sync. "}Last synced: ${when}.`;
       if (!s.conn) {
         const addr = h("input", { type: "text", id: "hubAddress", value: "127.0.0.1:47821", inputmode: "url", autocomplete: "off", spellcheck: "false" });
         const code = h("input", { type: "password", id: "hubCode", autocomplete: "off", spellcheck: "false" });
         const msg = h("div", { role: "status", id: "hubMsg" });
         const go = button("Connect", { kind: "primary", id: "hubConnect", onclick: async () => {
           go.disabled = true; clear(msg);
-          try { await hub.connect(addr.value, code.value); toast("Connected"); }
+          try { await hub.connect(addr.value, code.value); applyLibrary(); toast("Connected to the Cold Desktop library"); }
           catch (e) { clear(msg).append(notice("bad", e.message || "Couldn't connect.")); go.disabled = false; }
         } });
         append(box, [
           h("p", { class: "hint" }, hub.kind === "web"
             ? "Optional. Your products and drafts already work in this browser. Connect the Cold desktop app to share them with it and with the extension, and to use its model. In the app: Settings > Browser extension & web apps, add this page's address below to its allowed web apps, then copy its address and pairing code here."
             : "Optional. Everything works without the app. Connect it to share your products and drafts with it and with the web app, and to use its model. Copy its address and pairing code from its Settings > Browser extension & web apps."),
+          h("p", { class: "hint", id: "connectNote" }, `Connecting makes the Cold Desktop library the one you work in. The library ${hub.kind === "web" ? "in this browser" : "in this extension"} stays exactly as it is, and you can switch back to it at any time. Nothing is copied unless you choose to copy it.`),
           hub.kind === "web" ? h("p", {}, "This page's address: ", h("code", {}, hub.origin)) : null,
           field("App address", addr), field("Pairing code", code), h("div", { class: "actions" }, go), msg, line]);
         return;
@@ -184,10 +227,10 @@ export function mountSettings(root, { store, platform }) {
         s.online ? notice("good", h("strong", {}, "Connected."), h("p", {}, `The Cold desktop app is running (${s.config.providerLabel || s.config.provider} · ${s.config.model}). Changes sync automatically.`))
           : s.rejected ? notice("bad", h("strong", {}, "The desktop app rejected the pairing code."), h("p", {}, "Disconnect, then connect again with the current code from the app's Settings."))
           : notice("warn", h("strong", {}, "The Cold desktop app isn't running."), h("p", {}, "Cold keeps working from the copy saved here. Drafts and edits sync the next time the app starts.")),
-        preference(), line, conflictsBlock(),
+        libraryBlock(), preference(), line, conflictsBlock(),
         h("div", { class: "actions" },
           button("Sync now", { id: "syncNow", onclick: async () => { try { await hub.replica.sync(); toast("Synced"); } catch { toast("The desktop app isn't reachable right now. Your changes are kept and will sync later."); } paint(); } }),
-          button("Disconnect", { kind: "ghost danger", id: "hubDisconnect", onclick: async () => { await hub.disconnect(); toast("Disconnected"); } }))]);
+          button("Disconnect", { kind: "ghost danger", id: "hubDisconnect", onclick: async () => { await hub.disconnect(); applyLibrary(); toast("Disconnected. This " + (hub.kind === "web" ? "browser" : "extension") + "'s own library is in use."); } }))]);
     }
     paint(); hub.link.subscribe(paint); store.subscribe(t => { if (t === "emails" || t === "products") { if (box.isConnected && hub.replica.conflicts.length !== shown && hub.link.state.conn) paint(); /* pending count changed */ const p = hub.replica.pending; if (line.isConnected) line.textContent = line.textContent.replace(/^(\d+ changes? waiting to sync\. |Nothing waiting to sync\. )/, p ? `${p} change${p === 1 ? "" : "s"} waiting to sync. ` : "Nothing waiting to sync. "); } });
     return box;

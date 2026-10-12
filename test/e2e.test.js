@@ -351,7 +351,7 @@ const startHub = (dir, port) => env.startColdServer({ mockUrl: mock.url, port, e
 const freePort = () => new Promise(r => { const s = require("node:net").createServer(); s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => r(p)); }); });
 const until = async (fn, ms = 20000) => { const t = Date.now(); for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t > ms) throw new Error("timed out waiting for: " + fn); await new Promise(r => setTimeout(r, 150)); } };
 
-test("web: works on its own, syncs both ways with the desktop app when it is running, keeps working when it stops, and catches up when it returns", { skip: SKIP, timeout: 120000 }, async () => {
+test("web: works on its own; connecting shows the desktop library without touching its own; copying is explicit; keeps working when the app stops and catches up when it returns", { skip: SKIP, timeout: 120000 }, async () => {
   const { createDb } = require("../lib/db");
   const dir = hubDir(), port = await freePort();
   let hub = await startHub(dir, port);
@@ -377,16 +377,29 @@ test("web: works on its own, syncs both ways with the desktop app when it is run
     await page.waitForSelector(`#hubMsg :text("rejected that pairing code")`);
     await page.fill("#hubCode", hubDb.extensionToken()); await page.click("#hubConnect");
     await page.waitForSelector("#hubDisconnect");
-    // ---- both ways: what only the web had reaches the desktop app, and what only it had reaches the web
-    await until(() => hubDb.snapshot().emails.some(e => e.id === "e-web") && hubDb.snapshot().products.some(p => p.id === "p1"));
-    await go(page, "history"); await page.waitForFunction(() => document.querySelectorAll(".hrow").length === 2);
+    // ---- connecting switches to the DESKTOP library; the browser's own library is neither merged nor pushed
+    const standaloneBefore = await page.evaluate(() => [localStorage.getItem("cold.products"), localStorage.getItem("cold.emails")]);
+    await go(page, "settings"); assert.match(await page.textContent("#libraryLine"), /The Cold Desktop library/);
+    await go(page, "history"); await page.waitForFunction(() => document.querySelectorAll(".hrow").length === 1);
     const hubRow = row(page, "Hub Person");
     assert.match(await hubRow.locator(".chip").textContent(), /Marked sent/); assert.match(await hubRow.locator(".hnote").textContent(), /from the desktop app/);   // status and notes arrive intact
-    await go(page, "compose"); assert.ok((await page.$$eval("#rProduct option", o => o.map(x => x.textContent))).includes("Hub Product"));
+    await go(page, "compose"); const opts = await page.$$eval("#rProduct option", o => o.map(x => x.textContent));
+    assert.ok(opts.includes("Hub Product") && !opts.includes("Acme Flow"), "the shared library shows the desktop's products only");
+    await page.waitForTimeout(1500);
+    assert.deepEqual([hubDb.snapshot().emails.some(e => e.id === "e-web"), hubDb.snapshot().products.some(p => p.id === "p1")], [false, false], "pairing alone sent nothing from the browser's own library");
+    assert.deepEqual(await page.evaluate(() => [localStorage.getItem("cold.products"), localStorage.getItem("cold.emails")]), standaloneBefore, "the browser's own library is untouched");
+    // ---- copying is a deliberate act that shows what it will copy, and changes nothing until confirmed
+    await go(page, "settings"); await page.click("#importStandalone");
+    assert.match(await page.textContent("dialog"), /1 product \(Acme Flow\) and 1 draft \(Web Person\) will be copied/);
+    await page.click('dialog button[value="cancel"]'); await page.waitForTimeout(500);
+    assert.equal(hubDb.snapshot().emails.some(e => e.id === "e-web"), false);
+    await page.click("#importStandalone"); await page.click('dialog button[value="ok"]');
+    await until(() => hubDb.snapshot().emails.some(e => e.id === "e-web") && hubDb.snapshot().products.some(p => p.id === "p1"));
+    await go(page, "history"); await page.waitForFunction(() => document.querySelectorAll(".hrow").length === 2);
     // ---- the desktop app closes mid-use: the web keeps working, and says so
     hub.stop(); await page.waitForTimeout(300);
     await go(page, "history"); await row(page, "Web Person").locator(".hMarkSent").click();
-    await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.emails")).find(e => e.id === "e-web").status === "sent");
+    await page.waitForFunction(k => JSON.parse(localStorage.getItem(k)).find(e => e.id === "e-web").status === "sent", `cold.shared.${encodeURIComponent(`http://127.0.0.1:${port}`)}.emails`);
     await go(page, "compose"); await fillCompose(page, { name: "Offline Person", company: "OffCo" }); await generate(page);
     await go(page, "settings"); await page.waitForSelector("text=The Cold desktop app isn't running", { timeout: 15000 });
     assert.match(await page.textContent("#syncLine"), /\d+ changes? waiting to sync/);
@@ -401,9 +414,11 @@ test("web: works on its own, syncs both ways with the desktop app when it is run
     assert.equal(typeof synced.sentAt, "number"); assert.ok(synced.sentCopy && synced.sentCopy.text, "the sent copy travelled too");
     await go(page, "settings"); await page.waitForSelector("text=Connected.", { timeout: 15000 });
     assert.match(await page.textContent("#syncLine"), /Nothing waiting to sync/);
-    // ---- disconnecting keeps the local copy
+    // ---- disconnecting returns to the browser's own library, exactly as it was; the shared copy stays in storage, unchanged
     await page.click("#hubDisconnect"); await page.waitForSelector("#hubCode"); await go(page, "history");
-    assert.equal(await page.locator(".hrow").count(), 3);
+    await page.waitForFunction(() => document.querySelectorAll(".hrow").length === 1);
+    assert.deepEqual(await page.evaluate(() => [localStorage.getItem("cold.products"), localStorage.getItem("cold.emails")]), standaloneBefore);
+    assert.ok(await page.evaluate(k => JSON.parse(localStorage.getItem(k)).length === 3, `cold.shared.${encodeURIComponent(`http://127.0.0.1:${port}`)}.emails`));
     // the only console noise allowed is the network failures this test causes on purpose (unapproved page, app stopped)
     assert.deepEqual(t.errors.filter(e => !/ERR_CONNECTION_REFUSED|ERR_FAILED|CORS policy|status of 403/.test(e)), []);
   } finally { await t.close(); hub.stop(); hubDb.close(); }
@@ -832,4 +847,14 @@ test("history: an unfamiliar status is shown as Unknown, offers no Draft-only ac
   await page.evaluate(() => document.activeElement.blur());   // History waits to redraw while a note box has focus
   await page.waitForFunction(() => !document.querySelector("select.hStatus option[value=unknown]"));   // once corrected, Unknown is no longer offered
   await t.close();
+});
+
+test("history: a note typed and left within the save delay is saved when the box loses focus, not discarded", { skip: SKIP }, async () => {
+  const seed = { "cold.products": [P1], "cold.emails": [EMAIL({ id: "a", recipient: { name: "Alpha Person", company: "A" } }), EMAIL({ id: "b", recipient: { name: "Bravo Person", company: "B" } })] };
+  const t = await open({ seed }); const { page } = t;
+  await go(page, "history");
+  const a = row(page, "Alpha Person"); await a.locator(".hToggle").click(); await a.locator(".hNote").fill("typed, then focus moved on");
+  await row(page, "Bravo Person").locator(".hToggle").click();            // focus leaves the note box well inside the 600 ms pause
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.emails")).find(e => e.id === "a").note === "typed, then focus moved on");
+  assert.deepEqual(t.errors, []); await t.close();
 });

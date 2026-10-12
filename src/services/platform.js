@@ -1,11 +1,12 @@
 // Detects where Cold is running: the Claude artifact runtime (window.claude) or a Cold server.
 import { createApi } from "./api.js";
-import { STORAGE_KEYS } from "../domain/constants.js";
+import { STORAGE_KEYS, sharedKeys } from "../domain/constants.js";
 import { createRemoteDb } from "./sqliteDb.js";
 import { loadAll } from "../state/storage.js";
 import { createReplica } from "./replica.js";
 import { localReplicaStorage } from "./replicaStorage.js";
 import { createLink } from "./hubLink.js";
+import { createLibraries } from "./libraries.js";
 import { createBackend } from "./backend.js";
 import { localHubStore, verifyHub } from "./hub.js";
 
@@ -64,25 +65,28 @@ export function createPlatform() {
       if (!db && server && !server.dbEnabled) {
         // Web: a full local copy that needs nothing else running. If the Cold desktop app is paired and reachable, the copy syncs with
         // it (changes made here while it was closed are sent when it returns), and its model can be used when this server has none.
-        const replica = createReplica({ storage: localReplicaStorage() });
-        await replica.load();
-        const link = createLink({ replica });
+        const link = createLink();
         const store = localHubStore();
+        // Which library is shown is kept with the pairing: standalone (this browser's own) or the Cold Desktop library (see libraries.js).
+        const libs = createLibraries({ hubStore: store, link, makeReplica: (kind, origin) => (kind === "shared"
+          ? createReplica({ storage: localReplicaStorage(globalThis.localStorage, sharedKeys(origin)), pushLocalFirst: false })
+          : createReplica({ storage: localReplicaStorage() })) });
+        const active = await libs.init();
         let prefer = safeGet(globalThis.localStorage || {}, PREFER_KEY) || "app";
         backend = createBackend({ link, getConfig: () => ({ prefer }),
           own: { ready: () => !!(server && server.ready), sample: api.sample, label: () => `${server.providerLabel || server.provider} · ${server.model}`, lookups: { tweet: api.tweet, profile: api.profile } } });
         hub = {
-          link, replica, store, kind: "web", origin: globalThis.location ? globalThis.location.origin : "",
+          link, libs, store, kind: "web", get replica() { return libs.db; }, origin: globalThis.location ? globalThis.location.origin : "",
           get prefer() { return prefer; },
           setPrefer(v) { prefer = v === "own" ? "own" : "app"; safeSet(globalThis.localStorage, PREFER_KEY, prefer); notify(); },
-          async connect(addr, code) { const conn = await verifyHub(addr, code, { who: "web" }); await store.set(conn); await link.connect(conn); notify(); },
-          async disconnect() { await store.clear(); link.disconnect(); notify(); },
+          async connect(addr, code) { const conn = await verifyHub(addr, code, { who: "web" }); await libs.connect(conn); await link.connect(conn); notify(); },
+          async disconnect() { link.disconnect(); await libs.disconnect(); notify(); },
         };
         link.subscribe(notify);
         const saved = await store.get();
         if (saved) link.connect(saved).catch(() => {});    // don't hold the page up if the app is closed
         link.start();
-        db = replica;
+        db = active.db;
       }
       return { db, user: null, ...snapshot(), warning };
     },
