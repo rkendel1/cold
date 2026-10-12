@@ -4,3 +4,4 @@ node_modules/
 docs/validation/tracker/contacts.private.csv
 docs/validation/tracker/*.private.*
 dist/
+extension/dist/

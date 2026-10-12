@@ -28,7 +28,7 @@ export function createDraftPane({ store, handlers }) {
   const queueSave = (rec, statusEl) => {
     statusEl.textContent = "Saving…";
     clearTimeout(saveT);
-    saveT = setTimeout(async () => { statusEl.textContent = (await persist(rec)) ? "Edits saved in this browser" : "Not saved"; }, 700);
+    saveT = setTimeout(async () => { statusEl.textContent = (await persist(rec)) ? `Edits saved ${store.where()}` : "Not saved"; }, 700);
   };
 
   async function setStatus(rec, st) {
@@ -102,7 +102,7 @@ export function createDraftPane({ store, handlers }) {
         h("li", {}, "Say who you're writing to and why they should care."),
         h("li", {}, "Choose what you want from them, and what you're offering."),
         h("li", {}, "Generate, edit the text, then copy it into your own email.")),
-      h("p", { class: "hint" }, "Drafts are saved in this browser only. They are not backed up or synced to other devices."));
+      h("p", { class: "hint" }, S.backend === "sqlite" ? "Drafts are stored in the Cold app's database on this computer and are not synced to other devices." : "Drafts are saved in this browser only. They are not backed up or synced to other devices."));
   }
 
   function progressCard() {
@@ -127,7 +127,7 @@ export function createDraftPane({ store, handlers }) {
       what: h("textarea", { id: "eWhat", rows: 1 }), why: h("textarea", { id: "eWhy", rows: 1 }), ask: h("textarea", { id: "eAsk", rows: 1 }),
     };
     f.what.value = rec.what; f.why.value = rec.why; f.ask.value = rec.ask;
-    const saveStatus = h("span", { class: "hint", role: "status" }, rec.edited ? "" : "Saved in this browser");
+    const saveStatus = h("span", { class: "hint", role: "status" }, rec.edited ? "" : `Saved ${store.where()}`);
     const metrics = h("div", { class: "metrics", "aria-label": "Draft length" });
     const review = h("div", {});
     const checklist = h("div", {});

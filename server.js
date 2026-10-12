@@ -29,6 +29,8 @@ const { BY_ID } = require("./lib/providers");
 const { createSettings } = require("./lib/settings");
 // Settings (provider, model, API keys) are editable from the UI only when COLD_SETTINGS_FILE is set, i.e. on a local
 // or desktop install. A hosted deployment keeps configuring through environment variables.
+// COLD_DB_FILE switches products and drafts from browser storage to this SQLite file (the desktop app sets it).
+const appDb = process.env.COLD_DB_FILE ? require("./lib/db").createDb(process.env.COLD_DB_FILE) : null;
 const settings = process.env.COLD_SETTINGS_FILE ? createSettings({ file: process.env.COLD_SETTINGS_FILE }) : null;
 const baseProvider = () => (process.env.VERCEL_ENV === "preview" ? prototypeConfig.previewProvider : null) || prototypeConfig.provider || process.env.LLM_PROVIDER || "ai-gateway";
 const validProvider = id => id === "hf-ssh" || !!BY_ID[id];
@@ -94,15 +96,31 @@ function tokenMatches(given) {
   return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
+// ---- Browser-extension access ------------------------------------------------------------------------------------
+// The extension is paired with a random token shown in Settings. With it the extension may read and write products and drafts,
+// generate, and look up profiles/tweets. It can never reach /api/settings (keys, provider choice, the token itself).
+const EXT_ORIGIN = /^(chrome-extension|moz-extension|safari-web-extension):\/\/[A-Za-z0-9._-]+$/;
+const EXT_PATHS = /^\/api\/(config|data(\/.*)?|generate|profile|tweet)$/;
+function extensionAuthorized(req) {
+  const want = appDb && appDb.peekExtensionToken();
+  const m = /^Bearer (\S+)$/.exec(req.headers.authorization || "");
+  if (!want || !m) return false;
+  const a = Buffer.from(m[1]), b = Buffer.from(want);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 /** Returns an error response descriptor, or null when the request may proceed. */
 function guardGenerate(req) {
-  // Browsers always send Origin on cross-site POSTs. A mismatch means another website is driving the request.
-  const origin = req.headers.origin;
-  if (origin && origin !== "null") {
-    let host = ""; try { host = new URL(origin).host; } catch {}
-    if (host !== req.headers.host) return { status: 403, code: "bad_origin", message: "Cross-site requests are not allowed." };
-  } else if (origin === "null") return { status: 403, code: "bad_origin", message: "Cross-site requests are not allowed." };
-  if (accessToken() && !tokenMatches(req.headers["x-cold-access"])) return { status: 401, code: "access_required", message: "This server requires an access code." };
+  // The paired browser extension authenticates with its pairing token instead of the same-origin rules.
+  if (!extensionAuthorized(req)) {
+    // Browsers always send Origin on cross-site POSTs. A mismatch means another website is driving the request.
+    const origin = req.headers.origin;
+    if (origin && origin !== "null") {
+      let host = ""; try { host = new URL(origin).host; } catch {}
+      if (host !== req.headers.host) return { status: 403, code: "bad_origin", message: "Cross-site requests are not allowed." };
+    } else if (origin === "null") return { status: 403, code: "bad_origin", message: "Cross-site requests are not allowed." };
+    if (accessToken() && !tokenMatches(req.headers["x-cold-access"])) return { status: 401, code: "access_required", message: "This server requires an access code." };
+  }
   const ip = String(req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown").split(",")[0].trim();
   const now = Date.now(), win = 60 * 1000, limit = rateLimitPerMinute();
   const hits = (rateBuckets.get(ip) || []).filter(t => now - t < win);
@@ -244,14 +262,51 @@ async function generate(req, res) {
 const { PROVIDERS } = require("./lib/providers");
 const LOCAL_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/;
 
-function guardSettings(req) {
-  if (!settings) return { status: 404, code: "settings_disabled", message: "Settings are only available in the desktop app or a local install." };
+function guardLocal(req) {
+  // Browsers stamp every request with Sec-Fetch-Site and scripts can't forge it. Only this app's own pages are "same-origin":
+  // a website, or another browser extension that can reach localhost, shows up as "cross-site" and gets nothing without the token.
+  const site = req.headers["sec-fetch-site"];
+  if (site && site !== "same-origin") return { status: 403, code: "bad_origin", message: "Only the Cold app can do that." };
   // Block DNS-rebinding and cross-site pages from reading or changing keys.
   if (!LOCAL_HOST.test(String(req.headers.host || ""))) return { status: 403, code: "bad_origin", message: "Settings can only be used from this computer." };
   const origin = req.headers.origin;
   if (origin) { let host = ""; try { host = new URL(origin).host; } catch {} if (host !== req.headers.host) return { status: 403, code: "bad_origin", message: "Cross-site requests are not allowed." }; }
   if (accessToken() && !tokenMatches(req.headers["x-cold-access"])) return { status: 401, code: "access_required", message: "This server requires an access code." };
   return null;
+}
+function guardSettings(req) {
+  if (!settings) return { status: 404, code: "settings_disabled", message: "Settings are only available in the desktop app or a local install." };
+  if (req.headers.authorization) return { status: 403, code: "bad_origin", message: "The extension can't use settings." };
+  return guardLocal(req);
+}
+function guardData(req) {
+  if (!appDb) return { status: 404, code: "db_disabled", message: "This server stores data in the browser." };
+  // A request that presents a pairing code must present the right one (browsers omit Origin on simple GETs, so don't rely on it).
+  if (req.headers.authorization) return extensionAuthorized(req) ? null : { status: 403, code: "bad_token", message: "The pairing code isn't valid. Copy the current one from Cold's Settings." };
+  return guardLocal(req);
+}
+
+async function dataRoute(req, res, url) {
+  const denied = guardData(req);
+  if (denied) return send(res, denied.status, { error: { code: denied.code, message: denied.message } });
+  const parts = url.pathname.split("/").filter(Boolean).slice(2);   // after /api/data
+  try {
+    if (req.method === "GET" && parts.length === 0) return send(res, 200, appDb.snapshot());
+    if (req.method === "GET" && parts[0] === "version") return send(res, 200, { version: appDb.version });
+    if (req.method === "GET" && parts[0] === "ping") return send(res, 200, { ok: true, version: appDb.version });
+    if (req.method === "POST" && parts[0] === "import") {
+      return send(res, 200, appDb.importOnce(JSON.parse(await readBody(req, 16 * 1024 * 1024))));
+    }
+    if (req.method === "DELETE" && parts.length === 2) { appDb.remove(parts[0], decodeURIComponent(parts[1])); return send(res, 200, { ok: true, version: appDb.version }); }
+    if (req.method === "PUT" && (parts.length === 1 || parts.length === 2)) {
+      const doc = JSON.parse(await readBody(req, 600 * 1024));
+      if (parts.length === 2) appDb.put(parts[0], decodeURIComponent(parts[1]), doc); else appDb.putMeta(parts[0], doc);
+      return send(res, 200, { ok: true, version: appDb.version });
+    }
+  } catch (e) {
+    return send(res, e.status || (e instanceof SyntaxError ? 400 : 500), { error: { message: e.status ? e.message : e instanceof SyntaxError ? "Bad request." : "Couldn't save." } });
+  }
+  return send(res, 404, { error: { message: "Not found" } });
 }
 
 function settingsSnapshot() {
@@ -282,6 +337,10 @@ async function settingsRoute(req, res, url) {
     } catch (e) { return send(res, e.status || 400, { error: { message: e.message || "Bad request." } }); }
     return send(res, 200, settingsSnapshot());
   }
+  if (url.pathname === "/api/settings/extension" && (req.method === "GET" || req.method === "POST")) {
+    if (!appDb) return send(res, 404, { error: { message: "Browser extension pairing needs the desktop app's database." } });
+    return send(res, 200, { token: appDb.extensionToken(req.method === "POST"), origin: `http://${req.headers.host}`, dbFile: appDb.file });
+  }
   if (req.method === "GET" && url.pathname === "/api/settings/models") {
     const id = url.searchParams.get("provider") || "";
     const def = BY_ID[id];
@@ -298,10 +357,17 @@ async function settingsRoute(req, res, url) {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
   try {
+    const extOrigin = req.headers.origin && EXT_ORIGIN.test(req.headers.origin) && EXT_PATHS.test(url.pathname) ? req.headers.origin : "";
+    if (extOrigin) {
+      res.setHeader("access-control-allow-origin", extOrigin); res.setHeader("vary", "Origin");
+      res.setHeader("access-control-allow-headers", "authorization, content-type"); res.setHeader("access-control-allow-methods", "GET, POST, PUT, DELETE, OPTIONS"); res.setHeader("access-control-max-age", "600");
+      if (req.method === "OPTIONS") { res.writeHead(204, SECURITY_HEADERS); return res.end(); }
+    }
     if (url.pathname === "/api/settings" || url.pathname.startsWith("/api/settings/")) return settingsRoute(req, res, url);
+    if (url.pathname === "/api/data" || url.pathname.startsWith("/api/data/")) return dataRoute(req, res, url);
     if (req.method === "GET" && url.pathname === "/api/config") {
       const cfg = resolve();
-      return send(res, 200, { app: "cold", ready: cfg.ready, experimental: !!cfg.hf, model: cfg.model, provider: cfg.id, providerLabel: cfg.label, accessRequired: !!accessToken(), keySetting: cfg.keySetting, settingsEnabled: !!settings });
+      return send(res, 200, { app: "cold", ready: cfg.ready, experimental: !!cfg.hf, model: cfg.model, provider: cfg.id, providerLabel: cfg.label, dbEnabled: !!appDb, accessRequired: !!accessToken(), keySetting: cfg.keySetting, settingsEnabled: !!settings });
     }
     if (req.method === "GET" && url.pathname === "/api/models") {
       if (resolve().id !== "ai-gateway" || settings) return send(res, 200, { models: [] });
@@ -337,5 +403,5 @@ if (require.main === module) server.listen(PORT, HOST, () => {
   if (!accessToken() && HOST !== "127.0.0.1") console.warn("WARNING: COLD_ACCESS_TOKEN is not set and the server is reachable beyond localhost: anyone who can reach it can spend your AI credits.");
 });
 
-server.settings = settings;   // the desktop shell attaches an encryption codec before listening
+server.settings = settings; server.db = appDb;   // the desktop shell attaches an encryption codec before listening
 module.exports = server;

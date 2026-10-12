@@ -2,6 +2,8 @@
 // Keys are sent to the local server once and never come back: the server only reports whether one is saved.
 import { h, clear } from "../components/dom.js";
 import { button, notice, toast, announce } from "../components/ui.js";
+import { confirmDialog } from "../components/dialog.js";
+import { copyText } from "../services/clipboard.js";
 
 const OTHER = "__other__";
 
@@ -122,12 +124,34 @@ export function mountSettings(root, { store, platform }) {
     keyInput.addEventListener("input", () => { sync(); });
   }
 
+  /* ---------- browser extension pairing ---------- */
+  const extHost = h("section", { class: "ext-panel", "aria-labelledby": "ext-title" });
+  async function renderExtension() {
+    clear(extHost);
+    if (!S.server || !S.server.dbEnabled) return;
+    let info;
+    try { info = await api.getExtension(); } catch (e) { extHost.append(notice("bad", e.message || "Couldn't load extension details.")); return; }
+    const code = h("input", { type: "password", id: "extCode", readonly: true, value: info.token, "aria-label": "Pairing code", spellcheck: "false" });
+    const show = button("Show", { onclick: () => { const hid = code.type === "password"; code.type = hid ? "text" : "password"; show.textContent = hid ? "Hide" : "Show"; } });
+    const copy = (label, text) => button(`Copy ${label}`, { onclick: async () => { toast((await copyText(text)) ? `${label[0].toUpperCase()}${label.slice(1)} copied` : "Couldn't copy. Select it and copy by hand."); } });
+    const rotate = button("Create a new code", { kind: "ghost danger", onclick: async () => {
+      if (!(await confirmDialog({ title: "Create a new pairing code?", body: "The extension will be disconnected until you paste the new code into it.", confirmLabel: "Create new code" }))) return;
+      try { await api.rotateExtension(); toast("New code created"); renderExtension(); } catch (e) { toast(e.message || "Couldn't create a new code."); }
+    } });
+    extHost.append(
+      h("h2", { id: "ext-title" }, "Browser extension"),
+      h("p", { class: "hint" }, "The Cold extension works from this app: it reads your products and saves drafts here, and writes with the provider and model you chose above. It can't see your API keys. Paste the address and pairing code into the extension's setup screen."),
+      h("div", { class: "field" }, h("label", { for: "extUrl" }, "App address"), h("input", { type: "text", id: "extUrl", readonly: true, value: info.origin }), h("div", { class: "actions" }, copy("address", info.origin))),
+      h("div", { class: "field" }, h("label", { for: "extCode" }, "Pairing code"), code, h("div", { class: "actions" }, show, copy("code", info.token), rotate)),
+      h("p", { class: "hint" }, "Your data is one SQLite file you can back up: ", h("span", { class: "mono" }, info.dbFile)));
+  }
+
   async function load() {
     clear(body);
     if (!S.server) { body.append(notice("warn", "Settings need the Cold desktop app or a local Cold server.")); return; }
     if (!S.server.settingsEnabled) { body.append(notice("info", h("strong", {}, "Settings are managed on the server."), h("p", {}, "This copy of Cold is configured through environment variables, so there's nothing to change here. Use the Cold desktop app to pick providers, models and keys in the UI."))); return; }
     body.append(h("p", { class: "hint" }, "Loading settings…"));
-    try { snap = await api.getSettings(); mountForm(); }
+    try { snap = await api.getSettings(); mountForm(); body.append(extHost); renderExtension(); }
     catch (e) { clear(body); body.append(notice("bad", e.message || "Couldn't load settings.")); }
   }
 

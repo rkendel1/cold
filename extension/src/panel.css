@@ -1,0 +1,15 @@
+body.ext { margin: 0; padding: 14px 16px 28px; background: var(--bg); min-width: 320px; }
+.ext h1 { font-size: 1.25rem; margin: 0 0 8px; }
+.x-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.x-head strong { font-size: 1.15rem; }
+.x-head .grow { flex: 1; }
+.x-page { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 10px 12px; margin-bottom: 14px; display: grid; gap: 8px; }
+.x-page p { margin: 0; }
+.x-stack { display: grid; gap: 14px; }
+.x-card { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 12px; display: grid; gap: 10px; }
+.x-card h2 { font-size: 1rem; margin: 0; }
+.x-recent { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.x-recent li { display: flex; gap: 8px; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.x-recent .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ext .pills { gap: 6px; }
+.ext .btn { min-height: 40px; padding: 6px 12px; }

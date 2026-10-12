@@ -8,7 +8,7 @@ import { describeError } from "../services/generation.js";
 const TWEET_URL = /^(?:https?:\/\/)?(?:www\.|mobile\.)?(?:x\.com|twitter\.com)\/[^/]+\/status\/\d+(?:[/?#].*)?$/i;
 
 export function createTweetForm({ platform, persist }) {
-  const tweetUrl = field({ id: "tweetUrl", label: "Tweet link", hint: "Paste the link and use “Fetch tweet” to read its text, or just paste the text below.", control: textInput({ placeholder: "https://x.com/username/status/123", inputmode: "url" }) });
+  const tweetUrl = field({ id: "tweetUrl", label: "Tweet link", required: null, hint: "Paste the link and use “Fetch tweet” to read its text, or just paste the text below.", control: textInput({ placeholder: "https://x.com/username/status/123", inputmode: "url" }) });
   const tweetContext = field({ id: "tweetContext", label: "", hint: "-", required: true, control: textArea({ rows: 4 }) });
   const tweetPoint = field({ id: "tweetPoint", label: "What do you want to say back?", required: null, hint: "Your point, angle or answer, in your own words: “agree, and add that…”, “push back on…”, “ask how they…”. Leave it blank and Cold writes a reply from the tweet alone.", control: textArea({ rows: 3, placeholder: "e.g. Agree, and mention we hit the same problem moving batch jobs" }) });
   const use = h("select", { id: "tweetUse" }, Object.entries(TWEET_USE).map(([k, label]) => h("option", { value: k === "auto" ? "" : k }, label)));
@@ -16,11 +16,7 @@ export function createTweetForm({ platform, persist }) {
   const kinds = Object.entries(TWEET_KINDS).map(([k, v]) => h("label", {}, h("input", { type: "radio", name: "tweetKind", value: k, id: `tk-${k}` }), v.label));
   const status = h("p", { class: "hint", id: "tweetStatus", role: "status" });
   const fetchBtn = button("Fetch tweet", { id: "fetchTweetBtn", onclick: () => fetchTweet() });
-  const linkRow = h("div", { class: "field", id: "tweetLinkRow" },
-    h("label", { for: "tweetUrl" }, "Tweet link ", h("span", { class: "opt" }, "Optional")),
-    h("p", { class: "hint", id: "tweetUrl-hint" }, "Paste the link and use “Fetch tweet” to read its text, or paste the text below."),
-    h("div", { class: "actions inline-input" }, tweetUrl.input, fetchBtn), h("p", { class: "field-error", id: "tweetUrl-err", hidden: true }), status);
-  tweetUrl.input.setAttribute("aria-describedby", "tweetUrl-hint tweetUrl-err tweetStatus");
+  const linkRow = h("div", { class: "form", id: "tweetLinkRow" }, tweetUrl, h("div", { class: "actions" }, fetchBtn), status);
   let author = "";
 
   const el = h("div", { class: "form", id: "socialGroup" },

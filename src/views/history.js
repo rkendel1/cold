@@ -17,7 +17,7 @@ export function mountHistory(root, { store, openRecord }) {
   root.append(
     h("div", { class: "view-head" },
       h("h1", { id: "history-title", tabindex: "-1" }, "History"),
-      h("p", { class: "lede" }, "Drafts you've generated and what you've recorded about them. Cold doesn't send email and can't see your inbox, so “Marked sent” and “Reply recorded” appear only when you set them. History is saved in this browser only, not backed up or synced.")),
+      h("p", { class: "lede" }, `Drafts you've generated and what you've recorded about them. Cold doesn't send email and can't see your inbox, so “Marked sent” and “Reply recorded” appear only when you set them. History is stored ${store.where()}; it isn't synced to other devices.`)),
     h("div", { class: "hfilters" }, filters, search), listHost);
 
   async function setStatus(e, st) {
@@ -49,7 +49,7 @@ export function mountHistory(root, { store, openRecord }) {
       const dates = [`Created ${fmtDate(e.createdAt)}`, e.sentAt && st !== "draft" ? `marked sent ${fmtDate(e.sentAt)}` : "", e.repliedAt && st === "replied" ? `reply recorded ${fmtDate(e.repliedAt)}` : ""].filter(Boolean).join(" · ");
       let armed = false;
       const del = button("Delete", { kind: "ghost danger", onclick: async () => {
-        if (!(await confirmDialog({ title: "Delete this draft?", body: "This removes it from History in this browser. It can't be undone.", confirmLabel: "Delete draft", danger: true }))) return;
+        if (!(await confirmDialog({ title: "Delete this draft?", body: `This removes it from History on ${store.whereFrom()}. It can't be undone.`, confirmLabel: "Delete draft", danger: true }))) return;
         if (S.current?.id === e.id) store.set({ current: null }, "current");
         store.deleteEmail(e.id).then(() => toast("Draft deleted")).catch(() => toast("Couldn't delete the draft."));
       } });

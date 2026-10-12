@@ -27,4 +27,16 @@ export const clear = el => { while (el.firstChild) el.removeChild(el.firstChild)
 export const $ = (s, r = document) => r.querySelector(s);
 export const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 export const fmtDate = ts => ts ? new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
-export const autosize = ta => { ta.style.height = "auto"; ta.style.height = ta.scrollHeight + "px"; };
+/**
+ * Grows a textarea to fit its text. It is not enough to measure once: a box measured while its view is hidden reads as 0
+ * tall, and a box measured at one width clips its text when the window later narrows. So it re-fits whenever its width changes.
+ */
+const fitted = new WeakSet();
+const fit = ta => { ta.style.height = "auto"; const h = ta.scrollHeight; if (h > 0) ta.style.height = `${h + (ta.offsetHeight - ta.clientHeight)}px`; };   // + borders: heights are border-box
+export const autosize = ta => {
+  fit(ta);
+  if (fitted.has(ta) || typeof ResizeObserver === "undefined") return;
+  fitted.add(ta);
+  let width = -1;
+  new ResizeObserver(() => { const w = ta.clientWidth; if (!w) { width = -1; return; } if (w !== width) { width = w; fit(ta); } }).observe(ta);   // 0 = hidden: forget the width so showing it again re-fits
+};

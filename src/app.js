@@ -23,12 +23,13 @@ export async function startApp(rootEl = document.getElementById("app")) {
   const links = [["compose", "Write"], ["knowledge", "Knowledge"], ["history", "History"], ["settings", "Settings"]].map(([r, label]) => h("a", { href: `#/${r}`, dataset: { route: r }, id: `nav-${r}` }, label));
   const settingsLink = links.find(a => a.dataset.route === "settings");
   settingsLink.hidden = true;   // shown once the server reports that Settings are enabled
+  const footer = h("footer", { class: "app-footer" });
   const notices = h("div", { id: "notices", class: "notices" });
   rootEl.append(
     h("a", { class: "skip", href: "#main" }, "Skip to content"),
     h("header", { class: "app-header" }, h("div", { class: "brand" }, "Cold"), h("nav", { class: "primary-nav", "aria-label": "Primary" }, links)),
     h("main", { id: "main", tabindex: "-1" }, notices, views.compose, views.knowledge, views.history, views.settings),
-    h("footer", { class: "app-footer" }, "Cold writes drafts; you send them. Products and drafts are saved in this browser only and are not backed up or synced to other devices."));
+    footer);
 
   const router = createRouter({ views, links });
   let compose, knowledge;
@@ -49,10 +50,11 @@ export async function startApp(rootEl = document.getElementById("app")) {
     S.warnings.forEach(w => notices.append(notice("warn", h("strong", {}, "Some saved data couldn't be read"), h("p", {}, w))));
     if (S.notice) notices.append(notice("info", S.notice));
   };
-  store.subscribe(t => { if (t === "ready" || t === "notice") renderNotices(); });
+  store.subscribe(t => { if (t === "ready" || t === "notice") renderNotices(); if (t === "ready") footer.textContent = `Cold writes drafts; you send them. Products and drafts ${S.backend === "sqlite" ? "are stored in the Cold app's database on this computer and are not synced to other devices." : "are saved in this browser only and are not backed up or synced to other devices."}`; });
 
   const boot = await platform.detect();
   store.start({ db: boot.db });
+  if (boot.warning) store.set({ notice: boot.warning }, "notice");
   store.set({ server: boot.server, sample: boot.sample, sampleState: boot.sampleState }, "server");
   settingsLink.hidden = !(boot.server && boot.server.settingsEnabled);
   compose.init(); knowledge.init(); history.init(); settings.init();

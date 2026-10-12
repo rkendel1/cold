@@ -4,11 +4,11 @@ import { parseLooseJson } from "../domain/email.js";
 
 const ACCESS_HEADER = "x-cold-access";
 
-export function createApi({ fetchImpl = (...a) => globalThis.fetch(...a), getAccess = () => "", getModel = () => undefined } = {}) {
+export function createApi({ fetchImpl = (...a) => globalThis.fetch(...a), getAccess = () => "", getModel = () => undefined, remote = false } = {}) {
   const headers = () => ({ "content-type": "application/json", accept: "application/json", ...(getAccess() ? { [ACCESS_HEADER]: getAccess() } : {}) });
 
   async function config() {
-    if (!/^https?:$/.test(globalThis.location?.protocol || "")) return null;
+    if (!remote && !/^https?:$/.test(globalThis.location?.protocol || "")) return null;
     try {
       const r = await fetchImpl("api/config", { headers: { accept: "application/json" } });
       if (!r.ok) return null;
@@ -32,6 +32,8 @@ export function createApi({ fetchImpl = (...a) => globalThis.fetch(...a), getAcc
   }
   const profile = url => settingsCall("api/profile", { method: "POST", body: JSON.stringify({ url }) });
   const tweet = url => settingsCall("api/tweet", { method: "POST", body: JSON.stringify({ url }) });
+  const getExtension = () => settingsCall("api/settings/extension");
+  const rotateExtension = () => settingsCall("api/settings/extension", { method: "POST" });
   const getSettings = () => settingsCall("api/settings");
   const saveSettings = patch => settingsCall("api/settings", { method: "PUT", body: JSON.stringify(patch) });
   const providerModels = id => settingsCall(`api/settings/models?provider=${encodeURIComponent(id)}`).then(d => d.models || []);
@@ -50,5 +52,5 @@ export function createApi({ fetchImpl = (...a) => globalThis.fetch(...a), getAcc
   }
   sample.json = async (prompt, opts) => parseLooseJson((await sample(prompt, opts)).text);
 
-  return { config, models, sample, profile, tweet, getSettings, saveSettings, providerModels };
+  return { config, models, sample, profile, tweet, getExtension, rotateExtension, getSettings, saveSettings, providerModels };
 }

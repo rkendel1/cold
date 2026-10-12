@@ -109,3 +109,28 @@ npm run desktop:build   # package a .dmg / installer into dist/
 Cold runs its own server inside the app on `127.0.0.1:47821` (override with `COLD_PORT`; saved drafts are tied to the port, so keep it stable).
 
 **Settings** (menu: Cold > Settings, or `Cmd/Ctrl+,`) lets you pick the provider and model and save API keys for Ollama, Anthropic, OpenAI, Google Gemini, OpenRouter, Groq, Mistral, Vercel AI Gateway, or any OpenAI-compatible server (LM Studio, vLLM, llama.cpp). Models are listed live from the provider. Keys are encrypted with the OS keychain (Electron `safeStorage`), saved in the app's data folder, and never sent back to the page. The same screen is available to a local `npm start` by setting `COLD_SETTINGS_FILE=/path/to/settings.json` (keys are then stored in that file, mode 0600). Hosted deployments leave it unset and keep using environment variables.
+
+## Where your data lives (SQLite)
+
+In the desktop app, products and drafts are stored in one SQLite file: `~/Library/Application Support/Cold/cold.db` on macOS (the path is also shown in Settings > Browser extension). It uses WAL mode, so you can copy it for a backup or open it with any SQLite tool, e.g. `sqlite3 cold.db "select recipient_name, status, subject from emails"`. Provider keys are *not* in this file; they are encrypted separately in `settings.json`.
+
+On first launch, anything already saved in the app's browser storage (the old localStorage data) is copied into SQLite once. The original browser data is left in place untouched.
+
+Outside the desktop app, Cold still uses browser storage unless you set `COLD_DB_FILE=/path/to/cold.db` (needs Node 22.13+). Hosted deployments never set it.
+
+## Browser extension
+
+The extension writes replies, tweets and cold emails from the page you are on, using your products and whichever model you picked in the app. It does not open the SQLite file itself (browsers can't); it talks to the running desktop app, which owns the database and the model keys.
+
+```
+npm run build:extension      # bundles extension/dist
+```
+
+Then in Chrome, Edge or Brave: `chrome://extensions` > turn on Developer mode > **Load unpacked** > choose the `extension/` folder. Click the Cold icon to open the side panel and paste the address and pairing code from **Cold > Settings > Browser extension**.
+
+- **Reply:** open a tweet, click *Read this page*, optionally say what you want to say back, and write. *Put it in the tweet box* types the draft into X's reply box; you press Reply yourself.
+- **Tweet:** describe what you want to say; the product you pick (with its X handle and website from Knowledge) is worked in.
+- **Email:** open a LinkedIn or X profile, click *Read this page*; Cold fills in who they are and suggests reasons they'd care.
+- Drafts are saved to the app, so they appear in its History within a few seconds.
+
+Security: the extension authenticates with the pairing code and can only read and write products and drafts, generate, and look up public profiles and tweets. It cannot read or change provider keys, the provider choice, or the code itself. Creating a new code in Settings disconnects it. It only talks to `127.0.0.1` / `localhost`, and it reads x.com, twitter.com and linkedin.com pages only when you click *Read this page*. Other websites and other browser extensions get nothing from the app's local server without the code.

@@ -13,7 +13,8 @@
     "build:tweet-counter": "esbuild scripts/tweet-counter.cjs --bundle --minify --outfile=public/tweet-counter.js",
     "desktop": "electron desktop/main.js",
     "desktop:build": "npm run build:app && electron-builder",
-    "desktop:pack": "npm run build:app && electron-builder --dir"
+    "desktop:pack": "npm run build:app && electron-builder --dir",
+    "build:extension": "node scripts/build-extension.cjs"
   },
   "engines": {
     "node": ">=18"

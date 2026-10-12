@@ -1,6 +1,8 @@
 // Detects where Cold is running: the Claude artifact runtime (window.claude) or a Cold server.
 import { createApi } from "./api.js";
 import { STORAGE_KEYS } from "../domain/constants.js";
+import { createRemoteDb } from "./sqliteDb.js";
+import { loadAll } from "../state/storage.js";
 
 const safeGet = (area, key) => { try { return area.getItem(key) || ""; } catch { return ""; } };
 const safeSet = (area, key, v) => { try { v ? area.setItem(key, v) : area.removeItem(key); } catch {} };
@@ -30,7 +32,15 @@ export function createPlatform() {
       }
       const server = await api.config();
       const sample = server && server.ready ? api.sample : null;
-      return { db: null, user: null, sample, server, sampleState: sample ? "ready" : server ? "noconfig" : "none" };
+      let db = null, warning = "";
+      if (server && server.dbEnabled) {
+        // Desktop app: products and drafts live in SQLite. Anything already in this browser's storage is copied in once.
+        try {
+          db = createRemoteDb({ headers: () => (settings.access ? { "x-cold-access": settings.access } : {}), readLocal: () => { const d = loadAll(globalThis.localStorage); return { products: d.products, emails: d.emails, settings: d.settings, compose: d.compose }; } });
+          await db.load();
+        } catch (e) { db = null; warning = "Couldn't open the Cold database, so this window is using browser storage. Restart the app; if it keeps happening, check the app's data folder."; }
+      }
+      return { db, user: null, sample, server, warning, sampleState: sample ? "ready" : server ? "noconfig" : "none" };
     },
   };
 }

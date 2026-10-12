@@ -111,6 +111,23 @@ test("generation: expected two-call API contract, editable draft, saved product 
   assert.deepEqual(t.errors, []); await t.close();
 });
 
+test("sentence boxes always show all their text, including after the window is resized or the view was hidden", { skip: SKIP }, async () => {
+  const t = await open({ seed: SEED }); const { page } = t;
+  await fillCompose(page); await generate(page);
+  const clipped = () => page.evaluate(() => ["eWhat", "eWhy", "eAsk"].filter(id => { const x = document.getElementById(id); return x.clientHeight < 30 || x.scrollHeight > x.clientHeight + 1; }));
+  assert.deepEqual(await clipped(), []);
+  await page.setViewportSize({ width: 380, height: 900 }); await page.waitForTimeout(250);
+  assert.deepEqual(await clipped(), [], "narrower window: text re-wraps and the boxes grow");
+  await page.setViewportSize({ width: 1300, height: 900 }); await page.waitForTimeout(250);
+  assert.deepEqual(await clipped(), [], "wider window");
+  // a box sized while its view is hidden (measures as 0 tall) must fix itself when the view is shown
+  await go(page, "history");
+  await page.evaluate(() => { const x = document.getElementById("eWhy"); x.style.height = "0px"; x.value += " and a bit more so that it needs another line to be shown in full"; x.dispatchEvent(new Event("input", { bubbles: true })); });
+  await go(page, "compose"); await page.waitForTimeout(250);
+  assert.deepEqual(await clipped(), []);
+  await t.close();
+});
+
 test("loading state: progress with Stop, button disabled, duplicate submission prevented", { skip: SKIP }, async () => {
   mock.delayMs = 600;
   const t = await open({ seed: SEED }); const { page } = t;
@@ -372,7 +389,7 @@ test("tweet mode: validation, generation, counter and copy", { skip: SKIP }, asy
   assert.equal(await page.isVisible("#emailGroup"), false);
   await page.fill("#tweetUrl", "https://example.com/nope"); await page.fill("#tweetContext", "Moving workloads is hard");
   await page.click("#genBtn");
-  assert.match(await page.textContent("#tweetUrl ~ .field-error"), /valid x\.com or twitter\.com status link/);
+  assert.match(await page.textContent("#tweetUrl-err"), /valid x\.com or twitter\.com status link/);
   await page.fill("#tweetUrl", "");
   await page.click("#genBtn"); await page.waitForSelector("#tweetDraft");
   assert.equal(await page.inputValue("#tweetDraft"), mock.tweet);

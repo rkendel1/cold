@@ -1,5 +1,6 @@
 // Single in-memory state container with topic subscriptions, plus persistence through a backend.
-// Backends: "local" (localStorage) or "db" (the Claude-artifact runtime). Views never touch storage directly.
+// Backends: "local" (localStorage), "db" (the Claude-artifact runtime) or "sqlite" (the desktop app's database, through
+// services/sqliteDb.js, which mimics the "db" interface). Views never touch storage directly.
 import { STORAGE_KEYS } from "../domain/constants.js";
 import { loadAll, writeJson } from "./storage.js";
 import { normalizeProduct } from "../domain/knowledge.js";
@@ -27,7 +28,7 @@ export function createStore({ storage = globalThis.localStorage, platform = null
   const emit = topic => listeners.forEach(fn => fn(topic, state));
   const set = (patch, topic) => { Object.assign(state, patch); emit(topic); };
 
-  let db = null;
+  let db = null, composeTimer = null;
   const serial = {};
   const queue = (key, fn) => (serial[key] = (serial[key] || Promise.resolve()).catch(() => {}).then(fn));
 
@@ -42,7 +43,8 @@ export function createStore({ storage = globalThis.localStorage, platform = null
 
     start(boot) {
       if (boot.db) {
-        db = boot.db; state.backend = "db";
+        db = boot.db; state.backend = db.kind || "db";
+        if (db.kind === "sqlite") state.compose = db.initialCompose;
         const fail = e => { if (e && e.code === "revoked") set({ notice: "Access to saved data ended. Reload to reconnect." }, "notice"); };
         db.collection("products").onSnapshot(snap => {
           const items = snap.docs.map(d => normalizeProduct({ ...d.data(), id: d.id })).filter(Boolean).sort((a, b) => (a.order ?? 99) - (b.order ?? 99) || String(a.name).localeCompare(b.name));
@@ -58,6 +60,10 @@ export function createStore({ storage = globalThis.localStorage, platform = null
       }
       emit("ready");
     },
+
+    /** Where saved data lives, in the words the UI uses. */
+    where: () => (state.backend === "sqlite" ? "on this computer" : "in this browser"),
+    whereFrom: () => (state.backend === "sqlite" ? "this computer" : "this browser"),
 
     productById: id => state.products.find(p => p.id === id),
 
@@ -100,6 +106,11 @@ export function createStore({ storage = globalThis.localStorage, platform = null
     /** Compose form values are a convenience; failing to save them must never interrupt the user. */
     saveCompose(form) {
       state.compose = form;
+      if (db && db.kind === "sqlite") {
+        clearTimeout(composeTimer);
+        composeTimer = setTimeout(() => { db.doc("compose/me").set(form).catch(() => {}); }, 600);
+        return;
+      }
       try { writeJson(STORAGE_KEYS.compose, form, storage); } catch {}
     },
   };

@@ -11,6 +11,7 @@ if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 
 // Must be set before server.js is loaded: it switches on the Settings screen and picks where keys are saved.
 process.env.COLD_SETTINGS_FILE = path.join(app.getPath("userData"), "settings.json");
+process.env.COLD_DB_FILE = path.join(app.getPath("userData"), "cold.db");   // products and drafts (SQLite)
 process.env.HOST = "127.0.0.1";
 
 let win = null;

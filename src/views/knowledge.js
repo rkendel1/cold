@@ -100,7 +100,7 @@ export function mountKnowledge(root, { store, navigate }) {
     const rows = (p.proof || []).map(x => ({ ...x }));
     const proofHost = h("div", { class: "form" });
     const readyHost = h("div", {});
-    const status = h("span", { class: "status", role: "status" }, p._new ? "Not saved yet" : "Saved in this browser");
+    const status = h("span", { class: "status", role: "status" }, p._new ? "Not saved yet" : `Saved ${store.where()}`);
     const saveBtn = h("button", { type: "submit", class: "btn primary", id: "kSave" }, "Save product");
 
     const read = () => {
@@ -187,7 +187,7 @@ export function mountKnowledge(root, { store, navigate }) {
       try {
         await store.saveProduct(rec);
         draftProduct = null; if (sel) { sel.id = rec.id; sel.dirty = false; }
-        status.textContent = "Saved in this browser"; toast(`${rec.name} saved`);
+        status.textContent = `Saved ${store.where()}`; toast(`${rec.name} saved`);
         renderList(); renderReady();
       } catch (err) {
         status.textContent = err && err.code === "quota_exceeded" ? "Not saved: browser storage is full. Delete old drafts in History, then save again." : "Not saved: browser storage is unavailable.";
@@ -201,7 +201,7 @@ export function mountKnowledge(root, { store, navigate }) {
 
   async function remove(p) {
     const unsaved = !S.products.some(x => x.id === p.id);
-    if (!unsaved && !(await confirmDialog({ title: `Delete ${p.name || "this product"}?`, body: "This removes the product and its proof from this browser. Drafts already in History keep their text.", confirmLabel: "Delete product", danger: true }))) return;
+    if (!unsaved && !(await confirmDialog({ title: `Delete ${p.name || "this product"}?`, body: `This removes the product and its proof from ${store.whereFrom()}. Drafts already in History keep their text.`, confirmLabel: "Delete product", danger: true }))) return;
     try {
       if (!unsaved) await store.deleteProduct(p.id);
       draftProduct = null; sel = null; toast(unsaved ? "Discarded" : "Product deleted");
