@@ -14,6 +14,16 @@ A focused cold-email generator. Give it five facts; it gives you an email worth 
 
 Cold never sends anything. Generate with AI, send yourself.
 
+## Three ways to use Cold, each on its own
+
+Cold runs on the web, as a desktop app, and as a browser extension. **Each is complete by itself; you never need to install the others.** Pairing them is an optional convenience that shares your products and drafts.
+
+- **Web only:** open the site. A model has to be set up on the server (the operator's provider key, or `.env` if you run it yourself). Your products and drafts stay in your browser.
+- **Desktop only:** install Cold Desktop, pick a provider in Settings, start writing. Everything is stored on your computer.
+- **Extension:** works alone with its own provider, or paired with the desktop app. If the app isn't installed or running, the extension tells you and keeps working.
+
+What each one needs, how optional pairing works, and the known limits are in [docs/standalone-surfaces.md](docs/standalone-surfaces.md).
+
 ## Running it
 
 Cold runs in two modes. The page picks the right one on its own.

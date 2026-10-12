@@ -235,3 +235,34 @@ test('extension paired with a running app: reads pages into the shared Write scr
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); await app.stop().catch(() => {}); app.db.close(); await model1.close(); }
 });
+
+test('extension paired to an app that then stops, with no model of its own: says so and what to do, and everything else keeps working; the app and its data are unaffected', { skip: SKIP, timeout: 180000 }, async () => {
+  const appModel = await mockModel();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-pairgone-'));
+  const app = await coldApp(appModel, dir);
+  const { ctx, panel, errors } = await launch(dir);
+  try {
+    // never paired: the extension is a complete app on its own and offers (does not demand) the connection
+    assert.match(await panel.textContent('#genHint'), /No provider is set up yet/);
+    await nav(panel, 'settings'); assert.match(await panel.textContent('#view-settings'), /Optional\. Everything works without the app/);
+    await panel.fill('#hubAddress', `127.0.0.1:${app.port}`); await panel.fill('#hubCode', app.token); await panel.click('#hubConnect');
+    await until(() => hubOnline(panel));
+    await nav(panel, 'write'); await until(async () => !/No provider is set up yet/.test(await panel.textContent('#genHint')));
+    // the app goes away: the extension explains the situation instead of just disabling Write
+    await app.stop();
+    await until(async () => !(await hubOnline(panel)));
+    await nav(panel, 'write');
+    await until(async () => /app you paired isn't running/.test(await panel.textContent('#genHint')));
+    assert.match(await panel.textContent('#genHint'), /Open the app to use its model, or open Settings and choose a model for this one/);
+    assert.equal(await panel.isDisabled('#genBtn'), true);
+    // products and history are unaffected by the missing connection
+    await nav(panel, 'knowledge'); await panel.click('#emptyAdd');
+    await panel.fill('#kName', 'Still Here'); await panel.fill('#kWhat', 'Still Here keeps working without the app.');
+    await panel.click('#kSave'); await panel.waitForFunction(() => /Saved/.test(document.querySelector('.status')?.textContent || ''));
+    await nav(panel, 'history'); await panel.waitForSelector('#view-history', { state: 'visible' });
+    // the app comes back with its own data intact, and receives what was made meanwhile
+    await app.start(); await until(() => hubOnline(panel));
+    await until(() => app.db.snapshot().products.some(p => p.name === 'Still Here'));
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); await app.stop().catch(() => {}); app.db.close(); await appModel.close(); }
+});

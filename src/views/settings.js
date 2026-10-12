@@ -121,7 +121,7 @@ export function mountSettings(root, { store, platform }) {
       const s = platform.snapshot().server, d = platform.backend && platform.backend.describe();
       clear(box); append(box, [
         s && s.ready ? h("p", {}, "This site writes with ", h("strong", {}, `${s.providerLabel || s.provider} · ${s.model}`), ", set up by whoever runs it. Provider keys stay on that server.")
-          : h("p", {}, h("strong", {}, "No model is set up on this server."), " Connect the Cold desktop app below to write with its model, or ask whoever runs this site to add a provider."),
+          : h("p", {}, h("strong", {}, "No model is set up on this server."), " Writing drafts needs one: whoever runs this site adds a provider key on the server (see the README), and your key never passes through this page. Optionally, you can borrow the Cold desktop app's model by connecting it below. Products, drafts and History work without either."),
         d && d.kind === "app" ? h("p", { class: "hint" }, `Right now drafts are written by ${d.label}.`) : null]);
     };
     paint(); platform.subscribe(paint);
@@ -211,7 +211,7 @@ export function mountSettings(root, { store, platform }) {
       const origins = h("textarea", { id: "webOrigins", rows: 3, "aria-label": "Allowed web apps", placeholder: "https://cold.example.com\nhttp://127.0.0.1:3000" }); origins.value = (info.webOrigins || []).join("\n");
       const originMsg = h("p", { class: "hint", role: "status" });
       box.append(
-        h("p", { class: "hint" }, "This app is the hub: it keeps your database and your model keys. The extension and web pages you allow keep their own copy, sync with it whenever it's running, and can use its model. They can read and write products and drafts and generate; they can never see your keys or these settings."),
+        h("p", { class: "hint" }, "Optional: Cold works fully without the extension or any web app. If you use them, this app is the hub: it keeps your database and your model keys. The extension and web pages you allow keep their own copy, sync with it whenever it's running, and can use its model. They can read and write products and drafts and generate; they can never see your keys or these settings."),
         field("App address", h("input", { type: "text", id: "extUrl", readonly: true, value: info.origin }), h("div", { class: "actions" }, copy("address", info.origin))),
         field("Pairing code", code, h("div", { class: "actions" }, show, copy("code", info.token), rotate)),
         field("Allowed web apps", origins, h("p", { class: "hint" }, "Web pages that may connect, one address per line (for example your hosted Cold site). They still need the pairing code. Remove a line to cut a page off."),

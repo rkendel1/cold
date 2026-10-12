@@ -202,12 +202,25 @@ export function mountCompose(root, { store, platform, navigate }) {
   }
   modelSelect.addEventListener("change", () => { platform.setModel(modelSelect.value); modelHint.textContent = modelSelect.value ? `Using ${modelSelect.value}. Model pricing varies.` : "Using the server default. Model pricing varies."; });
 
+  /** Why nothing can write yet, and the way out for THIS surface. Knowledge and History keep working either way. */
+  function noModelHint() {
+    const link = platform.hub && platform.hub.link.state;
+    if (S.server?.settingsEnabled) {
+      return link && link.conn && !link.online
+        ? "No model is set up here, and the Cold desktop app you paired isn't running. Open the app to use its model, or open Settings and choose a model for this one. Your products and drafts are still available."
+        : "No provider is set up yet. Open Settings to add a key or pick a local model.";
+    }
+    return link && link.conn && !link.online
+      ? "This site has no model of its own, and the Cold desktop app you paired isn't running. Open the app, or ask whoever runs this site to add a provider. Your products and drafts are still available."
+      : "This site has no model yet: whoever runs it adds a provider key on the server (the Cold desktop app can supply one instead; see Settings). Your products and drafts work meanwhile.";
+  }
+
   function renderGenHint() {
     const st = S.sampleState;
     genHint.textContent = S.busy ? "Writing your draft…"
       : st === "pending" ? "Connecting…"
       : st === "none" ? "Generation needs the Cold server (npm start) or the Claude app."
-      : st === "noconfig" ? (S.server?.settingsEnabled ? "No provider is set up yet. Open Settings to add a key or pick a local model." : "The server has no provider key yet. See “Connection and model”.")
+      : st === "noconfig" ? noModelHint()
       : st === "blocked" ? "Claude access was declined for this page. Reload to allow it."
       : "Takes a minute or less: a draft, then an editor pass. You can edit the result.";
     genBtn.disabled = S.busy || ["none", "blocked", "noconfig", "pending"].includes(st);
