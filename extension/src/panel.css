@@ -22,3 +22,11 @@ body.ext { margin: 0; padding: 14px 16px 28px; background: var(--bg); min-width:
 .ext .primary-nav { flex-wrap: wrap; }
 .ext main { padding: 0; }
 .ext .app-footer { font-size: var(--fs-sm); }
+
+/* Ask Cold / Browse With Me */
+.x-ask h2, .x-ask h3 { margin: 0 0 6px; }
+.x-ask h3 { margin-top: 14px; }
+.x-ask .ask-card { padding: 10px 12px; margin-top: 8px; border: 1px solid var(--line, #d8d8d8); border-radius: 8px; }
+.x-ask .ask-facts { margin: 2px 0 8px; padding-left: 18px; }
+.x-ask .ask-label { margin: 6px 0 2px; font-weight: 600; }
+.x-ask #bwmState { margin: 4px 0; font-weight: 600; }

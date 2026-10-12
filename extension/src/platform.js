@@ -25,9 +25,10 @@ export async function createExtensionPlatform() {
   const subs = new Set();
   const notify = () => subs.forEach(fn => fn());
   const ownCfg = () => resolveOwn(config);
+  const ownSample = directSample(ownCfg);
   const backend = createBackend({
     link, getConfig: () => config,
-    own: { ready: () => { const o = ownCfg(); return !!(o && o.ready); }, sample: directSample(ownCfg), label: () => { const o = ownCfg(); return `${o.label} · ${o.model}`; },
+    own: { ready: () => { const o = ownCfg(); return !!(o && o.ready); }, sample: ownSample, label: () => { const o = ownCfg(); return `${o.label} · ${o.model}`; },
       lookups: { tweet: url => lookups.lookupTweet(url, (...a) => fetch(...a)), profile: url => lookups.lookupProfile(url, (...a) => fetch(...a)) } },
   });
 
@@ -46,6 +47,8 @@ export async function createExtensionPlatform() {
     settings: { model: "", access: "" }, setAccess() {}, setModel() {}, savedModel: () => "",
     subscribe(fn) { subs.add(fn); return () => subs.delete(fn); },
     snapshot, backend,
+    /** The extension's OWN model connection (never the paired app's or a fallback): { cfg, sample }. cfg is null until a provider is saved. */
+    ownModel: () => ({ cfg: ownCfg(), sample: ownSample }),
     async refresh() { notify(); return snapshot(); },
     settingsApi: createSettingsApi({ getConfig: () => config, setConfig: c => { config = c; notify(); } }),
     hub: {
