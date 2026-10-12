@@ -1,6 +1,8 @@
 // Browser-side client for the app's SQLite database (served by the local Cold server).
 // It exposes the same small collection/doc/onSnapshot interface the store already uses for the Claude-app database, so the
 // store and every view are unchanged. Writes show up immediately, are saved to SQLite in order, and a write that fails is undone.
+import { mergeRecords, versionOf, conflictError } from "../domain/outreach.js";
+
 const POLL_MS = 3000;
 
 export function createRemoteDb({ fetchImpl = (...a) => globalThis.fetch(...a), headers = () => ({}), readLocal = () => null, poll = true, migrate = true } = {}) {
@@ -14,6 +16,7 @@ export function createRemoteDb({ fetchImpl = (...a) => globalThis.fetch(...a), h
     try { r = await fetchImpl(path, { ...init, headers: { "content-type": "application/json", accept: "application/json", ...headers(), ...(init.headers || {}) } }); }
     catch { throw { code: "storage_unavailable", message: "Couldn't reach the Cold app's database." }; }
     const data = await r.json().catch(() => ({}));
+    if (r.status === 409 && data.current) throw { code: "conflict", status: 409, current: data.current, message: (data.error && data.error.message) || "Changed somewhere else." };
     if (!r.ok) throw { code: "storage_unavailable", message: (data.error && data.error.message) || "Couldn't save." };
     return data;
   }
@@ -60,7 +63,8 @@ export function createRemoteDb({ fetchImpl = (...a) => globalThis.fetch(...a), h
       try {
         const res = await save();
         if (res.version !== version + 1) await refresh(); else version = res.version;   // someone else wrote in between: re-read
-      } catch (e) { undo(); notify(which); throw e; }
+        return res;
+      } catch (e) { if (e && e.code === "conflict" && e.current) cache[which].set(e.current.id, e.current); else undo(); notify(which); throw e; }   // a conflict shows the newer stored record, not the stale one
     });
     queue.tail = job;
     return job;
@@ -92,9 +96,35 @@ export function createRemoteDb({ fetchImpl = (...a) => globalThis.fetch(...a), h
       // Form scratch space: saved quietly, never re-read by other windows.
       set: data => { cache.compose = { ...data }; return call("api/data/compose", { method: "PUT", body: JSON.stringify(data) }).then(() => {}); },
     };
+    const url = `api/data/${name}/${encodeURIComponent(id)}`;
+    const baseQ = expected => (expected === undefined ? "" : `?base=${expected === null ? "new" : expected}`);
+    /**
+     * Save `data`. With `{ expected, base }` the save is conditional on the stored record still being at version `expected`
+     * (null: a new record); `base` is the copy that version had. If it moved on, a change to different fields is merged and
+     * retried, and a change to the same field is refused with a "conflict" error that carries both versions.
+     */
+    async function put(data, { expected, base = null } = {}) {
+      let body = data, exp = expected, was = base;
+      for (let tries = 0; ; tries++) {
+        try { return { ...(await call(url + baseQ(exp), { method: "PUT", body: JSON.stringify(body) })), record: body }; }
+        catch (e) {
+          if (!e || e.code !== "conflict" || exp === undefined) throw e;
+          const m = tries < 3 ? mergeRecords(was, body, e.current) : { conflicts: ["(busy)"] };
+          if (m.conflicts.length) throw { ...conflictError(m.conflicts, data, e.current), status: 409 };
+          was = e.current; body = m.record; exp = versionOf(e.current);
+        }
+      }
+    }
     return {
-      set: data => { const prev = cache[name].get(id); return write(() => cache[name].set(id, { ...data, id }), () => (prev ? cache[name].set(id, prev) : cache[name].delete(id)), () => call(`api/data/${name}/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(data) }), name); },
-      delete: () => { const prev = cache[name].get(id); return write(() => cache[name].delete(id), () => prev && cache[name].set(id, prev), () => call(`api/data/${name}/${encodeURIComponent(id)}`, { method: "DELETE" }), name); },
+      set: (data, opts = {}) => {
+        const prev = cache[name].get(id);
+        return write(() => cache[name].set(id, { ...data, id }), () => (prev ? cache[name].set(id, prev) : cache[name].delete(id)), async () => {
+          const res = await put(data, opts);
+          if (res.updatedAt !== undefined) { cache[name].set(id, { ...res.record, id, updatedAt: res.updatedAt }); notify(name); }
+          return res;
+        }, name).then(res => ({ updatedAt: res && res.updatedAt }));
+      },
+      delete: (opts = {}) => { const prev = cache[name].get(id); return write(() => cache[name].delete(id), () => prev && cache[name].set(id, prev), () => call(url + baseQ(opts.expected), { method: "DELETE" }), name); },
     };
   }
 

@@ -301,7 +301,7 @@ export function mountCompose(root, { store, platform, navigate }) {
 
   async function undo() {
     if (!S.undo || !S.current) return;
-    const rec = S.undo.rec;
+    const rec = { ...S.undo.rec, updatedAt: S.current.updatedAt };   // restoring over the version this client just saved
     store.set({ current: rec, undo: null }, "current");
     try { await store.saveEmail(rec); } catch { toast("Restored, but couldn't save."); }
     pane.invalidate(); renderAll();

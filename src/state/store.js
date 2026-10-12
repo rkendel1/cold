@@ -4,7 +4,8 @@
 import { STORAGE_KEYS } from "../domain/constants.js";
 import { loadAll, writeJson } from "./storage.js";
 import { normalizeProduct } from "../domain/knowledge.js";
-import { normalizeEmail } from "./storage.js";
+import { normalizeEmail, readJson } from "./storage.js";
+import { versionOf, nextVersion, reconcileSave } from "../domain/outreach.js";
 
 export { uid } from "../domain/ids.js";
 
@@ -34,11 +35,15 @@ export function createStore({ storage = globalThis.localStorage, platform = null
   const serial = {};
   const queue = (key, fn) => (serial[key] = (serial[key] || Promise.resolve()).catch(() => {}).then(fn));
 
-  function persistLocal() {
-    writeJson(STORAGE_KEYS.products, state.products, storage);
-    writeJson(STORAGE_KEYS.emails, state.emails, storage);
-    writeJson(STORAGE_KEYS.settings, state.settings, storage);
+  // Each save writes only the key it changes. Emails are never written from this tab's in-memory list (see saveEmail), so a
+  // product or settings save can't put back a stale copy of the drafts.
+  function persistLocal(which) {
+    if (which === "products") writeJson(STORAGE_KEYS.products, state.products, storage);
+    else if (which === "settings") writeJson(STORAGE_KEYS.settings, state.settings, storage);
   }
+  /** The stored drafts exactly as saved (including entries this client can't read), plus a refresh of the in-memory copy. */
+  const storedEmails = () => { const v = readJson(STORAGE_KEYS.emails, [], storage).value; return Array.isArray(v) ? v : []; };
+  const adoptEmails = list => { state.emails = list.map(x => normalizeEmail(x)).filter(Boolean); };
 
   const api = {
     state, subscribe, set, emit,
@@ -80,34 +85,51 @@ export function createStore({ storage = globalThis.localStorage, platform = null
       const prev = state.products;
       const i = prev.findIndex(x => x.id === p.id);
       state.products = i >= 0 ? prev.map((x, j) => (j === i ? body : x)) : [...prev, body];
-      try { persistLocal(); } catch (e) { state.products = prev; throw e; }
+      try { persistLocal("products"); } catch (e) { state.products = prev; throw e; }
       emit("products");
     },
     async deleteProduct(id) {
       if (db) return queue("p/" + id, () => db.doc("products/" + id).delete());
       const prev = state.products; state.products = prev.filter(p => p.id !== id);
-      try { persistLocal(); } catch (e) { state.products = prev; throw e; }
+      try { persistLocal("products"); } catch (e) { state.products = prev; throw e; }
       emit("products");
     },
+    /**
+     * Save one draft. The version it was based on (`e.updatedAt`, or what this client last saw) travels with the save, so a save
+     * based on an old copy can't overwrite a newer one: changes to different fields are merged, a change to the SAME field is
+     * refused with a `conflict` error ({ conflicts, mine, current }) and the stored record is left as it is. On success `e.updatedAt`
+     * is set to the saved version.
+     */
     async saveEmail(e) {
+      const seen = state.emails.find(x => x.id === e.id);
+      const expected = Number.isFinite(e.updatedAt) ? e.updatedAt : seen ? versionOf(seen) : null;
+      const base = seen && versionOf(seen) === expected ? seen : null;
       const body = JSON.parse(JSON.stringify(e)); body.updatedAt = Date.now();
-      if (db) { const { id, ...rest } = body; return queue("e/" + e.id, () => db.doc("emails/" + e.id).set(rest)); }
-      const prev = state.emails;
-      const i = prev.findIndex(x => x.id === e.id);
-      state.emails = i >= 0 ? prev.map((x, j) => (j === i ? body : x)) : [body, ...prev];
-      try { persistLocal(); } catch (err) { state.emails = prev; throw err; }
+      if (db) {
+        const { id, ...rest } = body;
+        return queue("e/" + e.id, async () => { const r = await db.doc("emails/" + e.id).set(rest, { expected, base }); e.updatedAt = r && Number.isFinite(r.updatedAt) ? r.updatedAt : body.updatedAt; });
+      }
+      // Local storage: change just this record in what is stored NOW (another tab may have saved since this one loaded).
+      const list = storedEmails(), i = list.findIndex(x => x && x.id === e.id), stored = i >= 0 ? list[i] : null;
+      const out = reconcileSave({ base, mine: body, stored, expected });
+      if (!out.ok) { adoptEmails(list); emit("emails"); throw out.error; }
+      const rec = { ...out.record, updatedAt: nextVersion(stored) };
+      writeJson(STORAGE_KEYS.emails, i >= 0 ? list.map((x, j) => (j === i ? rec : x)) : [rec, ...list], storage);
+      adoptEmails(i >= 0 ? list.map((x, j) => (j === i ? rec : x)) : [rec, ...list]);
+      e.updatedAt = rec.updatedAt;
       emit("emails");
     },
     async deleteEmail(id) {
-      if (db) return queue("e/" + id, () => db.doc("emails/" + id).delete());
-      const prev = state.emails; state.emails = prev.filter(e => e.id !== id);
-      try { persistLocal(); } catch (e) { state.emails = prev; throw e; }
+      if (db) { const seen = state.emails.find(x => x.id === id); return queue("e/" + id, () => db.doc("emails/" + id).delete({ expected: seen ? versionOf(seen) : undefined })); }
+      const list = storedEmails().filter(x => !(x && x.id === id));
+      writeJson(STORAGE_KEYS.emails, list, storage);
+      adoptEmails(list);
       emit("emails");
     },
     async saveSettings(s) {
       const prev = state.settings; state.settings = { ...prev, ...s };
       if (db) return queue("settings", () => db.doc("settings/me").set(state.settings)).finally(() => emit("settings"));
-      try { persistLocal(); } catch (e) { state.settings = prev; throw e; }
+      try { persistLocal("settings"); } catch (e) { state.settings = prev; throw e; }
       emit("settings");
     },
     /** Compose form values are a convenience; failing to save them must never interrupt the user. */

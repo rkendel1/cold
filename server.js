@@ -266,13 +266,17 @@ async function dataRoute(req, res, url) {
     if (req.method === "POST" && parts[0] === "import") {
       return send(res, 200, appDb.importOnce(JSON.parse(await readBody(req, 16 * 1024 * 1024))));
     }
-    if (req.method === "DELETE" && parts.length === 2) { appDb.remove(parts[0], decodeURIComponent(parts[1])); return send(res, 200, { ok: true, version: appDb.version }); }
+    // ?base=<updatedAt the caller last saw> (or "new") makes a write conditional: if the stored record moved on, nothing is written and the 409 carries it.
+    const bq = url.searchParams.get("base"), base = bq === null ? undefined : bq === "new" ? "new" : /^\d{1,16}$/.test(bq) ? Number(bq) : NaN;
+    if (Number.isNaN(base)) return send(res, 400, { error: { message: "Bad request." } });
+    if (req.method === "DELETE" && parts.length === 2) { appDb.remove(parts[0], decodeURIComponent(parts[1]), { base }); return send(res, 200, { ok: true, version: appDb.version }); }
     if (req.method === "PUT" && (parts.length === 1 || parts.length === 2)) {
       const doc = JSON.parse(await readBody(req, 600 * 1024));
-      if (parts.length === 2) appDb.put(parts[0], decodeURIComponent(parts[1]), doc); else appDb.putMeta(parts[0], doc);
-      return send(res, 200, { ok: true, version: appDb.version });
+      const saved = parts.length === 2 ? appDb.put(parts[0], decodeURIComponent(parts[1]), doc, { base }) : (appDb.putMeta(parts[0], doc), {});
+      return send(res, 200, { ok: true, version: appDb.version, ...saved });
     }
   } catch (e) {
+    if (e.code === "conflict") return send(res, 409, { error: { code: "conflict", message: e.message }, current: e.current });
     return send(res, e.status || (e instanceof SyntaxError ? 400 : 500), { error: { message: e.status ? e.message : e instanceof SyntaxError ? "Bad request." : "Couldn't save." } });
   }
   return send(res, 404, { error: { message: "Not found" } });

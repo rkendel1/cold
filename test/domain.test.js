@@ -133,7 +133,7 @@ test("storage: malformed values never throw, nothing is deleted, valid items sur
   const mixed = mem({ "cold.products": JSON.stringify([null, { id: "ok", name: "N", what: "w" }, 5]), "cold.emails": JSON.stringify([{ id: "e1", status: "weird", recipient: null }, { nope: 1 }]) });
   const m = loadAll(mixed);
   assert.equal(m.products.length, 1); assert.equal(m.emails.length, 1);
-  assert.equal(m.emails[0].status, "draft"); assert.equal(m.emails[0].recipient.name, "");
+  assert.equal(m.emails[0].status, "weird", "an unfamiliar status is kept, not downgraded"); assert.equal(m.emails[0].recipient.name, "");
   assert.equal(readJson("k", 7, { getItem() { throw new Error("denied"); } }).value, 7);
   assert.equal(normalizeEmail({ id: "e", status: "replied" }).status, "replied");
   assert.throws(() => writeJson("k", {}, { setItem() { const e = new Error("full"); e.name = "QuotaExceededError"; throw e; } }), { code: "quota_exceeded" });

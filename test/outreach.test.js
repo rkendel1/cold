@@ -38,10 +38,11 @@ test('filters, counts and search return the right records and tolerate missing f
     { id: 'd', createdAt: 1, status: 'weird-old-value', recipient: {} },            // very old / odd record
     rec({ id: 't', mode: 'reply', status: 'sent', recipient: { name: 'Tweet reply' }, what: 'Nice point.', why: '', ask: '' }),
   ];
-  assert.deepEqual(countByStatus(all), { all: 5, draft: 2, sent: 2, replied: 1 });                 // unknown status reads as draft
+  assert.deepEqual(countByStatus(all), { all: 5, draft: 1, sent: 2, replied: 1, unknown: 1 });       // an unfamiliar status is counted as unknown, not as draft
   assert.deepEqual(filterOutreach(all, { status: 'sent' }).map(e => e.id), ['b', 't']);
   assert.deepEqual(filterOutreach(all, { status: 'replied' }).map(e => e.id), ['c']);
-  assert.deepEqual(filterOutreach(all, { status: 'draft' }).map(e => e.id), ['a', 'd']);
+  assert.deepEqual(filterOutreach(all, { status: 'draft' }).map(e => e.id), ['a']);
+  assert.deepEqual(filterOutreach(all, { status: 'unknown' }).map(e => e.id), ['d']);
   assert.deepEqual(filterOutreach(all, { query: 'cy@diaz' }).map(e => e.id), ['c']);               // search by email, even with no name
   assert.deepEqual(filterOutreach(all, { query: 'pricing' }).map(e => e.id), ['c']);               // and by note
   assert.deepEqual(filterOutreach(all, { status: 'sent', query: 'bo' }).map(e => e.id), ['b']);
@@ -59,5 +60,6 @@ test('older records load unchanged; notes and the sent copy are kept; nothing is
   assert.deepEqual([full.note, full.sentCopy, full.repliedAt], ['Good fit: wrote about trials', { subject: 's', text: 'body', at: 7 }, 8]);
   assert.equal(normalizeEmail({ id: 'x', sentCopy: 'garbage' }).sentCopy, undefined);
   assert.equal(normalizeEmail({ id: 'y', sentCopy: [1, 2] }).sentCopy, undefined);
-  assert.equal(normalizeEmail({ id: 'z', recipient: null, status: 7 }).status, 'draft');
+  assert.equal(normalizeEmail({ id: 'z', recipient: null }).status, 'draft');   // a MISSING status keeps the legacy default
+  assert.equal(normalizeEmail({ id: 'z', recipient: null, status: 7 }).status, 7);   // an unfamiliar one is kept
 });
