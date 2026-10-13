@@ -40,6 +40,8 @@ This recommendation is derived only from the evidence in this audit. **Remaining
 | C5 | Tell the user when SQLite rows can't be read; document backup | DATA-008, DATA-009 (backup text) | Test with a corrupt row shows the notice; `getting-started` backup step verified by a restore |
 | C6 | Pilot protocol: who, how many, what is measured, consent | `docs/validation/` | Plan executed and results reported with denominators |
 
+**Status after the pilot-readiness PR:** C1 (CI) is built but not yet run on GitHub; C2 (flake) root cause fixed, stability evidence in [08](08-test-and-verification-report.md); C3 (security contact) written, **needs the owner's repository setting**; C4 done (CX-002, CX-004); C5 done (DATA-008 notice; backup procedure, tested at the database layer); C6 (pilot protocol) not done. A green CI run does not by itself make the pilot ready: real-model validation (QUALITY-008), the pilot protocol, and the owner-dependent security route remain separate evidence.
+
 ### Phase 1: Beta (weeks)
 
 | # | Item | Findings | Exit criterion |

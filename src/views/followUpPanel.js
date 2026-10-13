@@ -2,7 +2,7 @@
 // snooze, clear, and add it to your own calendar. Cold only reminds: it never sends a follow-up, and it can't see whether you did.
 import { h, clear } from "../components/dom.js";
 import { button } from "../components/ui.js";
-import { followUpState, normalizeFollowUpSettings, nextDue, fmtDue, toLocalInput, fromLocalInput, setDue, snooze, completeFollowUp, followUpIcs } from "../domain/followup.js";
+import { followUpState, unsentGuidance, normalizeFollowUpSettings, nextDue, fmtDue, toLocalInput, fromLocalInput, setDue, snooze, completeFollowUp, followUpIcs } from "../domain/followup.js";
 
 function downloadIcs(name, text) {
   const url = URL.createObjectURL(new Blob([text], { type: "text/calendar;charset=utf-8" }));
@@ -24,6 +24,8 @@ export function followUpPanel({ getRec, getSettings, apply, announce = () => {} 
     else if (st === "finished") line.textContent = `All ${f.count} follow-up${f.count === 1 ? "" : "s"} done. Set another date below if you want one more.`;
     else line.textContent = f.off ? "No follow-up for this draft." : s.enabled ? "No follow-up yet. One is set when you copy this or open it in your email app." : "Follow-ups are off in Settings. You can still set a date for this one.";
     clear(el).append(line);
+    const unsent = unsentGuidance(rec);
+    if (unsent) el.append(h("p", { class: "hint fu-unsent", id: `fuUnsent-${rec.id}` }, unsent));
     if (st === "stopped") return;
     const when = h("input", { type: "datetime-local", class: "fu-when", "aria-label": "Follow-up date and time", value: toLocalInput(f.due != null ? f.due : nextDue(rec, s)) });
     const row = h("div", { class: "actions" }, when,

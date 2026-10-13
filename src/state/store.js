@@ -2,6 +2,7 @@
 // Backends: "local" (localStorage), "db" (the Claude-artifact runtime) or "sqlite" (the desktop app's database, through
 // services/sqliteDb.js, which mimics the "db" interface). Views never touch storage directly.
 import { normalizeFollowUpSettings } from "../domain/followup.js";
+import { normalizeFirstRun } from "../domain/firstRun.js";
 import { STORAGE_KEYS } from "../domain/constants.js";
 import { loadAll, writeJson } from "./storage.js";
 import { normalizeProduct } from "../domain/knowledge.js";
@@ -18,7 +19,7 @@ export function createStore({ storage = globalThis.localStorage, platform = null
     ready: false,
     backend: "local",
     storage: "",             // "sheets" when leads and outreach are kept in a Google Sheet
-    products: [], emails: [], leads: [], settings: { signature: "", signoffProduct: true, emailApp: "mailto", gmailAccount: "", followUp: normalizeFollowUpSettings() },
+    products: [], emails: [], leads: [], settings: { signature: "", signoffProduct: true, emailApp: "mailto", gmailAccount: "", followUp: normalizeFollowUpSettings(), firstRun: "" },
     compose: null,           // last compose form values (persisted)
     current: null,           // draft shown in Compose
     undo: null,              // { id, rec } snapshot taken before an Improve
@@ -51,25 +52,32 @@ export function createStore({ storage = globalThis.localStorage, platform = null
   const storedEmails = () => { const v = readJson(STORAGE_KEYS.emails, [], storage).value; return Array.isArray(v) ? v : []; };
   const adoptEmails = list => { state.emails = list.map(x => normalizeEmail(x)).filter(Boolean).sort(compareEmails); };
 
+  /** A database can report rows it couldn't read (SQLite does); keep the notice in step as the database changes, so it clears once the cause is fixed. */
+  const syncWarnings = () => { const w = db && db.warnings ? [...db.warnings] : null; if (w && JSON.stringify(w) !== JSON.stringify(state.warnings)) set({ warnings: w }, "notice"); };
   let unsubs = [];
   /** Point the store at a database: show what it holds now and follow its changes. */
   function attach(next) {
     db = next; state.backend = db.kind || "db"; state.storage = db.storage || "";
     if (db.initialCompose !== undefined) state.compose = db.initialCompose;   // stores that keep the form (SQLite, web replica)
-    if (db.warnings && db.warnings.length) state.warnings = db.warnings;
+    if (db.warnings) state.warnings = [...db.warnings];
     const fail = e => { if (e && e.code === "revoked") set({ notice: "Access to saved data ended. Reload to reconnect." }, "notice"); };
     unsubs = [
       db.collection("products").onSnapshot(snap => {
         const items = snap.docs.map(d => normalizeProduct({ ...d.data(), id: d.id })).filter(Boolean).sort(compareProducts);
-        set({ products: items, ready: true }, "products");
+        set({ products: items, ready: true }, "products"); syncWarnings();
       }, fail),
       db.collection("leads").onSnapshot(snap => {
-        set({ leads: snap.docs.map(d => normalizeLead({ ...d.data(), id: d.id })).filter(Boolean).sort(compareLeads) }, "leads");
+        set({ leads: snap.docs.map(d => normalizeLead({ ...d.data(), id: d.id })).filter(Boolean).sort(compareLeads) }, "leads"); syncWarnings();
       }, fail),
       db.collection("emails").orderBy("createdAt", "desc").limit(500).onSnapshot(snap => {
-        set({ emails: snap.docs.map(d => normalizeEmail({ ...d.data(), id: d.id })).filter(Boolean) }, "emails");
+        set({ emails: snap.docs.map(d => normalizeEmail({ ...d.data(), id: d.id })).filter(Boolean) }, "emails"); syncWarnings();
       }, fail),
-      db.doc("settings/me").onSnapshot(snap => { if (snap.exists) set({ settings: { ...state.settings, signature: String(snap.data().signature || ""), signoffProduct: snap.data().signoffProduct !== false, emailApp: emailApp(snap.data().emailApp), gmailAccount: emailAccount(snap.data().gmailAccount), followUp: normalizeFollowUpSettings(snap.data().followUp) } }, "settings"); }, fail),
+      // The database notifies every listener on any change, so only announce settings when they really changed: Write rebuilds the open draft on this topic, which would wipe its on-screen messages (e.g. "Cold hasn't sent anything") after any unrelated save.
+      db.doc("settings/me").onSnapshot(snap => {
+        if (!snap.exists) return;
+        const d = snap.data(), next = { ...state.settings, signature: String(d.signature || ""), signoffProduct: d.signoffProduct !== false, emailApp: emailApp(d.emailApp), gmailAccount: emailAccount(d.gmailAccount), followUp: normalizeFollowUpSettings(d.followUp), firstRun: normalizeFirstRun(d.firstRun) };
+        if (JSON.stringify(next) !== JSON.stringify(state.settings)) set({ settings: next }, "settings");
+      }, fail),
     ];
   }
 
@@ -82,7 +90,7 @@ export function createStore({ storage = globalThis.localStorage, platform = null
      */
     switchLibrary(next) {
       unsubs.forEach(off => { try { off(); } catch { /* ignore */ } });
-      Object.assign(state, { products: [], emails: [], leads: [], current: null, undo: null, settings: { signature: "", signoffProduct: true, emailApp: "mailto", gmailAccount: "", followUp: normalizeFollowUpSettings() } });
+      Object.assign(state, { products: [], emails: [], leads: [], current: null, undo: null, settings: { signature: "", signoffProduct: true, emailApp: "mailto", gmailAccount: "", followUp: normalizeFollowUpSettings(), firstRun: "" } });
       attach(next); emit("ready");
     },
 

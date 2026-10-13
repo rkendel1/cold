@@ -71,6 +71,42 @@ Linux 6.18 (container, no display, no DBus), Node v22.22.0, npm, Chromium 1194 f
 
 `node scripts/audit-links.cjs` checks every relative Markdown link and `#anchor` in `README.md` and `docs/**/*.md`. **Result: 145 relative links in 41 files, 0 problems** (run after all documents were written; broken links reported by an earlier run were links to documents not yet written). External `https://` links were **not** checked (no network). A second check confirmed that every finding ID cited in any document exists in [11](11-remediation-backlog.md) (below).
 
+## Pilot-readiness PR (`feat/cold-pilot-readiness`): actual results
+
+Environment as above (no display, no `xvfb-run`, no network to GitHub, so **the CI workflow has not been executed on GitHub**). Counts are from the runner's own summary.
+
+| Check | Result |
+|---|---|
+| `npm run build:app`, `npm run build:extension`, `npm run check:app` | all succeeded (`check:app` exit 0) |
+| `node scripts/audit-links.cjs` | **157 relative links in 42 files, 0 problems** |
+| `npm ci --dry-run` | resolves from the committed lockfile (a dry run only: a real `npm ci` was not run) |
+| **Five consecutive full runs** of `node --test test/*.test.js` (sequential, extension built, nothing else running) | every run identical: **354 tests, 348 pass, 5 fail, 1 skipped**. **No run was fully green** because the same 5 environment-blocked tests fail each time (below). **Zero extension or other flaky failures in 5 of 5 runs.** This is five clean runs of everything that can run here, **not ten**, and not a green CI run |
+| The 5 failures (all five runs) | `desktop: the page can open a valid mailto draft…` (Electron cannot launch: no display or DBus) and four `side panel:` layout tests (`headed browser without an X server`). **They have never been seen passing in this environment**; they are included in the CI job under `xvfb-run` |
+| The 1 skip | `REAL MODEL: set up from the pinned revision…` (`BLOCKED, not passed: not requested`; needs `COLD_REAL_MODEL=1` and a real model). `scripts/ci-check-skips.cjs` run on the real TAP report: **354 results, 1 skipped, 0 unexpected, exit 0** |
+| CI acceptance 2 (a failing test fails the run) | demonstrated: an intentionally failing test file makes `node --test` exit 1 |
+| CI acceptance 3 (a missing prerequisite fails rather than skips) | demonstrated with `CI=true`: removing `extension/dist` fails `prerequisite: the extension is built`; `CHROMIUM=/nonexistent` fails `a Chromium build is installed`; no `$DISPLAY` fails the display prerequisite. Without `CI`, the same checks only print what is missing. The skip auditor was shown to exit 1 on a report with a silent skip and 0 on a clean one |
+| `CI=true` prerequisite tests in this environment | 6 pass, **1 fails (no display)**: so a CI-mode run here is correctly red |
+
+### The pairing flake: diagnosis and evidence
+
+* **Reproduced under load** (6 concurrent runs of the pairing test plus 4 CPU burners, 4 cores): 2 of 6 failed, then 5 of 6 failed after only the test's read was changed to wait. Failure: `Opened a Gmail compose tab` matched `''`.
+* A `MutationObserver` on the page showed the message appearing at about 1.2–3.3 s and **being emptied 100–160 ms later in every failing run**. So the message was never reliably there: the test only passed when it happened to read inside that window.
+* **Product cause.** After "Open in email", Write records the handoff (a save). In paired mode every save made the replica notify all listeners including settings; the store re-announced unchanged settings; Write rebuilds the whole draft card on a settings notice, wiping on-screen messages such as "Cold hasn't sent anything". Introduced by this project's follow-up handoff recording, not by the test.
+* **Fix.** The store announces settings only when they actually changed. The test now waits on the condition (`expectText`, `until` with `what`/`observe` diagnostics) **and** asserts the message is still present after the handoff is saved and a 500 ms settle window.
+* **After the fix:** the same 6-concurrent-runs-under-load experiment passed **6 of 6** (one round only; not proof of stability), and 5 of 5 sequential full runs had no extension failure.
+
+### New and changed tests (all pass in the runs above)
+
+`test/error-visibility.test.js` (5), `test/sqlite-unreadable.test.js` (5), `test/db-backup.test.js` (5), `test/first-run.test.js` (9: 2 domain, 7 browser incl. axe light/dark), `test/00-ci-prerequisites.test.js` (7), additions to `test/followup.test.js`, `test/standalone.test.js` (375 px), `test/e2e.test.js` (errors, unreadable rows, unsent-draft guidance), `test/extension.test.js` (message persists, diagnostics). Two vacuous tests that asserted `true` were deleted.
+
+### Two regressions this PR's own work caused, caught by existing tests
+
+My first first-run design wrote a marker setting; in web mode a settings write rewrites every stored list. The existing `malformed localStorage…` test failed (a damaged store was clobbered on page load) and then `switching libraries never merges or destroys…` failed (the standalone library was rewritten when a library arrived). The checklist now writes nothing; see [11](11-remediation-backlog.md), QUALITY-012.
+
+### Still not verified
+
+CI on GitHub; the five display-dependent tests; ten consecutive runs; the Electron quit → backup → restore workflow on a real OS (the database-layer behaviour is tested); real model quality; real Google; packaged installers; manual accessibility; the five-unassisted-users, ten-minute first-draft target (human validation); the pilot protocol; GitHub private vulnerability reporting (an owner setting).
+
 ## Reproducing
 
 ```sh

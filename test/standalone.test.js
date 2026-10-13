@@ -18,8 +18,8 @@ const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "cold-solo-"));
 const NO_KEY = { ANTHROPIC_API_KEY: "" };
 
 /** A fresh browser profile pointed at `server`. Records every request so a test can show nothing else was contacted. */
-async function open(server, { seed } = {}) {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+async function open(server, { seed, viewport = { width: 1280, height: 900 } } = {}) {
+  const context = await browser.newContext({ viewport });
   const page = await context.newPage();
   const errors = [], hosts = new Set();
   page.on("pageerror", e => errors.push(String(e)));
@@ -74,7 +74,7 @@ test("web only, server without a provider: says who must add one, and everything
   const srv = await env.startColdServer({ mockUrl: mock.url, env: NO_KEY });
   const t = await open(srv); const { page } = t;
   try {
-    assert.match(await page.textContent("#genHint"), /whoever runs it adds a provider key on the server/);
+    assert.match(await page.textContent("#genUnavailable"), /Why: this site has no AI model connected/);
     assert.equal(await page.isDisabled("#genBtn"), true);
     await addProductInKnowledge(page, "Offline Writer");
     await page.reload(); await page.waitForSelector("#genBtn", { state: "attached" });
@@ -82,6 +82,29 @@ test("web only, server without a provider: says who must add one, and everything
     await go(page, "history"); assert.equal(await page.locator(".hrow").count(), 0);
     await go(page, "settings"); assert.match(await page.textContent("#view-settings"), /whoever runs this site adds a provider key on the server/);
     assert.match(await page.textContent("#view-settings"), /Products, drafts and History work without either/);
+    assert.deepEqual(t.errors, []);
+  } finally { await t.close(); srv.stop(); }
+});
+
+test("hosted web with no model (CX-002): at 375 px the explanation is visible and directly above the disabled Generate button, says why/who/what-instead, and exposes no credential or client-side way to configure the server", { skip: SKIP, timeout: 90000 }, async () => {
+  const srv = await env.startColdServer({ mockUrl: mock.url, env: NO_KEY });
+  const t = await open(srv, { viewport: { width: 375, height: 667 } }); const { page } = t;
+  try {
+    await page.locator("#genBtn").scrollIntoViewIfNeeded();
+    const note = page.locator("#genUnavailable"), btn = page.locator("#genBtn");
+    await note.waitFor({ state: "visible" });
+    assert.equal(await btn.isDisabled(), true);
+    const [n, b, vh] = [await note.boundingBox(), await btn.boundingBox(), 667];
+    assert.ok(n.y >= 0 && n.y + n.height <= vh, `the explanation is fully inside the 375x667 viewport (top ${Math.round(n.y)}, bottom ${Math.round(n.y + n.height)})`);
+    assert.ok(b.y >= 0 && b.y + b.height <= vh, "and so is the disabled button");
+    const gap = b.y - (n.y + n.height);
+    assert.ok(gap >= 0 && gap <= 40, `the explanation sits directly above the button (gap ${Math.round(gap)} px)`);
+    const text = await note.textContent();
+    assert.match(text, /Why: this site has no AI model connected/); assert.match(text, /Who can change it: only whoever runs this site/); assert.match(text, /What you can do now:.*Cold desktop app/s);
+    assert.doesNotMatch(text, /ANTHROPIC|API[_ ]?KEY|token|secret|\.env/i, "no credential or configuration detail of the server");
+    assert.equal(await page.locator("#view-compose [type=password], #view-compose input[name*=key i]").count(), 0, "no client-side field for a server-owned key");
+    assert.match(await btn.getAttribute("aria-describedby"), /genUnavailable/, "assistive technology reads the reason with the button");
+    assert.ok((await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)) <= 0, "no horizontal overflow at 375 px");
     assert.deepEqual(t.errors, []);
   } finally { await t.close(); srv.stop(); }
 });
@@ -104,8 +127,8 @@ test("web with a pairing to a desktop app that is not running: drafting, saving 
   const noModel = await env.startColdServer({ mockUrl: mock.url, env: NO_KEY });
   const t2 = await open(noModel, { seed }); 
   try {
-    await t2.page.waitForFunction(() => /paired isn't running/.test(document.querySelector("#genHint").textContent), null, { timeout: 15000 });
-    assert.match(await t2.page.textContent("#genHint"), /Open the app, or ask whoever runs this site to add a provider/);
+    await t2.page.waitForFunction(() => /it isn't running/.test(document.querySelector("#genUnavailable").textContent), null, { timeout: 15000 });
+    assert.match(await t2.page.textContent("#genUnavailable"), /Who can change it: only whoever runs this site.*paired the desktop app but it isn.t running: open it/s);
     await addProductInKnowledge(t2.page, "Still Works");
     await go(t2.page, "knowledge"); assert.match(await t2.page.textContent("#view-knowledge"), /Still Works/);
   } finally { await t2.close(); noModel.stop(); }

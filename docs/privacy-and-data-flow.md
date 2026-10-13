@@ -53,6 +53,10 @@ When (and only when) a Google client id is configured for the build or server **
   against a stand-in API (`test/sheets*.test.js`, `test/google-*.test.js`); nothing here claims to have been verified against Google. See
   [docs/audit/07](audit/07-security-privacy-data-authority.md).
 
+## Keeping this document true
+
+A new **data destination** (anywhere data is stored, sent or read from: a storage backend, a third-party API or sign-in, sync or pairing, a field added to a model prompt, a log or diagnostic) or a new **authority boundary** (which copy of the data wins) must update, **in the same change**: this document, the README "Privacy in one paragraph", the in-app wording (`store.keptNote` and Settings > Your data), and [audit/07](audit/07-security-privacy-data-authority.md). The pull-request template (`.github/pull_request_template.md`) carries this as a checklist item. This exists because the Google Sheets feature shipped while this document and the README still said no data goes to a cloud store (audit SEC-006).
+
 ## Tests that hold these boundaries
 
 `test/privacy.test.js` (real servers, real browser, mock model): web CRUD sends no write request anywhere and contacts no other

@@ -9,7 +9,7 @@ import { evaluate } from "../domain/rules.js";
 import { emailText } from "../domain/email.js";
 import { applyStatus, statusOf, filterOutreach, productFilterOptions, countByStatus, preview, editedSinceSent } from "../domain/outreach.js";
 import { compareEmails } from "../domain/library.js";
-import { recordHandoff, restartFromSent, followUpState, dueRecords, fmtDue } from "../domain/followup.js";
+import { recordHandoff, restartFromSent, followUpState, dueRecords, fmtDue, unsentGuidance } from "../domain/followup.js";
 import { followUpPanel } from "./followUpPanel.js";
 import { GOALS, STATUSES, STATUS_COPY, FORMATS, UNKNOWN_STATUS } from "../domain/constants.js";
 
@@ -133,7 +133,7 @@ export function mountHistory(root, { store, openRecord }) {
         h("div", { class: "sub" }, [!isSocial && e.recipient?.email, e.productName, goal, dates].filter(Boolean).join(" · ")),
         h("div", { class: "subject" }, isSocial ? "" : e.subject),
         h("div", { class: "preview" }, preview(e)),
-        fuState === "due" || fuState === "scheduled" ? h("div", { class: "sub fu-line" }, fuState === "due" ? h("strong", {}, "Follow-up due: ") : "Follow up ", fmtDue(e.followUp.due)) : null,
+        fuState === "due" || fuState === "scheduled" ? h("div", { class: "sub fu-line" }, fuState === "due" ? h("strong", {}, "Follow-up due: ") : "Follow up ", fmtDue(e.followUp.due), unsentGuidance(e) ? h("span", { class: "fu-unsent-line" }, ` Still marked Draft: ${unsentGuidance(e)}`) : null) : null,
         e.note ? h("div", { class: "hnote" }, h("strong", {}, "Note: "), e.note) : null),
       h("div", { class: "ctl" }, statusChip(st), score != null ? h("span", { class: "hint", title: "Style checklist score. Not a prediction of replies." }, `Checklist ${score}`) : null, nextStep, sel,
         isSocial ? null : tag(button("Open in email", { onclick: () => emailIt(e, toIn, msg, () => { details.hidden = false; toggle.setAttribute("aria-expanded", "true"); toIn.focus(); }) }), "hEmail"),

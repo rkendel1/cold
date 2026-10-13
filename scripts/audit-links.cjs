@@ -2,7 +2,7 @@
 const fs = require("node:fs"), path = require("node:path");
 const root = path.join(__dirname, "..");
 const walk = d => fs.readdirSync(d, { withFileTypes: true }).flatMap(e => e.isDirectory() ? (e.name === "node_modules" ? [] : walk(path.join(d, e.name))) : [path.join(d, e.name)]);
-const files = [path.join(root, "README.md"), ...walk(path.join(root, "docs")).filter(f => f.endsWith(".md"))];
+const files = [path.join(root, "README.md"), path.join(root, "SECURITY.md"), ...walk(path.join(root, "docs")).filter(f => f.endsWith(".md"))];
 const slug = h => h.toLowerCase().replace(/<[^>]+>/g, "").replace(/`/g, "").replace(/[^\p{L}\p{N}\s_-]/gu, "").trim().replace(/\s+/g, "-");
 const anchors = f => new Set([...fs.readFileSync(f, "utf8").matchAll(/^#{1,6}\s+(.+)$/gm)].map(m => slug(m[1])));
 let bad = 0, n = 0;

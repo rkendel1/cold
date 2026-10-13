@@ -60,7 +60,8 @@ Defaults come from `lib/providers.js`. On the desktop app and in the extension, 
 |---|---|
 | `npm run build:app` / `check:app` | Rebuild / verify the committed bundle (`public/app.js`, `public/app.css`) |
 | `npm run build:extension` | Build `extension/dist` (needed by the extension tests) |
-| `npm test` | Whole suite. Browser tests need Chromium (`PLAYWRIGHT_BROWSERS_PATH` or `CHROMIUM`); extension tests need `extension/dist`; the desktop-mail test needs Electron and a display. **Tests skip silently when a prerequisite is missing** |
+| `npm test` | Whole suite. Browser tests need Chromium (`PLAYWRIGHT_BROWSERS_PATH` or `CHROMIUM`); extension tests need `extension/dist`; the desktop-mail and side-panel layout tests need Electron and a display (`xvfb-run -a npm test` on headless Linux); the SQLite tests need Node 22.13+. Locally, a missing prerequisite skips the dependent tests; with `CI=true` or `COLD_REQUIRE_PREREQS=1`, `test/00-ci-prerequisites.test.js` **fails** instead |
+| `node scripts/ci-check-skips.cjs <tap file>` | Fails if the TAP report has a skipped test that is not allow-listed (only `REAL MODEL:` is) |
 | `npm run smoke:model` | Real-model smoke test, only with `COLD_REAL_MODEL=1` and a model |
 | `npm run verify:local-model` | Re-checks the on-device model pins against the network |
 | `node scripts/audit-screenshots.cjs`, `node scripts/audit-axe.cjs` | Reproduce the audit screenshots and the extra accessibility scan |

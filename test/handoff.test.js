@@ -109,6 +109,6 @@ test('the saved email-app choice is validated: unknown values and non-addresses 
   assert.deepEqual(['me@gmail.com', ' me@gmail.com ', 'not an address', '', null, 'a@b.co?x=1'].map(emailAccount), ['me@gmail.com', 'me@gmail.com', '', '', '', '']);
   const store = { getItem: k => (k === 'cold.settings' ? JSON.stringify({ signature: 'R', emailApp: 'bogus', gmailAccount: 'x' }) : null), setItem() {} };
   const loaded = loadAll(store).settings;
-  assert.deepEqual({ ...loaded, followUp: undefined }, { signature: 'R', signoffProduct: true, emailApp: 'mailto', gmailAccount: '', followUp: undefined });
+  assert.deepEqual({ ...loaded, followUp: undefined }, { signature: 'R', signoffProduct: true, emailApp: 'mailto', gmailAccount: '', followUp: undefined, firstRun: '' });
   assert.equal(loaded.followUp.enabled, true, 'follow-up settings default in');
 });

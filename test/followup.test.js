@@ -89,3 +89,19 @@ test('a follow-up merges with concurrent edits as one unit, and is exported as a
   assert.equal(F.followUpIcs(rec()), '');
   const local = F.toLocalInput(at(2024, 10, 15, 9)); assert.equal(local, '2024-10-15T09:00'); assert.equal(F.fromLocalInput(local), at(2024, 10, 15, 9)); assert.equal(F.fromLocalInput(''), null);
 });
+
+test('unsent guidance (CX-004): only for a record still marked Draft with an active follow-up, from the real handoff, never an invented date', async () => {
+  const F = await load('src/domain/followup.js');
+  const day = ts => F.fmtDay(ts);
+  const copied = rec({ handoffs: [{ at: at(2024, 10, 8), how: 'copy' }], followUp: { due: at(2024, 10, 14, 9), count: 0, auto: true } });
+  assert.equal(F.unsentGuidance(copied), `You copied this on ${day(at(2024, 10, 8))}. Copying an email doesn't prove it was sent. If you haven't sent it, send it first, then mark it as sent.`);
+  const opened = { ...copied, handoffs: [{ at: at(2024, 10, 7), how: 'copy' }, { at: at(2024, 10, 9), how: 'open' }] };
+  assert.match(F.unsentGuidance(opened), new RegExp(`^You opened this in your email app on ${day(at(2024, 10, 9)).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\. Opening an email doesn't prove it was sent\\. If you haven't sent it`), 'the LATEST handoff is described');
+  const none = rec({ followUp: { due: at(2024, 10, 14), count: 0, auto: false } });
+  assert.match(F.unsentGuidance(none), /^This is still marked Draft, so Cold has no record that it was sent\. If you haven't sent it/);
+  assert.doesNotMatch(F.unsentGuidance(none), /copied|opened/, 'no handoff, so no invented date or action');
+  for (const status of ['sent', 'replied', 'archived']) assert.equal(F.unsentGuidance({ ...copied, status }), null, `not shown for ${status}`);
+  assert.equal(F.unsentGuidance(rec({ handoffs: copied.handoffs })), null, 'no follow-up, nothing to explain');
+  assert.equal(F.unsentGuidance({ ...copied, followUp: { due: null, count: 1 } }), null, 'finished follow-ups say nothing');
+  assert.equal(F.unsentGuidance({ ...copied, status: undefined }) !== null, true, 'a record with no status is a Draft');
+});

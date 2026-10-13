@@ -57,6 +57,16 @@ A launch of a given scope requires every row in its scope to pass the gate. Evid
 | **G7** Optional integration verified against the real service | Google Sheets only | **Fail** (stand-in only) | A real-account run of J8, J9, J16, J17 on each surface that ships it, recorded with date and build; the `drive.file` cross-client question answered |
 | **G8** A support and security-reporting path exists | all | **Fail** (none documented) | `SECURITY.md` and an issue/feedback route named by the owner |
 
+### Gate status after the pilot-readiness PR
+
+| Gate | Now | Why |
+|---|---|---|
+| G1 CI | **Partly met:** workflow, prerequisite enforcement and skip audit exist and were each demonstrated locally; **not yet run on GitHub**, and branch protection is a repository setting | `.github/workflows/ci.yml`, `test/00-ci-prerequisites.test.js`, `scripts/ci-check-skips.cjs` |
+| G3 First-run path | **Not met:** the checklist exists; the measured ≤10-minute unassisted-user result does not | human validation required |
+| G6 Silent data loss/hiding | **Met for a pilot:** unreadable rows are surfaced and preserved; backup/restore documented and tested at the database layer | export/import/erase still open |
+| G8 Support/security route | **Partly met:** `SECURITY.md` written without claiming a disabled feature; **owner must enable private reporting or confirm the mailbox** | repository setting |
+| G2, G4, G5, G7 | unchanged | |
+
 ## Release blockers, conditions and accepted limitations
 
 * **Blockers for any broad launch:** G1 (QUALITY-002), G2 (QUALITY-010/-011 per surface), G3 (CX-001), G4 (QUALITY-008), G8 (DOCS-005).
