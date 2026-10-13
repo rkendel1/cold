@@ -2,6 +2,7 @@
 // below is called only from an explicit user action (a button or the status menu), never from copying, opening or editing.
 import { STATUSES, UNKNOWN_STATUS } from "./constants.js";
 import { emailText } from "./email.js";
+import { stopForReply } from "./followup.js";
 import rules from "../../lib/library-rules.cjs";
 
 /**
@@ -26,7 +27,7 @@ export function applyStatus(rec, status, { now = Date.now(), signature = "" } = 
   if (!STATUSES.includes(status) || statusOf(rec) === status) return rec;
   const next = { ...rec, status };
   if (status === "sent") { next.sentAt = now; next.sentCopy = { subject: String(rec.subject || ""), text: emailText(rec, signature), body: emailText(rec, ""), at: now }; }
-  if (status === "replied") next.repliedAt = now;
+  if (status === "replied") { next.repliedAt = now; return stopForReply(next); }
   return next;
 }
 
@@ -85,7 +86,7 @@ const eq = (a, b) => {
   if (isObj(a) && isObj(b)) { const ka = Object.keys(a).filter(k => a[k] !== undefined), kb = Object.keys(b).filter(k => b[k] !== undefined); return ka.length === kb.length && ka.every(k => eq(a[k], b[k])); }
   return false;
 };
-const ATOMIC = new Set(["sentCopy"]);   // the sent snapshot is one unit: its parts are never mixed from two copies
+const ATOMIC = new Set(["sentCopy", "followUp"]);   // the sent snapshot is one unit: its parts are never mixed from two copies
 
 /**
  * Three-way merge of one record. `base` is the copy the edit started from, `mine` the edited copy, `theirs` the stored copy.

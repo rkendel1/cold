@@ -9,6 +9,8 @@ import { evaluate } from "../domain/rules.js";
 import { emailText } from "../domain/email.js";
 import { applyStatus, statusOf, filterOutreach, productFilterOptions, countByStatus, preview, editedSinceSent } from "../domain/outreach.js";
 import { compareEmails } from "../domain/library.js";
+import { recordHandoff, restartFromSent, followUpState, dueRecords, fmtDue } from "../domain/followup.js";
+import { followUpPanel } from "./followUpPanel.js";
 import { GOALS, STATUSES, STATUS_COPY, FORMATS, UNKNOWN_STATUS } from "../domain/constants.js";
 
 export function mountHistory(root, { store, openRecord }) {
@@ -60,7 +62,7 @@ export function mountHistory(root, { store, openRecord }) {
   /** The user's explicit record of what happened: the only way a status changes. */
   async function setStatus(e, st) {
     if (!STATUSES.includes(st)) return;   // "Unknown status" is not something the user can set; only a supported status is a deliberate correction
-    if (await save(e.id, cur => applyStatus(cur, st, { signature: store.signoffFor(cur) }), "Couldn't update the status.")) { toast(`Status set to “${STATUS_COPY[st].label}”`); announce(`Status set to ${STATUS_COPY[st].label}`); }
+    if (await save(e.id, cur => restartFromSent(applyStatus(cur, st, { signature: store.signoffFor(cur) }), S.settings.followUp), "Couldn't update the status.")) { toast(`Status set to “${STATUS_COPY[st].label}”`); announce(`Status set to ${STATUS_COPY[st].label}`); }
   }
 
   const timers = new Map();   // id -> { t, run }: the change waiting for its 600 ms pause
@@ -75,7 +77,9 @@ export function mountHistory(root, { store, openRecord }) {
   async function emailIt(e, toInput, msgEl, expand) {
     const cur = latest(e.id) || e;
     const r = await openInEmail({ to: toInput ? toInput.value : cur.recipient?.email, subject: cur.subject, body: emailText(cur, store.signoffFor(cur)), app: S.settings.emailApp, account: S.settings.gmailAccount });
-    messages.set(e.id, r.message); if (msgEl) msgEl.textContent = r.message; else render();
+    // a successful handoff records itself and sets a follow-up if none is set (never marks it sent); saving redraws the row, so the message is kept for the redraw
+    const saved = r.ok ? await save(e.id, c => recordHandoff(c, "open", S.settings.followUp)) : false;
+    messages.set(e.id, r.message); if (msgEl && msgEl.isConnected && !saved) msgEl.textContent = r.message; else render();
     announce(r.message);
     if (!r.ok && r.reason === "invalid") { openIds.add(e.id); expand(); }
   }
@@ -104,8 +108,10 @@ export function mountHistory(root, { store, openRecord }) {
     const noteIn = h("textarea", { class: "hNote", rows: 3, "aria-label": `Notes for ${e.recipient?.name || "this draft"}`, placeholder: "Why they fit, what you actually sent, what the reply said, what to follow up on…" }); noteIn.value = (held.get(e.id)?.note ?? e.note) || "";
     noteIn.addEventListener("input", () => saveLater(e.id, { note: noteIn.value }));
     for (const el of [toIn, noteIn]) { el.dataset.keep = "1"; el.addEventListener("blur", () => { settling = true; flush(e.id); setTimeout(() => { settling = false; if (deferred && !typing()) { deferred = false; render(); } }, 400); }); }
-    const edited = editedSinceSent(e, store.signoffFor(e));
+    const edited = editedSinceSent(e, store.signoffFor(e)), fuState = isSocial ? "none" : followUpState(e);
+    const fu = isSocial ? null : followUpPanel({ getRec: () => latest(e.id) || e, getSettings: () => S.settings.followUp, announce, apply: fn => save(e.id, fn, "Couldn't save the follow-up.") });
     const details = h("div", { class: "hdetails", hidden: !openIds.has(e.id) },
+      fu ? h("div", { class: "field" }, h("strong", {}, "Follow up"), fu.el) : null,
       isSocial ? null : h("div", { class: "field" }, h("label", {}, "Email address ", h("span", { class: "opt" }, "Optional")), toIn, toMsg),
       h("div", { class: "field" }, h("label", {}, "Notes ", h("span", { class: "opt" }, "Optional, only for you")), noteIn),
       e.sentCopy ? h("div", { class: "field" }, h("strong", {}, "Text when you marked it sent"), h("p", { class: "hint" }, `Saved ${fmtDate(e.sentCopy.at)}. Cold's copy of the text at that moment${edited ? "; you've edited the draft since" : ""}. Not proof of what your email app sent.`), isSocial ? null : h("p", {}, h("strong", {}, "Subject: "), e.sentCopy.subject), h("p", { class: "preline" }, e.sentCopy.text)) : null);
@@ -127,10 +133,11 @@ export function mountHistory(root, { store, openRecord }) {
         h("div", { class: "sub" }, [!isSocial && e.recipient?.email, e.productName, goal, dates].filter(Boolean).join(" · ")),
         h("div", { class: "subject" }, isSocial ? "" : e.subject),
         h("div", { class: "preview" }, preview(e)),
+        fuState === "due" || fuState === "scheduled" ? h("div", { class: "sub fu-line" }, fuState === "due" ? h("strong", {}, "Follow-up due: ") : "Follow up ", fmtDue(e.followUp.due)) : null,
         e.note ? h("div", { class: "hnote" }, h("strong", {}, "Note: "), e.note) : null),
       h("div", { class: "ctl" }, statusChip(st), score != null ? h("span", { class: "hint", title: "Style checklist score. Not a prediction of replies." }, `Checklist ${score}`) : null, nextStep, sel,
         isSocial ? null : tag(button("Open in email", { onclick: () => emailIt(e, toIn, msg, () => { details.hidden = false; toggle.setAttribute("aria-expanded", "true"); toIn.focus(); }) }), "hEmail"),
-        button("Copy", { onclick: async () => toast((await copyText(emailText(e, store.signoffFor(e)))) ? "Copied to clipboard" : "Couldn't copy automatically.") }),
+        button("Copy", { onclick: async () => { const ok = await copyText(emailText(e, store.signoffFor(e))); toast(ok ? "Copied to clipboard" : "Couldn't copy automatically."); if (ok && !isSocial) save(e.id, c => recordHandoff(c, "copy", S.settings.followUp)); } }),
         button("Open", { title: "Reopen and edit this draft", onclick: () => openRecord(e) }), toggle, del),
       msg, details);
   }
@@ -140,12 +147,15 @@ export function mountHistory(root, { store, openRecord }) {
     paintLede();
     const counts = countByStatus(all);
     clear(filters);
+    const dueN = dueRecords(all.filter(x => !(x.mode && x.mode !== "email"))).length;
+    if (filter === "due" && !dueN) filter = "all";
+    if (dueN) filters.append(h("button", { type: "button", class: "btn", id: "fDue", "aria-pressed": String(filter === "due"), onclick: () => { filter = filter === "due" ? "all" : "due"; render(); } }, "Follow-up due", h("span", { class: "mono" }, ` ${dueN}`)));
     ["all", ...STATUSES, ...(counts[UNKNOWN_STATUS] ? [UNKNOWN_STATUS] : [])].forEach(s => filters.append(h("button", { type: "button", class: "btn", "aria-pressed": String(filter === s), onclick: () => { filter = s; render(); } }, s === "all" ? "All" : STATUS_COPY[s].label, h("span", { class: "mono" }, ` ${counts[s]}`))));
     const opts = productFilterOptions(all, S.products);
     if (product !== "all" && !opts.some(o => o.value === product)) product = "all";
     clear(productSel).append(h("option", { value: "all" }, "All products"), ...opts.map(o => h("option", { value: o.value }, o.label)));
     productSel.value = product; productSel.hidden = opts.length < 2 && product === "all";
-    const rows = filterOutreach(all, { status: filter, query, product });
+    const rows = filter === "due" ? filterOutreach(dueRecords(all), { query, product }) : filterOutreach(all, { status: filter, query, product });
     clear(listHost);
     if (!all.length) { listHost.append(h("li", { class: "empty" }, h("h2", {}, "No drafts yet"), h("p", {}, "Every draft you generate is saved here automatically as a draft. You decide when it counts as sent."), button("Write one", { kind: "primary", id: "hGo", onclick: () => openRecord(null) }))); return; }
     if (!rows.length) { listHost.append(h("li", { class: "empty" }, h("p", {}, query || product !== "all" ? "No drafts match your search or filter." : `Nothing is marked “${STATUS_COPY[filter]?.label || filter}” yet.`))); return; }

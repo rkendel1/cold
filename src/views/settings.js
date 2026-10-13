@@ -12,6 +12,7 @@ import { signoffBlock } from "../domain/signoff.js";
 import { openInEmail, isEmail, APPS, APP_LABELS } from "../services/handoff.js";
 import { lookupSection } from "./lookupSettings.js";
 import { compareLeads } from "../domain/library.js";
+import { followUpSection } from "./followUpSettings.js";
 
 const OTHER = "__other__";
 const KEY_NOTE = {
@@ -360,7 +361,7 @@ export function mountSettings(root, { store, platform }) {
     integ.push(h("h3", {}, "Email app"), emailAppSection(), h("h3", {}, "Email lookup (treg)"), lookupSection({ platform, field }));
     const about = h("div", { class: "form" }, h("p", { class: "hint", id: "aboutLine" }, `Cold extension ${(platform.about && platform.about.version) || ""}`.trim()));
     append(body, [
-      group("writing", "Writing", true, model, preference(), h("h3", {}, "Email sign-off"), signoffSection()),
+      group("writing", "Writing", true, model, preference(), h("h3", {}, "Email sign-off"), signoffSection(), h("h3", {}, "Follow-ups"), followUpSection({ store, field })),
       group("discovery", "Opportunity discovery", false, x.discovery),
       group("integrations", "Integrations", false, ...integ),
       group("privacy", "Privacy and local models", false, x.local, dataSection()),
@@ -380,6 +381,7 @@ export function mountSettings(root, { store, platform }) {
     body.append(section("emailapp", "Email app", emailAppSection()));
     body.append(section("lookup", "Email lookup", lookupSection({ platform, field })));
     body.append(section("signoff", "Email sign-off", signoffSection()));
+    body.append(section("followup", "Follow-ups", followUpSection({ store, field })));
     body.append(section("data", "Your data", dataSection()));
   }
 

@@ -1,6 +1,7 @@
 // Single in-memory state container with topic subscriptions, plus persistence through a backend.
 // Backends: "local" (localStorage), "db" (the Claude-artifact runtime) or "sqlite" (the desktop app's database, through
 // services/sqliteDb.js, which mimics the "db" interface). Views never touch storage directly.
+import { normalizeFollowUpSettings } from "../domain/followup.js";
 import { STORAGE_KEYS } from "../domain/constants.js";
 import { loadAll, writeJson } from "./storage.js";
 import { normalizeProduct } from "../domain/knowledge.js";
@@ -16,7 +17,7 @@ export function createStore({ storage = globalThis.localStorage, platform = null
   const state = {
     ready: false,
     backend: "local",
-    products: [], emails: [], leads: [], settings: { signature: "", signoffProduct: true, emailApp: "mailto", gmailAccount: "" },
+    products: [], emails: [], leads: [], settings: { signature: "", signoffProduct: true, emailApp: "mailto", gmailAccount: "", followUp: normalizeFollowUpSettings() },
     compose: null,           // last compose form values (persisted)
     current: null,           // draft shown in Compose
     undo: null,              // { id, rec } snapshot taken before an Improve
@@ -67,7 +68,7 @@ export function createStore({ storage = globalThis.localStorage, platform = null
       db.collection("emails").orderBy("createdAt", "desc").limit(500).onSnapshot(snap => {
         set({ emails: snap.docs.map(d => normalizeEmail({ ...d.data(), id: d.id })).filter(Boolean) }, "emails");
       }, fail),
-      db.doc("settings/me").onSnapshot(snap => { if (snap.exists) set({ settings: { ...state.settings, signature: String(snap.data().signature || ""), signoffProduct: snap.data().signoffProduct !== false, emailApp: emailApp(snap.data().emailApp), gmailAccount: emailAccount(snap.data().gmailAccount) } }, "settings"); }, fail),
+      db.doc("settings/me").onSnapshot(snap => { if (snap.exists) set({ settings: { ...state.settings, signature: String(snap.data().signature || ""), signoffProduct: snap.data().signoffProduct !== false, emailApp: emailApp(snap.data().emailApp), gmailAccount: emailAccount(snap.data().gmailAccount), followUp: normalizeFollowUpSettings(snap.data().followUp) } }, "settings"); }, fail),
     ];
   }
 
@@ -80,7 +81,7 @@ export function createStore({ storage = globalThis.localStorage, platform = null
      */
     switchLibrary(next) {
       unsubs.forEach(off => { try { off(); } catch { /* ignore */ } });
-      Object.assign(state, { products: [], emails: [], leads: [], current: null, undo: null, settings: { signature: "", signoffProduct: true, emailApp: "mailto", gmailAccount: "" } });
+      Object.assign(state, { products: [], emails: [], leads: [], current: null, undo: null, settings: { signature: "", signoffProduct: true, emailApp: "mailto", gmailAccount: "", followUp: normalizeFollowUpSettings() } });
       attach(next); emit("ready");
     },
 

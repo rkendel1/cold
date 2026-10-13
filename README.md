@@ -188,6 +188,7 @@ History is where you record what actually happened. Cold records only what you t
 2. Come back and press **Mark sent** (on the draft, or on its row in History). Cold keeps the text as it was at that moment under "Text when you marked it sent".
 3. When a reply arrives, press **Record reply**.
 4. Filter by **Draft / Marked sent / Reply recorded**, or search by name, company, email address, subject or your notes.
+5. **Follow-ups.** When you copy an email or open it in your email app, Cold records that you handed it off (it can't see whether you sent it, so the draft is *not* marked sent) and sets a follow-up reminder. The default is 3 working days for most asks, longer for some (investment 7, partnership 5, advice 4), then every 7 days, up to 3, at 09:00, skipping weekends. Change all of it in **Settings > Follow-ups**, or change, snooze, clear or complete the date on any draft (Write or History > Notes & details); **Add to calendar** downloads an .ics for your own calendar. Due follow-ups appear under **History > Follow-up due**. Marking sent restarts an automatic date from then; recording a reply stops it.
 
 Each row shows the recipient, address (if you entered one), subject, a message preview, the status, and created / updated / marked-sent / reply dates. **Notes & details** holds an optional note (why they fit, what you sent, what the reply said, what to follow up on) and the address; both save as you type. The status menu is still there to correct a mistake.
 
