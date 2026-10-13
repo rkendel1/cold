@@ -75,7 +75,6 @@ body.ext { padding: 8px 10px 20px; }
 .ext .peditor h2 { font-size: .95rem; }
 
 /* Leads: one card per lead instead of a wide table (no sideways scrolling to reach Edit / Write / Find email) */
-.ext .table-wrap { overflow: visible; border: 0; }
 .ext table.leads, .ext table.leads tbody { display: block; width: 100%; }
 .ext table.leads thead { display: block; }
 .ext table.leads thead tr { display: flex; padding: 2px 4px; }
@@ -87,3 +86,260 @@ body.ext { padding: 8px 10px 20px; }
 .ext table.leads td.why { color: var(--muted); font-size: var(--fs-sm); }
 .ext table.leads td.ctl { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
 .ext table.leads td.ctl .btn { min-height: 28px; padding: 2px 8px; font-size: .8rem; }
+
+/* Cross-surface UX Standards - Ensure consistent experience */
+.ext .primary-nav {
+  /* Ensuring same navigation as other surfaces for consistency */ 
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: space-between;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  position: static;
+  order: 3;
+  /* Make navigation consistent with web app at top level */
+  height: auto;
+  min-height: 32px;
+}
+.ext .primary-nav a {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 32px;
+  padding: 4px 2px;
+  justify-content: center;
+  border-radius: 6px;
+  font-size: .8rem;
+  white-space: nowrap;
+  text-decoration: none;
+  color: var(--muted);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  /* Add consistency with other surface styles */
+  box-sizing: border-box;
+}
+.ext .primary-nav a[aria-current="page"] {
+  background: var(--ink);
+  color: var(--bg);
+  border-radius: 6px;
+}
+
+/* Ensure the UI pattern is exactly what's specified in UX standards */
+.ext .btn {
+  min-height: 34px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: var(--fs-base);
+  /* Consistent styling across surfaces for button behavior */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  transition: all 0.2s ease;
+}
+
+/* Add proper accessibility and state handling */
+.ext .primary-nav a:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}
+
+/* Make sure forms are consistent with UX standards */
+.ext .form, .ext .stack {
+  gap: 8px;
+}
+
+/* Ensure consistent error handling across surfaces */
+.field-error {
+  color: var(--bad);
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.field-error::before {
+  content: "✕ ";
+}
+
+/* Improve visual consistency with WCAG AA standards */
+.ext .btn:hover:not([disabled]) {
+  border-color: var(--ink);
+  filter: brightness(1.05);
+}
+.ext .btn.primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+  font-size: var(--fs-base);
+}
+.ext .btn.primary:hover:not([disabled]) {
+  filter: brightness(1.1);
+}
+.ext .btn.danger {
+  color: var(--bad);
+}
+.ext .btn.danger-solid {
+  background: var(--bad);
+  color: #fff;
+  border-color: var(--bad);
+}
+
+/* Add consistent spacing and visual hierarchy */
+.ext .field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.ext .field > label, legend, .label {
+  font-weight: 600;
+}
+.ext .req {
+  font-weight: 500;
+  color: var(--accent);
+  font-size: var(--fs-sm);
+}
+.ext .opt {
+  font-weight: 400;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+.ext .hint {
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+/* Consistent input styling that matches UX standards */
+input[type=text], input[type=url], input[type=email], input[type=password], input[type=search], select, textarea {
+  width: 100%;
+  min-height: 44px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 9px 11px;
+  font-family: var(--f-body);
+  font-size: var(--fs-base);
+  line-height: 1.45;
+}
+input[aria-invalid="true"], textarea[aria-invalid="true"], select[aria-invalid="true"] {
+  border: 2px solid var(--bad);
+}
+
+/* Enhanced visual feedback for all surfaces */
+.ext .toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  background: var(--ink);
+  color: var(--bg);
+  padding: 10px 18px;
+  border-radius: 999px;
+  font-weight: 600;
+  z-index: 40;
+  max-width: calc(100vw - 32px);
+}
+@media (min-width: 641px) {
+  .ext .toast {
+    bottom: 24px;
+  }
+}
+
+/* Consistent notice styling */
+.ext .notice {
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: var(--r);
+  padding: 10px 14px;
+  background: var(--surface);
+  font-size: var(--fs-sm);
+  display: grid;
+  gap: 6px;
+}
+.ext .notice.bad {
+  border-color: var(--bad);
+  background: var(--bad-soft);
+}
+.ext .notice.warn {
+  border-color: var(--warn);
+  background: var(--warn-soft);
+}
+.ext .notice.good {
+  border-color: var(--good);
+  background: var(--good-soft);
+}
+.ext .notice.info {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.ext .notice strong {
+  font-weight: 700;
+}
+
+/* Ensure responsive behavior matches UX standards */
+@media (max-width: 480px) {
+  .ext .primary-nav a {
+    padding: 2px 1px;
+    font-size: 0.75rem;
+  }
+  .ext .btn {
+    min-height: 30px;
+    padding: 3px 8px;
+    font-size: 0.875rem;
+  }
+}
+
+/* Accessibility improvements for all surfaces */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Ensure consistent color treatment across all surfaces */
+.ext .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--sunk);
+  color: var(--ink);
+  white-space: nowrap;
+  border: 1px solid var(--line-soft);
+}
+.ext .chip.good {
+  background: var(--good-soft);
+  color: var(--good);
+  border-color: var(--good);
+}
+.ext .chip.warn {
+  background: var(--warn-soft);
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.ext .chip.bad {
+  background: var(--bad-soft);
+  color: var(--bad);
+  border-color: var(--bad);
+}
+.ext .chip.accent {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: var(--accent);
+}
