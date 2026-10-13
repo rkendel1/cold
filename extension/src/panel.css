@@ -1,4 +1,4 @@
-body.ext { margin: 0; padding: 14px 16px 28px; background: var(--bg); min-width: 320px; }
+body.ext { margin: 0; padding: 14px 16px 28px; background: var(--bg); }
 .ext h1 { font-size: 1.25rem; margin: 0 0 8px; }
 .x-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
 .x-head strong { font-size: 1.15rem; }
@@ -18,10 +18,35 @@ body.ext { margin: 0; padding: 14px 16px 28px; background: var(--bg); min-width:
 .x-stack > .x-card { margin: 0; }
 
 /* The shared app inside a narrow side panel */
-.ext .app-header { flex-wrap: wrap; gap: 6px 12px; padding-bottom: 8px; }
-.ext .primary-nav { flex-wrap: wrap; }
+body.ext { padding: 8px 10px 20px; }
+.ext .app-header { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 0 0 6px; margin: 0 0 6px; border-bottom: 1px solid var(--line); }
+.ext .brand { font-size: 1.05rem; }
+/* Navigation: one row at every side-panel width. Never wraps, never scrolls. */
+.ext .primary-nav { position: static; flex: 1 1 100%; order: 3; display: flex; flex-wrap: nowrap; gap: 2px; margin: 0; padding: 0; border: 0; background: none; justify-content: space-between; }
+.ext .primary-nav a { flex: 1 1 auto; min-width: 0; min-height: 32px; padding: 4px 2px; justify-content: center; border-radius: 6px; font-size: .8rem; white-space: nowrap; }
+.ext .primary-nav a:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
 .ext main { padding: 0; }
-.ext .app-footer { font-size: var(--fs-sm); }
+.ext .app-footer { font-size: var(--fs-sm); padding: 8px 0 0; }
+.ext .view-head { margin-bottom: 8px; gap: 2px; }
+.ext .view-head h1 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.ext .view-head .lede { display: none; }
+.ext .btn { min-height: 34px; padding: 4px 10px; }
+.ext .form, .ext .stack { gap: 8px; }
+
+/* Collapsible groups (Settings, Ask Cold) */
+.ext details.set-group, .ext details.x-discover { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); margin-bottom: 6px; }
+.ext details.set-group > summary, .ext details.x-discover > summary { cursor: pointer; padding: 6px 10px; font-weight: 600; min-height: 34px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ext details.set-group > .in, .ext details.x-discover > .in { padding: 0 10px 10px; display: grid; gap: 8px; font-size: var(--fs-sm); }
+.ext .set-group h3 { font-size: .9rem; margin: 6px 0 0; }
+.ext .x-discover .x-state, .ext .x-discover > summary span { font-weight: 400; color: var(--muted); font-size: var(--fs-sm); }
+
+/* Browse With Me session bar: visible on every tab while a session exists */
+.x-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 6px 10px; margin: 0 0 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--sunk); font-size: var(--fs-sm); }
+.x-bar[hidden] { display: none; }
+.x-bar span { font-weight: 600; flex: 1 1 140px; }
+
+/* Page card */
+.ext .x-page { padding: 6px 10px; margin-bottom: 6px; gap: 4px; }
 
 /* Ask Cold / Browse With Me */
 .x-ask h2, .x-ask h3 { margin: 0 0 6px; }
@@ -30,3 +55,35 @@ body.ext { margin: 0; padding: 14px 16px 28px; background: var(--bg); min-width:
 .x-ask .ask-facts { margin: 2px 0 8px; padding-left: 18px; }
 .x-ask .ask-label { margin: 6px 0 2px; font-weight: 600; }
 .x-ask #bwmState { margin: 4px 0; font-weight: 600; }
+.x-pagerow { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.x-pagerow p { flex: 1; min-width: 0; }
+.x-page .hint:empty { display: none; }
+
+/* History: compact entries and filters */
+.ext .hfilters { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
+.ext .hfilters .btn { min-height: 28px; padding: 2px 8px; font-size: .8rem; }
+.ext .hfilters select, .ext .hfilters input[type="search"] { flex: 1 1 100%; min-height: 32px; }
+.ext .hrow { padding: 8px 10px; gap: 4px 8px; }
+.ext .hrow .preview { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.ext .hrow .ctl { gap: 4px; }
+.ext .hrow .ctl .btn { min-height: 28px; padding: 2px 8px; font-size: .8rem; }
+
+/* Knowledge */
+.ext .peditor details.panel { margin-bottom: 6px; }
+.ext .peditor details.panel > summary { padding: 6px 10px; min-height: 34px; }
+.ext .peditor details.panel .in { padding: 0 10px 10px; }
+.ext .peditor h2 { font-size: .95rem; }
+
+/* Leads: one card per lead instead of a wide table (no sideways scrolling to reach Edit / Write / Find email) */
+.ext .table-wrap { overflow: visible; border: 0; }
+.ext table.leads, .ext table.leads tbody { display: block; width: 100%; }
+.ext table.leads thead { display: block; }
+.ext table.leads thead tr { display: flex; padding: 2px 4px; }
+.ext table.leads thead th:not(:first-child) { display: none; }
+.ext table.leads tbody tr { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; padding: 8px 10px; margin-bottom: 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.ext table.leads td { display: block; padding: 0; border: 0; grid-column: 2; min-width: 0; overflow-wrap: anywhere; }
+.ext table.leads td:first-child { grid-column: 1; grid-row: 1 / span 6; }
+.ext table.leads td:empty { display: none; }
+.ext table.leads td.why { color: var(--muted); font-size: var(--fs-sm); }
+.ext table.leads td.ctl { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.ext table.leads td.ctl .btn { min-height: 28px; padding: 2px 8px; font-size: .8rem; }

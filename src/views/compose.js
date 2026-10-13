@@ -27,7 +27,7 @@ export function mountCompose(root, { store, platform, navigate }) {
       hint: "The specific reason you're contacting them: something they wrote, built or said. Cold uses this as the only connection between you and won't invent one.",
       control: textArea({ rows: 3, placeholder: "e.g. They've written about how hard it is to move workloads between cloud and edge." }),
     }),
-    email: field({ id: "rEmail", label: "Email address", required: null, hint: "Optional. Only used for “Open in email”; Cold never looks one up and never sends mail.", control: textInput({ placeholder: "sarah@acme.com", inputmode: "email", type: "email" }) }),
+    email: field({ id: "rEmail", label: "Email address", required: null, hint: "Optional. Only used for “Open in email”; Cold looks one up only when you press Find email on a lead, and it never sends mail.", control: textInput({ placeholder: "sarah@acme.com", inputmode: "email", type: "email" }) }),
     profileUrl: field({ id: "rProfileUrl", label: "Their LinkedIn or X profile", hint: "Paste a link and Cold reads the public profile to fill in who they are. Nothing is posted or sent to them.", control: textInput({ placeholder: "linkedin.com/in/sarahchen or x.com/sarahchen", inputmode: "url" }) }),
     profilePaste: field({ id: "rProfilePaste", label: "Or paste their profile text", required: null, hint: "Copy their headline, About section or recent posts from the profile. Use this when the link can't be read.", control: textArea({ rows: 4 }) }),
     profile: field({ id: "rProfile", label: "What Cold learned from their profile", required: null, hint: "Cold treats this as facts you supplied and can use it for the reason you're writing. Edit or delete anything that's wrong.", control: textArea({ rows: 4 }) }),

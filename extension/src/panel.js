@@ -10,7 +10,7 @@ import { createStore } from "../../src/state/store.js";
 import { startApp } from "../../src/app.js";
 import { createExtensionPlatform } from "./platform.js";
 import { mountPageCard } from "./pageCard.js";
-import { mountAskCold } from "./askCold.js";
+import { createAskCold } from "./askCold.js";
 
 // The web page loads X's character counter as a global (public/tweet-counter.js); the shared screens expect it.
 globalThis.tweetLength = twitterText.parseTweet;
@@ -18,10 +18,15 @@ globalThis.tweetLength = twitterText.parseTweet;
 async function boot() {
   const platform = await createExtensionPlatform();
   const store = createStore({ storage: {} });
-  const app = await startApp(document.getElementById("app"), {
-    store, platform,
-  });
-  mountAskCold(app.views.compose, { store, platform, compose: app.compose });
+  let app = null;
+  // Ask Cold and Browse With Me are built first so Settings can show their configuration; their actions go in Write, and a running
+  // session's controls in the shell (below the tabs, on every screen).
+  const ask = createAskCold({ store, platform, getCompose: () => app.compose });
+  platform.settingsExtras = ask.settings;
+  platform.about = { version: chrome.runtime.getManifest().version };
+  app = await startApp(document.getElementById("app"), { store, platform });
+  app.views.compose.prepend(ask.actions);
+  document.querySelector(".app-header").after(ask.bar);
   mountPageCard(app.views.compose, { compose: app.compose, platform });
   // Page-driven mode changes need the shared form, so expose it for tests and debugging in one clearly named place.
   globalThis.__cold = { store, platform };

@@ -41,9 +41,23 @@ export function editedSinceSent(rec, signature = "") {
 const hay = e => [e.recipient && e.recipient.name, e.recipient && e.recipient.company, e.recipient && e.recipient.email, e.subject, e.productName, e.what, e.note].filter(Boolean).join(" ").toLowerCase();
 
 /** History rows for a status filter ("all" or a status) and a search string. Records with missing fields are never dropped or inferred. */
-export function filterOutreach(emails, { status = "all", query = "" } = {}) {
+export const NO_PRODUCT = "none";
+/** A product filter matches the stable productId only, never the display name. "none" is every record saved without one. */
+const inProduct = (e, product) => product === "all" || (product === NO_PRODUCT ? !e.productId : e.productId === product);
+export function filterOutreach(emails, { status = "all", query = "", product = "all" } = {}) {
   const q = String(query || "").trim().toLowerCase();
-  return emails.filter(e => (status === "all" || statusOf(e) === status) && (!q || hay(e).includes(q)));
+  return emails.filter(e => (status === "all" || statusOf(e) === status) && inProduct(e, product) && (!q || hay(e).includes(q)));
+}
+/**
+ * The choices for a product filter: [{ value, label }]. Current products by their current name; a record whose product was removed
+ * is offered under the name saved on it; records with no productId share "No product". Read-only: nothing is rewritten.
+ */
+export function productFilterOptions(emails, products) {
+  const out = [], seen = new Set();
+  for (const p of products) { seen.add(p.id); out.push({ value: p.id, label: p.name || "Untitled product" }); }
+  for (const e of emails) if (e.productId && !seen.has(e.productId)) { seen.add(e.productId); out.push({ value: e.productId, label: `${e.productName || "Unknown product"} (removed)` }); }
+  if (emails.some(e => !e.productId)) out.push({ value: NO_PRODUCT, label: "No product" });
+  return out;
 }
 
 export const countByStatus = emails => {

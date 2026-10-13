@@ -40,3 +40,12 @@ export const autosize = ta => {
   let width = -1;
   new ResizeObserver(() => { const w = ta.clientWidth; if (!w) { width = -1; return; } if (w !== width) { width = w; fit(ta); } }).observe(ta);   // 0 = hidden: forget the width so showing it again re-fits
 };
+
+/** Focus an element that may sit inside collapsed <details> groups (Settings, Knowledge): open them first so it is actually reachable. */
+export function revealAndFocus(id) {
+  const el = typeof id === "string" ? document.getElementById(id) : id;
+  if (!el) return false;
+  for (let d = el.closest("details"); d; d = d.parentElement && d.parentElement.closest("details")) d.open = true;
+  el.focus(); if (el.scrollIntoView) el.scrollIntoView({ block: "nearest" });
+  return true;
+}

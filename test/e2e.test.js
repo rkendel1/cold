@@ -371,7 +371,7 @@ test("web: works on its own; connecting shows the desktop library without touchi
     // ---- on its own: everything works, and Settings says the desktop app is optional
     await go(page, "history"); assert.equal(await page.locator(".hrow").count(), 1);
     await go(page, "settings");
-    assert.deepEqual(await page.$$eval("#view-settings .set-section h2", h => h.map(x => x.textContent)), ["Model", "Cold desktop app", "Email app", "Email sign-off", "Your data"]);
+    assert.deepEqual(await page.$$eval("#view-settings .set-section h2", h => h.map(x => x.textContent)), ["Model", "Cold desktop app", "Email app", "Email lookup", "Email sign-off", "Your data"]);
     assert.match(await page.textContent("#view-settings"), /This site writes with/);                    // a hosted web page shows what the server uses; keys are not editable here
     assert.equal(await page.locator("#setKey").count(), 0, "a hosted site has no key field: keys never reach the browser");
     // ---- a page the desktop app hasn't approved is told how to fix that
@@ -1066,7 +1066,7 @@ test("desktop UI: the hub's Settings shows the model form, the pairing code, and
   const t = await open({ server: hub }); const { page } = t;
   try {
     await go(page, "settings"); await page.waitForSelector("#extCode");
-    assert.deepEqual(await page.$$eval("#view-settings .set-section h2", h => h.map(x => x.textContent)), ["Model", "Browser extension & web apps", "Email app", "Email sign-off", "Your data"]);
+    assert.deepEqual(await page.$$eval("#view-settings .set-section h2", h => h.map(x => x.textContent)), ["Model", "Browser extension & web apps", "Email app", "Email lookup", "Email sign-off", "Your data"]);
     assert.ok(await page.isVisible("#setProvider") && await page.locator("#setKey").count() === 1, "the desktop app owns provider keys, so it offers them");
     assert.equal(await page.inputValue("#extCode"), db.extensionToken());
     assert.equal(await page.locator("#hubConnect").count(), 0, "the hub does not connect to itself");

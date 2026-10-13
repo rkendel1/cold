@@ -18,9 +18,9 @@ const SUBJECT = F.subject[0].toUpperCase() + F.subject.slice(1);   // generated 
 
 /** What each surface may and may not offer. Anything not listed here must be identical everywhere. */
 const EXPECT = {
-  web:       { settings: ['Model', 'Cold desktop app', 'Email app', 'Email sign-off', 'Your data'], keyField: false, pairing: false, hubForm: true,  readPage: false, insertTweet: false },
-  desktop:   { settings: ['Model', 'Browser extension & web apps', 'Email app', 'Email sign-off', 'Your data'], keyField: true, pairing: true, hubForm: false, readPage: false, insertTweet: false },
-  extension: { settings: ['Model', 'Cold desktop app', 'Email app', 'Email sign-off', 'Your data'], keyField: true, pairing: false, hubForm: true, readPage: true, insertTweet: true },
+  web:       { settings: ['Model', 'Cold desktop app', 'Email app', 'Email lookup', 'Email sign-off', 'Your data'], keyField: false, pairing: false, hubForm: true,  readPage: false, insertTweet: false },
+  desktop:   { settings: ['Model', 'Browser extension & web apps', 'Email app', 'Email lookup', 'Email sign-off', 'Your data'], keyField: true, pairing: true, hubForm: false, readPage: false, insertTweet: false },
+  extension: { settings: ['Writing', 'Opportunity discovery', 'Integrations', 'Privacy and local models', 'About and diagnostics'], keyField: true, pairing: false, hubForm: true, readPage: true, insertTweet: true },
 };
 
 /** A mock OpenAI-style model for the extension's own connection; returns the same canned email the web mock does. */
@@ -41,7 +41,7 @@ function openaiMock() {
 
 const BLOCK = 'Sam Founder\nAcme Flow\nhttps://acme.dev\nX: @acmeflow';
 const until = async (fn, ms = 15000) => { const t = Date.now(); for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t > ms) throw new Error('timed out: ' + fn); await new Promise(r => setTimeout(r, 120)); } };
-const go = (page, v) => page.click(`#nav-${v}`);
+const go = async (page, v) => { await page.click(`#nav-${v}`); await page.evaluate(() => document.querySelectorAll('details.set-group').forEach(d => { d.open = true; })); };   // the extension's Settings groups are collapsible
 
 /** The founder's whole path. Identical on every surface; `s.read()` returns that surface's stored copy of the record. */
 async function workflow(name, page, s) {
@@ -51,8 +51,9 @@ async function workflow(name, page, s) {
   await go(page, 'history');
   assert.deepEqual(await page.$$eval('.hfilters .btn', b => b.map(e => e.textContent.replace(/\s*\d+$/, '').trim())), ['All', 'Draft', 'Marked sent', 'Reply recorded'], `${name}: status words`);
   assert.match(await page.textContent('#view-history .lede'), /can't see your inbox/);
-  await go(page, 'settings'); await page.waitForSelector('.set-section');
-  assert.deepEqual(await page.$$eval('#view-settings .set-section h2', h => h.map(e => e.textContent)), x.settings, `${name}: settings sections`);
+  await go(page, 'settings'); await page.waitForSelector('.set-section, .set-group');
+  // The extension groups the same controls into collapsible sections (one compact screen); web and desktop keep their sections.
+  assert.deepEqual(await page.$$eval('#view-settings .set-section h2, #view-settings .set-group > summary', h => h.map(e => e.textContent)), x.settings, `${name}: settings sections`);
   assert.equal(await page.locator('#setKey').count() > 0, x.keyField, `${name}: provider key field only where this surface stores keys`);
   assert.equal(await page.locator('#extCode').count() > 0, x.pairing, `${name}: pairing code only in the desktop app`);
   assert.equal(await page.locator('#hubConnect, #hubDisconnect').count() > 0, x.hubForm, `${name}: desktop-app connection only on web and extension`);

@@ -56,6 +56,9 @@ export async function createExtensionPlatform() {
 
   const platform = {
     api: { profile: backend.profile, tweet: backend.tweet, models: async () => [] },
+    /** Email lookup runs only through the paired desktop app, which holds the token; the extension never stores one. */
+    people: { available: backend.peopleAvailable, findEmail: backend.findEmail, verifyEmail: backend.verifyEmail },
+    tregSettings: null,
     settings: { model: "", access: "" }, setAccess() {}, setModel() {}, savedModel: () => "",
     subscribe(fn) { subs.add(fn); return () => subs.delete(fn); },
     snapshot, backend,

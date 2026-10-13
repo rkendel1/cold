@@ -9,7 +9,7 @@ export function mountPageCard(composeRoot, { compose, platform }) {
   const line = h("p", { id: "pageLine" });
   const status = h("p", { class: "hint", role: "status", id: "pageStatus" });
   const readBtn = button("Read this page", { id: "readPage", onclick: () => read() });
-  composeRoot.prepend(h("section", { class: "x-page", "aria-label": "This page" }, line, h("div", { class: "actions" }, readBtn), status));
+  composeRoot.prepend(h("section", { class: "x-page", "aria-label": "This page" }, h("div", { class: "x-pagerow" }, line, readBtn), status));
   let kind = { kind: "other" };
 
   const activeTab = async () => (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0];

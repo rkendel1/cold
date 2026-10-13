@@ -101,7 +101,7 @@ function tokenMatches(given) {
 // The extension is paired with a random token shown in Settings. With it the extension may read and write products and drafts,
 // generate, and look up profiles/tweets. It can never reach /api/settings (keys, provider choice, the token itself).
 const EXT_ORIGIN = /^(chrome-extension|moz-extension|safari-web-extension):\/\/[A-Za-z0-9._-]+$/;
-const EXT_PATHS = /^\/api\/(config|data(\/.*)?|generate|profile|tweet)$/;
+const EXT_PATHS = /^\/api\/(config|data(\/.*)?|generate|profile|tweet|people\/email\/(find|verify))$/;
 /** A browser extension, or a web page the user approved in Settings, may be given CORS access (it still needs the pairing code). */
 const pairedOrigin = origin => EXT_ORIGIN.test(origin) || !!(appDb && appDb.webOrigins().includes(origin));
 function extensionAuthorized(req) {
@@ -167,6 +167,16 @@ async function profileRoute(req, res, fn = "lookupProfile") {
   if (typeof link !== "string" || !link.trim() || link.length > 300) return send(res, 400, { error: { message: "Enter a profile link." } });
   const result = await require("./lib/profile")[fn](link, (...a) => fetch(...a));
   send(res, 200, result);   // a failed lookup is a normal outcome the UI explains, not a request error
+}
+
+// Find or verify one work email through treg. User-initiated, one person per request, same abuse controls as /api/generate.
+async function peopleRoute(req, res, op) {
+  const denied = guardGenerate(req);
+  if (denied) return send(res, denied.status, { error: { code: denied.code, message: denied.message } });
+  let body; try { body = JSON.parse(await readBody(req, 8 * 1024)); } catch { return send(res, 400, { error: { message: "Bad request." } }); }
+  const treg = require("./lib/treg");
+  const out = await treg[op === "find" ? "findEmail" : "verifyEmail"](body || {}, { token: tregToken() });
+  send(res, 200, out);   // a miss, a refusal or a failed lookup is a normal outcome the UI explains; it carries no token and no raw provider data
 }
 
 async function generate(req, res) {
@@ -282,10 +292,18 @@ async function dataRoute(req, res, url) {
   return send(res, 404, { error: { message: "Not found" } });
 }
 
+/** The treg token: saved in Settings, else TREG_TOKEN. It is only ever read here, to call treg; it is never sent to a page. */
+const tregToken = () => (settings && settings.integrationKey("treg")) || process.env.TREG_TOKEN || "";
+function tregStatus() {
+  const saved = settings ? settings.integrationKey("treg") : "", env = !!process.env.TREG_TOKEN;
+  return { hasKey: !!saved || env, keyHint: saved ? saved.slice(-4) : "", keyFromEnv: !saved && env };
+}
+
 function settingsSnapshot() {
   const active = resolve().id;
   return {
     enabled: true, active, keyStorage: settings.storage,
+    integrations: { treg: tregStatus() },
     providers: PROVIDERS.map(def => {
       const id = def.id, key = settings.key(id), env = def.env;
       const envKey = !!(env.key && process.env[env.key]);
@@ -347,7 +365,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === "/api/data" || url.pathname.startsWith("/api/data/")) return dataRoute(req, res, url);
     if (req.method === "GET" && url.pathname === "/api/config") {
       const cfg = resolve();
-      return send(res, 200, { app: "cold", ready: cfg.ready, experimental: !!cfg.hf, model: cfg.model, provider: cfg.id, providerLabel: cfg.label, dbEnabled: !!appDb, accessRequired: !!accessToken(), keySetting: cfg.keySetting, settingsEnabled: !!settings });
+      return send(res, 200, { app: "cold", ready: cfg.ready, experimental: !!cfg.hf, model: cfg.model, provider: cfg.id, providerLabel: cfg.label, dbEnabled: !!appDb, accessRequired: !!accessToken(), keySetting: cfg.keySetting, settingsEnabled: !!settings, peopleSearch: !!tregToken() });
     }
     if (req.method === "GET" && url.pathname === "/api/models") {
       if (resolve().id !== "ai-gateway" || settings) return send(res, 200, { models: [] });
@@ -356,6 +374,8 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === "POST" && url.pathname === "/api/generate") return generate(req, res);
     if (req.method === "POST" && url.pathname === "/api/profile") return profileRoute(req, res);
+    if (req.method === "POST" && url.pathname === "/api/people/email/find") return peopleRoute(req, res, "find");
+    if (req.method === "POST" && url.pathname === "/api/people/email/verify") return peopleRoute(req, res, "verify");
     if (req.method === "POST" && url.pathname === "/api/tweet") return profileRoute(req, res, "lookupTweet");
     if (req.method === "GET" && url.pathname === "/tweet-counter.js") {
       return send(res, 200, fs.readFileSync(path.join(ROOT, "public/tweet-counter.js")), "application/javascript; charset=utf-8");

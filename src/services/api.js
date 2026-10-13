@@ -31,6 +31,9 @@ export function createApi({ fetchImpl = (...a) => globalThis.fetch(...a), getAcc
     return data;
   }
   const profile = url => settingsCall("api/profile", { method: "POST", body: JSON.stringify({ url }) });
+  // Email lookup (treg). The server holds the token; these send one person's details and get a candidate back, never a saved result.
+  const findEmail = input => settingsCall("api/people/email/find", { method: "POST", body: JSON.stringify(input) });
+  const verifyEmail = input => settingsCall("api/people/email/verify", { method: "POST", body: JSON.stringify(input) });
   const tweet = url => settingsCall("api/tweet", { method: "POST", body: JSON.stringify({ url }) });
   const setWebOrigins = origins => settingsCall("api/settings/web-origins", { method: "PUT", body: JSON.stringify({ origins }) });
   const getExtension = () => settingsCall("api/settings/extension");
@@ -53,5 +56,5 @@ export function createApi({ fetchImpl = (...a) => globalThis.fetch(...a), getAcc
   }
   sample.json = async (prompt, opts) => parseLooseJson((await sample(prompt, opts)).text);
 
-  return { config, models, sample, profile, tweet, getExtension, rotateExtension, setWebOrigins, getSettings, saveSettings, providerModels };
+  return { config, models, sample, profile, tweet, findEmail, verifyEmail, getExtension, rotateExtension, setWebOrigins, getSettings, saveSettings, providerModels };
 }

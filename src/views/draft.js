@@ -1,5 +1,5 @@
 // The result pane in Compose: empty state, progress, error, and the editable draft with its review sections.
-import { h, clear, autosize, fmtDate } from "../components/dom.js";
+import { h, clear, autosize, fmtDate, revealAndFocus } from "../components/dom.js";
 import { chip, button, notice, toast, announce } from "../components/ui.js";
 import { confirmDialog, promptDialog } from "../components/dialog.js";
 import { copyText } from "../services/clipboard.js";
@@ -135,7 +135,7 @@ export function createDraftPane({ store, handlers, platform = null }) {
     const handoffMsg = h("p", { class: "hint handoff-msg", id: "handoffMsg", role: "status" });
     // Which email app "Open in email" uses is chosen once in Settings; say which, and make changing it one click.
     const appNote = h("p", { class: "hint", id: "emailAppNote" });
-    const paintApp = () => { appNote.textContent = `Open in email uses ${APP_LABELS[S.settings.emailApp] || APP_LABELS.mailto}. `; appNote.append(h("button", { type: "button", class: "linkbtn", id: "changeEmailApp", onclick: () => { location.hash = "#/settings"; setTimeout(() => document.getElementById("emailApp")?.focus(), 200); } }, "Change")); };
+    const paintApp = () => { appNote.textContent = `Open in email uses ${APP_LABELS[S.settings.emailApp] || APP_LABELS.mailto}. `; appNote.append(h("button", { type: "button", class: "linkbtn", id: "changeEmailApp", onclick: () => { location.hash = "#/settings"; setTimeout(() => revealAndFocus("emailApp"), 200); } }, "Change")); };
     paintApp();
     // Optional private note (why they fit, what you sent, what the reply said). Saved with the record.
     const noteIn = h("textarea", { id: "eNote", rows: 2, placeholder: "Why they fit, what you actually sent, what the reply said, what to follow up on…", "aria-describedby": "eNoteHint" }); noteIn.value = rec.note || "";

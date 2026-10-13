@@ -59,8 +59,10 @@ async function coldApp(model, dir) {
     start: () => new Promise(r => server.listen(port, '127.0.0.1', r)),
   };
 }
-async function launch(dir, { args = [], init = null, ext = path.join(__dirname, '../extension') } = {}) {
+async function launch(dir, { args = [], init = null, expand = true, ext = path.join(__dirname, '../extension') } = {}) {
   const ctx = await pw.chromium.launchPersistentContext(path.join(dir, 'profile'), { executablePath: CHROMIUM, headless: false, args: [`--disable-extensions-except=${ext}`, `--load-extension=${ext}`, '--headless=new', ...args] });
+  // Settings groups and the Ask Cold row are collapsed by default; unless a test is about that, open them as they appear (as a user would).
+  if (expand) await ctx.addInitScript(() => { const open = () => document.querySelectorAll('details.set-group, details.x-discover').forEach(d => { if (!d.dataset.userClosed) d.open = true; }); new MutationObserver(open).observe(document, { childList: true, subtree: true }); });
   if (init) await ctx.addInitScript(init);
   await ctx.route('https://x.com/**', r => r.fulfill({ contentType: 'text/html', body: TWEET_PAGE }));
   await ctx.route('https://www.linkedin.com/**', r => r.fulfill({ contentType: 'text/html', body: PROFILE_PAGE }));
@@ -71,7 +73,11 @@ async function launch(dir, { args = [], init = null, ext = path.join(__dirname, 
   await panel.waitForSelector('#genBtn', { state: 'attached' });
   return { ctx, panel, errors };
 }
-const nav = (panel, v) => panel.click(`#nav-${v === 'write' ? 'compose' : v}`);
+// Settings is grouped into collapsible sections and Ask Cold is a collapsed row on Write; tests that drive a control inside one open it first.
+const nav = async (panel, v) => {
+  await panel.click(`#nav-${v === 'write' ? 'compose' : v}`);
+  await panel.evaluate(() => document.querySelectorAll('details.set-group, details.x-discover').forEach(d => { d.open = true; }));
+};
 const until = async (fn, ms = 20000) => { const t = Date.now(); for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t > ms) throw new Error('timed out waiting for condition: ' + fn); await new Promise(r => setTimeout(r, 150)); } };
 const hubOnline = panel => panel.evaluate(() => __cold.platform.hub.link.state.online);
 const model = panel => panel.evaluate(() => (__cold.platform.backend.describe() || {}).label || null);
@@ -465,8 +471,8 @@ test('Ask Cold keeps page text on this computer: with no local model it explains
     await showTab(s.ctx, s.panel, `${site.base}/northwind/careers`);
     await s.panel.click('#askRun');
     await s.panel.waitForSelector('#askConsent .notice, #askConsent [role], #askConsent p');
-    assert.match(await s.panel.textContent('#askConsent'), /Nothing was read\./); assert.match(await s.panel.textContent('#askConsent'), /no graphics adapter is available|hasn't been downloaded/);   // the on-device model is what is offered first; which message depends on this computer's GPU
-    await s.panel.click('#bwmStart'); assert.match(await s.panel.textContent('#bwmStatus'), /didn't start/); assert.equal(await s.panel.getAttribute('#bwmState', 'data-state'), 'idle');
+    assert.match(await s.panel.textContent('#askConsent'), /Nothing was read\./); assert.match(await s.panel.textContent('#askConsent'), /no graphics adapter is available|hasn't been downloaded|no recorded checksums/);   // the on-device model is what is offered first; which message depends on this computer's GPU
+    await s.panel.click('#bwmStart'); await s.panel.waitForFunction(() => /didn't start/.test(document.querySelector('#bwmStatus').textContent)); assert.equal(await s.panel.getAttribute('#bwmState', 'data-state'), 'idle');
     assert.deepEqual(seen, [], 'no request left the browser');
   } catch (e) { await site.close(); throw e; } finally { await s.ctx.close(); }   // an early failure must not leave the fixture server open (it would hang the whole run)
   // ---- a hosted model is configured: the same refusal, no request to it, and the page text is never sent without the user's say-so
@@ -507,6 +513,12 @@ test('Browse With Me: explicit start, pause and stop; checks only eligible pages
     await panel.waitForSelector('#bwmList .ask-card', { timeout: 20000 });
     assert.match(await panel.textContent('#bwmList'), /Northwind Logistics/);
     assert.equal(evalPrompts(model).length, 1);
+    // the session bar follows the user to every tab, so Pause and Stop are always reachable (Start is configured and run from Write)
+    for (const tab of ['knowledge', 'leads', 'history', 'settings']) {
+      await nav(panel, tab);
+      assert.equal(await panel.isVisible('#bwmBar'), true, `session bar visible on ${tab}`); assert.equal(await panel.isVisible('#bwmStop'), true); assert.match(await panel.textContent('#bwmBar'), /Browse With Me is on/);
+    }
+    await nav(panel, 'write');
     // a different page about the same company is the same opportunity: not shown again
     await showTab(ctx, panel, `${site.base}/northwind/news`);
     await panel.waitForFunction(() => /nothing new/.test(document.querySelector('#bwmStatus').textContent), null, { timeout: 25000 });
@@ -579,10 +591,12 @@ test('on-device model, REAL runtime and NO usable GPU (this headless browser has
   if (await hasAdapter(s.panel)) { await s.ctx.close(); await site.close(); return; }   // a machine with a real GPU: the next test covers it
   try {
     await showTab(s.ctx, s.panel, `${site.base}/northwind/careers`);
+    await nav(s.panel, 'settings');
     await s.panel.click('#localSetup');
     await s.panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'unsupported');
     assert.equal(await localCode(s.panel), 'no_adapter'); assert.match(await s.panel.textContent('#localState'), /no graphics adapter is available/);
     assert.equal(await s.panel.evaluate(() => !!globalThis.coldWebLLM), false, 'the runtime was never even loaded');
+    await nav(s.panel, 'write');
     await s.panel.click('#askRun');
     await s.panel.waitForFunction(() => /Nothing was read\./.test(document.querySelector('#askConsent').textContent));
     assert.match(await s.panel.textContent('#askConsent'), /no graphics adapter is available/); assert.match(await s.panel.textContent('#askConsent'), /Your choices/);
@@ -606,6 +620,7 @@ test('on-device model, REAL runtime on a software WebGPU adapter and STAND-IN mo
   if (!fs.existsSync(lib)) { await s.ctx.close(); await site.close(); return t_skip('the build could not fetch the compiled model libraries'); }
   try {
     await showTab(s.ctx, s.panel, `${site.base}/northwind/careers`);                    // the user is looking at a page with private-looking text
+    await nav(s.panel, 'settings');
     await s.panel.click('#localSetup');
     await s.panel.waitForSelector('dialog');
     const text = await s.panel.textContent('dialog');
@@ -629,11 +644,13 @@ test('on-device model, REAL runtime on a software WebGPU adapter and STAND-IN mo
     }
     assert.deepEqual(outside, [], 'nothing else left the browser');
     // now ask: the local model failed, a hosted model is configured, and it is NOT used
+    await nav(s.panel, 'write');
     await s.panel.click('#askRun');
     await s.panel.waitForFunction(() => /Nothing was read\./.test(document.querySelector('#askConsent').textContent));
     await new Promise(r => setTimeout(r, 1000));
     assert.deepEqual(other, [], 'no hosted fallback after the local model failed');
     // the files can be removed again
+    await nav(s.panel, 'settings');
     await s.panel.click('#localRemove');
     await s.panel.waitForFunction(() => /Removed from this browser/.test(document.querySelector('#localState').textContent));
     assert.deepEqual(await s.panel.evaluate(async () => { const out = []; for (const k of await caches.keys()) for (const r of await (await caches.open(k)).keys()) out.push(k + ' ' + r.url); return out; }), [], 'removal left no model file in the browser cache');
@@ -652,6 +669,7 @@ test('on-device model, REAL runtime: a compiled model library that does not matc
   await s.ctx.route(`${HF}/**`, modelHost(hf));
   try {
     if (!(await hasAdapter(s.panel))) return t_skip('no software WebGPU adapter in this browser');
+    await nav(s.panel, 'settings');
     await s.panel.click('#localSetup'); await s.panel.click('dialog button[value="ok"]');
     await s.panel.waitForFunction(() => ['error', 'ready'].includes(document.querySelector('#localState').dataset.phase), null, { timeout: 120000 });
     assert.equal(await localPhase(s.panel), 'error'); assert.equal(await localCode(s.panel), 'integrity_failed');
@@ -695,10 +713,12 @@ test('on-device model, shipped build (pins not yet recorded): setup fails closed
   await s.ctx.route(`${HF}/**`, modelHost(hf)); await s.ctx.route('https://models.example.com/**', r => { other.push(r.request().url()); r.abort(); });
   try {
     await showTab(s.ctx, s.panel, `${site.base}/northwind/careers`);
+    await nav(s.panel, 'settings');
     await s.panel.click('#localSetup');
     await s.panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'error');
     assert.equal(await localCode(s.panel), 'unpinned_model'); assert.match(await s.panel.textContent('#localState'), /checksum|pinned/i);
     assert.equal(await s.panel.locator('dialog').count(), 0, 'no download dialog for a download that cannot be verified');
+    await nav(s.panel, 'write');
     await s.panel.click('#askRun'); await s.panel.waitForFunction(() => /Nothing was read\./.test(document.querySelector('#askConsent').textContent));
     await new Promise(r => setTimeout(r, 800));
     assert.deepEqual([hf.length, other.length, (await fake(s.panel)).creates, await cacheCount(s.panel)], [0, 0, 0, 0]);
@@ -712,6 +732,7 @@ test('on-device model, REAL download path with stand-in files: a file that does 
   await s.ctx.route(`${HF}/**`, modelHost(hf, { tamper })); await s.ctx.route('https://models.example.com/**', r => { other.push(r.request().url()); r.abort(); });
   try {
     await showTab(s.ctx, s.panel, `${site.base}/northwind/careers`);
+    await nav(s.panel, 'settings');
     await s.panel.click('#localSetup'); await s.panel.click('dialog button[value="ok"]');
     await s.panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'error');
     assert.equal(await localCode(s.panel), 'integrity_failed');
@@ -719,10 +740,12 @@ test('on-device model, REAL download path with stand-in files: a file that does 
     assert.equal((await fake(s.panel)).creates, 0, 'the runtime never started');
     assert.ok(await cacheCount(s.panel) < 3, 'the bad file is not stored');
     assert.equal(await s.panel.evaluate(async () => { for (const k of await caches.keys()) for (const r of await (await caches.open(k)).keys()) if (r.url.endsWith('tokenizer.json')) return true; return false; }), false);
+    await nav(s.panel, 'write');
     await s.panel.click('#askRun'); await s.panel.waitForFunction(() => /Nothing was read\./.test(document.querySelector('#askConsent').textContent));
     await new Promise(r => setTimeout(r, 600)); assert.deepEqual(other, [], 'no hosted fallback after an integrity failure');
     // retry once the host serves the pinned bytes: only the missing file is fetched
     delete tamper['tokenizer.json']; hf.length = 0;
+    await nav(s.panel, 'settings');
     await s.panel.click('#localSetup'); await s.panel.click('dialog button[value="ok"]').catch(() => {});
     await s.panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'ready');
     assert.deepEqual(hf.map(r => r.url.split('/').pop()).sort(), ['tensor-cache.json', 'tokenizer.json'], 'the retry fetched only the two files that were not yet stored; the config was reused');
@@ -736,6 +759,7 @@ test('on-device model, REAL download path: cancelling a download in progress sto
   await s.ctx.route(`${HF}/**`, modelHost(hf, { hold }));
   try {
     await showTab(s.ctx, s.panel, `${site.base}/northwind/careers`);
+    await nav(s.panel, 'settings');
     await s.panel.click('#localSetup'); await s.panel.click('dialog button[value="ok"]');
     await s.panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'loading');
     await s.panel.waitForSelector('#localCancel', { state: 'visible' }); await s.panel.click('#localCancel');
@@ -763,6 +787,7 @@ test('on-device model (FAKE runtime): nothing downloads without consent; setup s
     assert.deepEqual([(await fake(panel)).creates, (await fake(panel)).gens.length, hf.length], [0, 0, 0]);
     // ---- cancel while the runtime starts (the files were downloaded and verified first)
     await panel.evaluate(() => { window.__fake.hang = true; });
+    await nav(panel, 'settings');
     await panel.click('#localSetup'); await panel.click('dialog button[value="ok"]');
     await panel.waitForFunction(() => window.__fake.creates === 1);
     assert.equal(await localPhase(panel), 'loading');
@@ -775,6 +800,7 @@ test('on-device model (FAKE runtime): nothing downloads without consent; setup s
     await panel.click('#localSetup'); await panel.click('dialog button[value="ok"]').catch(() => {});
     await panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'ready');
     assert.match(await panel.textContent('#askModelLine'), /Uses the on-device model .*running in this browser\. Page text is processed on this device and is not sent anywhere/);
+    await nav(panel, 'write');
     await panel.click('#askRun'); await panel.waitForSelector('#askResult .ask-card');
     assert.match(await panel.textContent('#askResult'), /Northwind Logistics/);
     const c1 = (await fake(panel)).creates;
@@ -795,6 +821,7 @@ test('on-device model (FAKE runtime): nothing downloads without consent; setup s
     assert.equal(hf.length, 3, 'evaluations and reuse never touched the model host again');
     assert.ok(hf.every(r => r.url.includes(`/resolve/${PIN_REV}/`) && !r.url.includes('/resolve/main/')));
     // ---- remove: the files are deleted and the model needs setting up again
+    await nav(panel, 'settings');
     await panel.click('#localRemove');
     await panel.waitForFunction(() => /Removed from this browser/.test(document.querySelector('#localState').textContent));
     assert.equal(await panel.evaluate(async () => { let n = 0; for (const k of await caches.keys()) n += (await (await caches.open(k)).keys()).length; return n; }), 0, 'removal deleted every stored model file');
@@ -812,8 +839,10 @@ test('on-device model (FAKE runtime): a model already stored in the browser load
   const { ctx, panel } = s;
   try {
     await showTab(ctx, panel, `${site.base}/northwind/careers`);
+    await nav(panel, 'settings');
     await panel.click('#localSetup'); await panel.click('dialog button[value="ok"]');           // stored once, with consent
     await panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'ready');
+    await nav(panel, 'write');
     await panel.reload(); await panel.waitForSelector('#askRun', { state: 'attached' });         // a new panel session: the model is stored but not loaded
     hf.length = 0;
     // cached: asking loads it (lazily, on first request) and answers; no download dialog
@@ -830,7 +859,9 @@ test('on-device model (FAKE runtime): a model already stored in the browser load
     assert.deepEqual(hosted, [], 'the hosted model that is configured was not used');
     assert.equal(await panel.locator('#askResult .ask-card').count(), 0);
     // retry works
+    await nav(panel, 'settings');
     await panel.click('#localSetup'); await panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'ready', null, { timeout: 15000 }).catch(async () => { await panel.click('dialog button[value="ok"]'); await panel.waitForFunction(() => document.querySelector('#localState').dataset.phase === 'ready'); });
+    await nav(panel, 'write');
     await panel.click('#askRun'); await panel.waitForSelector('#askResult .ask-card');
     assert.deepEqual(hosted, []);
   } finally { await ctx.close(); await site.close(); fs.rmSync(copy, { recursive: true, force: true }); }
@@ -844,12 +875,16 @@ test('on-device model (FAKE runtime) and a model server on this computer can bot
   const { ctx, panel } = s;
   try {
     await showTab(ctx, panel, `${site.base}/northwind/careers`);
+    await nav(panel, 'settings');
     assert.equal(await panel.isVisible('#askEngineField'), true);
     assert.match(await panel.textContent('#askModelLine'), /which this browser reaches on this computer.*can't verify what that server does/);
+    await nav(panel, 'write');
     await panel.click('#askRun'); await panel.waitForSelector('#askResult .ask-card');
     assert.equal(evalPrompts(model).length, 1, 'the loopback model answered');
     assert.equal((await fake(panel)).gens.length, 0, 'the on-device model was not used');
+    await nav(panel, 'settings');
     await panel.selectOption('#askEngine', 'device');
+    await nav(panel, 'write');
     await panel.click('#askRun');
     await panel.waitForFunction(() => /hasn't been downloaded/.test(document.querySelector('#askConsent').textContent));
     assert.equal(evalPrompts(model).length, 1, 'choosing the on-device model does not quietly use the server instead');

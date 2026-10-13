@@ -150,7 +150,7 @@ Details:
   |---|---|
   | `name` | Who you're writing to. **The only required column.** |
   | `company`, `role` | Where they work and their job title. |
-  | `email` | One address. Used only for Open in email; Cold never looks one up. |
+  | `email` | One address. Used only for Open in email. Cold looks one up only when you press Find email on a lead. |
   | `profile_url` | A LinkedIn (`linkedin.com/in/…`) or X (`x.com/handle`) link. |
   | `why` | The specific reason you're contacting them: something they wrote, built or said. Cold uses it as the only connection and won't invent one. |
   | `product`, `goal` | Which saved product to write about (its name in Knowledge), and what you want: advice, investment, introduction, customer, partnership or other. Either can be left blank. |
@@ -161,6 +161,8 @@ Details:
 - **Manage them:** search, filter by list or by how far outreach has got (not contacted, draft, marked sent, reply recorded), edit any lead, add one by hand, select several to delete or move to a list, and *Export CSV* (the same columns, ready to re-import). Spreadsheet formulas are defused on export.
 - **Write to a lead:** *Write* opens Write with their name, company, role, email, profile link and *why* filled in, and their product and goal if you set them. Nothing is generated until you press Generate. The draft remembers who it was for, so the Leads list shows its progress from History's Draft / Marked sent / Reply recorded.
 - **Where they live:** with the desktop app they're rows in the `leads` table of its SQLite database (`sqlite3 cold.db "select name, company, email, list from leads"`). A name, company, email or list fixed with a SQLite tool shows in the app the next time it reads the database (reload); edit in Cold itself and every surface stays in sync. On web and in the extension they're part of the library like products and drafts: kept locally, working with the app closed, synced when it's back. Leads are never sent to a model except what you put in a draft you ask Cold to write.
+
+- **Find email (optional):** on a lead with no address, **Find email** asks [treg](https://treg.to) for a work email, shows it as a *candidate* (provider, source if any, confidence, deliverability kept separate), lets you verify it, and saves nothing until you accept. It needs a treg token in the desktop app's Settings. See [docs/people-search.md](docs/people-search.md) for what is sent, cost caps and limits.
 
 ## Subjects and your sign-off
 

@@ -3,7 +3,7 @@
 // goes to a model this browser reaches on this computer, unless the user says otherwise for this panel session; results are only
 // suggestions, and the only things a user can do with one are Save as prospect (the normal library save), Start a draft (fills the
 // Write form) and Dismiss. Cold never sends or contacts anyone from here.
-import { h, clear } from "../../src/components/dom.js";
+import { h, clear, revealAndFocus } from "../../src/components/dom.js";
 import { button, chip, notice, toast } from "../../src/components/ui.js";
 import { confirmDialog } from "../../src/components/dialog.js";
 import { MODELS, MODEL_SOURCE, modelByKey } from "./localModels.js";
@@ -14,8 +14,18 @@ const NEXT_LABEL = { save_prospect: "Save as a prospect", draft_outreach: "Start
 const sitePattern = url => { const u = new URL(url); return `${u.protocol}//${u.hostname}/*`; };
 const hasAccess = url => chrome.permissions.contains({ origins: [sitePattern(url)] }).catch(() => false);
 
-export function mountAskCold(composeRoot, { store, platform, compose }) {
+/**
+ * Builds the pieces of Ask Cold and Browse With Me and says where each one lives (see index.js of the panel):
+ *   settings.discovery  Settings > Opportunity discovery: which model checks pages (when there is a choice) and what Browse With Me will and won't read
+ *   settings.local      Settings > Privacy and local models: the on-device model (download, source, checksums, set up, cancel, remove)
+ *   actions             Write, one collapsed row: the question and its answers, the model line, and starting a session
+ *   bar                 the shell, on every tab while a session is running or paused: its state and Pause / Resume / Stop / Allow, so a
+ *                       running session can always be stopped without finding the right tab first
+ * The behaviour, ids and restrictions are unchanged; only where the controls sit has moved.
+ */
+export function createAskCold({ store, platform, getCompose }) {
   const S = store.state;
+  const compose = { fill: patch => getCompose().fill(patch), focus: () => getCompose().focus() };
   const lm = platform.localModel;
   let engine = "auto";                          // auto | device | loopback | hosted: this panel session only, never saved. "hosted" is the user's explicit choice.
   let busy = false, tick = null, timer = null;
@@ -51,14 +61,23 @@ export function mountAskCold(composeRoot, { store, platform, compose }) {
   const stopBtn = button("Stop", { kind: "danger", id: "bwmStop", onclick: () => stopSession("") });
   const allowBtn = button("Allow Cold on this site", { kind: "ghost", id: "bwmAllow", onclick: () => allowSite() });
 
-  composeRoot.prepend(h("section", { class: "x-page x-ask", "aria-label": "Ask Cold" },
-    h("h2", {}, "Ask Cold"), modelLine, consent, engineField, localBlock,
-    h("div", { class: "field" }, h("label", { for: "askQuestion" }, "Ask about the page you are on"), question), quick,
-    h("div", { class: "actions" }, askBtn), status, result,
-    h("h3", {}, "Browse With Me"), bwmNote, bwmState,
-    h("div", { class: "actions" }, startBtn, pauseBtn, resumeBtn, stopBtn, allowBtn), bwmStatus, bwmList));
+  const discoverState = h("span", { class: "opt", id: "discoverState" });
+  const actions = h("details", { class: "x-discover", id: "discover" },
+    h("summary", {}, "Ask about this page ", discoverState),
+    h("div", { class: "in" }, modelLine, consent,
+      h("div", { class: "field" }, h("label", { for: "askQuestion" }, "Your question"), question), quick,
+      h("div", { class: "actions" }, askBtn), status, result,
+      h("div", { class: "x-bwm" }, bwmState, h("div", { class: "actions" }, startBtn), bwmStatus, bwmList)));
+  const barState = h("span", { id: "bwmBarState" });
+  const bar = h("div", { class: "x-bar", id: "bwmBar", role: "region", "aria-label": "Browse With Me session", hidden: true }, barState, h("div", { class: "actions" }, pauseBtn, resumeBtn, stopBtn, allowBtn));
+  const discovery = h("div", { class: "form", id: "discoverySettings" },
+    h("p", { class: "hint" }, "Pages are checked on this device: with the on-device model, or a model server on this computer if you've set one up."),
+    engineField, bwmNote);
 
   const activeTab = async () => (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0];
+
+  const openLocalSettings = () => { location.hash = "#/settings"; setTimeout(() => revealAndFocus("localModel"), 250); };
+  const settingsLink = () => h("div", { class: "actions" }, button("Open the on-device model settings", { kind: "ghost", id: "askOpenSettings", onclick: openLocalSettings }));
 
   // ---- where page text may go ---------------------------------------------------------------------------------------------------
   const loopbackReady = () => { const { cfg } = platform.ownModel(); return !!cfg && cfg.ready && isLoopbackUrl(cfg.baseUrl); };
@@ -88,8 +107,9 @@ export function mountAskCold(composeRoot, { store, platform, compose }) {
     const why = loc.kind === "remote" ? `Your model (${loc.label}) is at ${loc.host}, not on this computer.`
       : loc.kind === "unverified" ? "The only other model available is the Cold desktop app's. From here Cold can't tell whether it runs on this computer."
       : loc.kind === "device_pending" ? "The on-device model isn't ready." : "No model on this computer is set up.";
-    consent.append(notice("warn", h("strong", {}, "Nothing was read."), h("p", {}, `${why} Cold keeps page text on this computer unless you say otherwise. You can set up the on-device model below (no extra software), use a model server on this computer such as Ollama, or choose to use the available model for this panel session.`),
+    consent.append(notice("warn", h("strong", {}, "Nothing was read."), h("p", {}, `${why} Cold keeps page text on this computer unless you say otherwise. You can set up the on-device model in Settings > Privacy and local models (no extra software), use a model server on this computer such as Ollama, or choose to use the available model for this panel session.`),
       d && loc.kind !== "device_pending" ? h("div", { class: "actions" }, button(`Use ${d.label} for these checks`, { id: "askRemoteOn", onclick: () => { engine = "hosted"; paintModel(); paintLocal(); status.textContent = "Allowed for this panel session. Page text will be sent to that model when you ask."; } })) : null));
+    consent.append(settingsLink());
     modelLine.textContent = "";
   }
 
@@ -136,6 +156,7 @@ export function mountAskCold(composeRoot, { store, platform, compose }) {
     consent.append(notice("warn", h("strong", {}, "Nothing was read."), h("p", {}, `${message} Cold keeps page text on this computer unless you choose otherwise.`),
       h("p", { class: "hint" }, "Your choices: fix the problem above, use a model server on this computer such as Ollama (Settings)" + (d && !loopbackReady() ? `, or use ${d.label} for these checks.` : ".")),
       d && !loopbackReady() ? h("div", { class: "actions" }, button(`Use ${d.label} for these checks`, { id: "askRemoteOn", onclick: () => { engine = "hosted"; paintModel(); paintLocal(); status.textContent = "Allowed for this panel session. Page text will be sent to that model when you ask."; } })) : null));
+    consent.append(settingsLink());
     modelLine.textContent = ""; status.textContent = "Nothing was read.";
   }
   /** Make the on-device model ready for a check WITHOUT downloading anything unasked: load it only if it is already stored in this browser. */
@@ -144,7 +165,7 @@ export function mountAskCold(composeRoot, { store, platform, compose }) {
     if (lm.state.phase === "loading" || lm.state.phase === "checking") { status.textContent = "The on-device model is still loading."; return false; }
     const sup = await lm.support();
     if (!sup.ok) { try { await lm.load(); } catch { /* the state shows why */ } deviceProblem(sup.message); return false; }
-    if (!(await lm.isCached())) { deviceProblem(lm.state.pinned === false ? (await lm.pinInfo(lm.state.modelKey, sup.variant)).problem : "The on-device model hasn't been downloaded to this browser yet. Choose “Set up the on-device model” below; it asks before downloading."); return false; }
+    if (!(await lm.isCached())) { deviceProblem(lm.state.pinned === false ? (await lm.pinInfo(lm.state.modelKey, sup.variant)).problem : "The on-device model hasn't been downloaded to this browser yet. Choose “Set up the on-device model” in Settings > Privacy and local models; it asks before downloading."); return false; }
     status.textContent = "Loading the on-device model from this browser…";
     try { await lm.load(); return true; } catch (e) { deviceProblem(lm.state.text); return false; }
   }
@@ -179,7 +200,7 @@ export function mountAskCold(composeRoot, { store, platform, compose }) {
 
   // ---- results and the only three things a user can do with one ------------------------------------------------------------------
   function renderResult(host, r, page, key) {
-    clear(host);
+    clear(host); actions.open = true;
     if (r.verdict === "none") { host.append(h("div", { class: "card ask-card", dataset: { verdict: "none" } }, h("strong", {}, "No meaningful opportunity found"), h("p", {}, r.summary || "Nothing on this page points to an opportunity for what you sell."), r.dropped ? h("p", { class: "hint" }, "Some suggestions were discarded because the page didn't back them up.") : null, button("Dismiss", { kind: "ghost", class: "askDismiss", onclick: () => clear(host) }))); return; }
     if (r.verdict === "uncertain") host.append(notice("warn", h("strong", {}, "Uncertain."), h("p", {}, "The page only weakly suggests this. Treat it as a lead to check, not a finding.")));
     for (const o of r.opportunities) host.append(card(o, page, r.verdict, key ? opportunityKey(o, page) : null, host));
@@ -217,6 +238,11 @@ export function mountAskCold(composeRoot, { store, platform, compose }) {
     bwmState.dataset.state = st;
     startBtn.hidden = st === "active" || st === "paused"; pauseBtn.hidden = st !== "active"; resumeBtn.hidden = st !== "paused"; stopBtn.hidden = !(st === "active" || st === "paused");
     allowBtn.hidden = !(st === "active" || st === "paused");
+    // The session controls follow you to every tab while a session exists, so it can always be paused or stopped.
+    const live = st === "active" || st === "paused";
+    bar.hidden = !live;
+    barState.textContent = live ? `Browse With Me ${st === "active" ? "is on" : "is paused"} · ${session.checked} page${session.checked === 1 ? "" : "s"} checked` : "";
+    discoverState.textContent = live ? `· Browse With Me ${st === "active" ? "on" : "paused"}` : "";
   }
   async function startSession() {
     let p = plan();
@@ -245,7 +271,7 @@ export function mountAskCold(composeRoot, { store, platform, compose }) {
         const tab = await activeTab();
         if (!tab || !tab.url) return;
         const r = await session.offer({ id: tab.id, url: tab.url, incognito: tab.incognito });
-        if (r.status === "surfaced") { bwmStatus.textContent = `New opportunity on ${new URL(tab.url).hostname}.`; for (const it of r.items) bwmList.prepend(card(it.opportunity, it.page, "opportunity", it.key, bwmList)); }
+        if (r.status === "surfaced") { actions.open = true; bwmStatus.textContent = `New opportunity on ${new URL(tab.url).hostname}.`; for (const it of r.items) bwmList.prepend(card(it.opportunity, it.page, "opportunity", it.key, bwmList)); }
         else if (r.status === "skipped") bwmStatus.textContent = `Skipped ${new URL(tab.url).hostname || "this page"}: ${r.reason}.`;
         else if (r.status === "error") bwmStatus.textContent = (r.error && r.error.message) || "Couldn't check that page.";
         else if (r.status === "throttled") timer = setTimeout(() => schedule(0), 4000);
@@ -267,5 +293,5 @@ export function mountAskCold(composeRoot, { store, platform, compose }) {
 
   paintModel(); paintLocal(); paintSession();
   platform.subscribe(() => { if (!consent.firstChild || plan().ok) paintModel(); });
-  return { get session() { return session; } };
+  return { actions, bar, settings: { discovery, local: localBlock }, get session() { return session; } };
 }

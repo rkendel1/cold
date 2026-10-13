@@ -6,6 +6,7 @@ import { button, notice, chip, field, textInput, textArea, toast, announce } fro
 import { confirmDialog, promptDialog } from "../components/dialog.js";
 import { GOALS, STATUS_COPY } from "../domain/constants.js";
 import { uid } from "../domain/ids.js";
+import { mountFindEmail } from "./findEmail.js";
 import { LEAD_FIELDS, MAX_IMPORT_BYTES, templateCsv, leadsToCsv, planImport, checkLead, leadProgress, filterLeads, canonicalProfile } from "../domain/leads.js";
 
 const PAGE = 100;
@@ -20,7 +21,7 @@ function download(name, text) {
   document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
-export function mountLeads(root, { store, navigate }) {
+export function mountLeads(root, { store, navigate, platform }) {
   const S = store.state;
   let query = "", listFilter = "all", progressFilter = "all", shown = PAGE, plan = null, planName = "", selected = new Set();
 
@@ -37,7 +38,7 @@ export function mountLeads(root, { store, navigate }) {
 
   root.append(
     h("div", { class: "view-head" }, h("h1", { id: "leads-title", tabindex: "-1" }, "Leads"),
-      h("p", { class: "lede" }, "The people you might write to. Import a spreadsheet saved as CSV, or add them one at a time; then write to any of them in a click. Cold never looks anyone up: it only uses what you put here.")),
+      h("p", { class: "lede" }, "The people you might write to. Import a spreadsheet saved as CSV, or add them one at a time; then write to any of them in a click. Cold only uses what you put here. It looks up an email only when you press Find email on a lead.")),
     h("div", { class: "actions" },
       button("Import CSV", { kind: "primary", id: "importBtn", onclick: () => fileIn.click() }),
       button("Download template", { id: "templateBtn", onclick: () => { download("cold-leads-template.csv", templateCsv()); announce("Template downloaded"); } }),
@@ -95,8 +96,8 @@ export function mountLeads(root, { store, navigate }) {
   }
 
   /* ---------- add / edit one lead ---------- */
-  function edit(lead) {
-    const isNew = !lead, base = lead || { id: uid("l"), source: "manual", createdAt: Date.now() };
+  function edit(lead, { findEmail = false } = {}) {
+    const isNew = !lead; let base = lead || { id: uid("l"), source: "manual", createdAt: Date.now() };
     const f = {};
     for (const spec of LEAD_FIELDS) {
       const common = { id: `lf-${spec.key}`, label: spec.label, hint: spec.hint, required: spec.required ? true : null };
@@ -119,7 +120,13 @@ export function mountLeads(root, { store, navigate }) {
       h("div", { class: "form" }, h("div", { class: "grid2" }, f.name, f.company), h("div", { class: "grid2" }, f.role, f.email), f.profileUrl, f.why, h("div", { class: "grid2" }, f.product, f.goal), h("div", { class: "grid2" }, f.list, f.notes),
         h("div", { class: "actions" }, button("Save lead", { kind: "primary", id: "saveLead", onclick: save }), button("Cancel", { kind: "ghost", onclick: () => { editorHost.hidden = true; } }),
           isNew ? null : button("Delete lead", { kind: "ghost danger", id: "deleteLead", onclick: () => del([base.id]).then(done => { if (done) editorHost.hidden = true; }) })), msg));
-    editorHost.hidden = false; f.name.input.focus(); editorHost.scrollIntoView?.({ block: "nearest" });
+    // Only for a saved lead with no address: a found email is offered as a candidate, never saved until accepted. A lead that has one is never replaced from here.
+    let finder = null;
+    if (!isNew && !base.email && platform && platform.people) {
+      finder = mountFindEmail({ store, platform, lead: base, onAccepted: fresh => { if (fresh) { base = fresh; f.email.input.value = fresh.email; } } });
+      editorHost.append(finder);
+    }
+    editorHost.hidden = false; (findEmail && finder ? finder.querySelector("#feFind") : f.name.input).focus(); editorHost.scrollIntoView?.({ block: "nearest" });
   }
   async function del(ids) {
     const names = ids.map(id => store.leadById(id)).filter(Boolean);
@@ -153,7 +160,7 @@ export function mountLeads(root, { store, navigate }) {
           h("td", {}, h("strong", {}, l.name || "Unnamed"), l.role ? h("div", { class: "sub" }, l.role) : null),
           h("td", {}, l.company), h("td", {}, l.email, issues.some(w => /email/.test(w)) ? h("span", { class: "chip warn", title: "This address doesn't look valid" }, "check") : null),
           h("td", { class: "why" }, l.why), h("td", {}, l.list), h("td", {}, chip(kind, label, { glyph: false })),
-          h("td", { class: "ctl" }, tag(button("Edit", { kind: "ghost", "aria-label": `Edit ${l.name}`, onclick: () => edit(l) }), "leadEdit"), tag(button("Write", { "aria-label": `Write to ${l.name}`, onclick: () => navigate("compose", { lead: l }) }), "leadWrite")));
+          h("td", { class: "ctl" }, tag(button("Edit", { kind: "ghost", "aria-label": `Edit ${l.name}`, onclick: () => edit(l) }), "leadEdit"), !l.email && platform && platform.people ? tag(button("Find email", { kind: "ghost", "aria-label": `Find an email for ${l.name}`, onclick: () => edit(l, { findEmail: true }) }), "leadFind") : null, tag(button("Write", { "aria-label": `Write to ${l.name}`, onclick: () => navigate("compose", { lead: l }) }), "leadWrite")));
       }))),
       rows.length > shown ? h("div", { class: "actions" }, button(`Show ${Math.min(PAGE, rows.length - shown)} more`, { id: "showMore", onclick: () => { shown += PAGE; render(); } })) : null]);
     renderBulk();

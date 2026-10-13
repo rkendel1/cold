@@ -10,6 +10,7 @@ import { confirmDialog } from "../components/dialog.js";
 import { copyText } from "../services/clipboard.js";
 import { signoffBlock } from "../domain/signoff.js";
 import { openInEmail, isEmail, APPS, APP_LABELS } from "../services/handoff.js";
+import { lookupSection } from "./lookupSettings.js";
 import { compareLeads } from "../domain/library.js";
 
 const OTHER = "__other__";
@@ -349,15 +350,35 @@ export function mountSettings(root, { store, platform }) {
     return h("div", {}, p, flow);
   }
 
+  /* ---------- Extension: the same controls, grouped into single-level collapsible sections ---------- */
+  async function loadGrouped(model) {
+    const x = platform.settingsExtras;
+    const group = (id, title, open, ...kids) => h("details", { class: "set-group", id: `grp-${id}`, open: open ? "" : null }, h("summary", {}, title), h("div", { class: "in" }, ...kids));
+    const integ = [];
+    if (platform.hub) integ.push(h("h3", {}, "Cold desktop app"), hubSection());
+    if (S.server.dbEnabled && platform.api.getExtension) integ.push(h("h3", {}, "Browser extension & web apps"), await pairingSection());
+    integ.push(h("h3", {}, "Email app"), emailAppSection(), h("h3", {}, "Email lookup (treg)"), lookupSection({ platform, field }));
+    const about = h("div", { class: "form" }, h("p", { class: "hint", id: "aboutLine" }, `Cold extension ${(platform.about && platform.about.version) || ""}`.trim()));
+    append(body, [
+      group("writing", "Writing", true, model, preference(), h("h3", {}, "Email sign-off"), signoffSection()),
+      group("discovery", "Opportunity discovery", false, x.discovery),
+      group("integrations", "Integrations", false, ...integ),
+      group("privacy", "Privacy and local models", false, x.local, dataSection()),
+      group("about", "About and diagnostics", false, about),
+    ]);
+  }
+
   async function load() {
     clear(body);
     if (!S.server) { body.append(notice("warn", "Settings need the Cold desktop app, a Cold server, or the extension.")); return; }
     const sapi = platform.settingsApi;
     const model = sapi ? modelForm(sapi) : modelSummary();
+    if (platform.settingsExtras) return loadGrouped(model);
     append(body, [section("model", "Model", model, preference())]);
     if (platform.hub) body.append(section("hub", "Cold desktop app", hubSection()));
     if (S.server.dbEnabled && platform.api.getExtension) body.append(section("pairing", "Browser extension & web apps", await pairingSection()));
     body.append(section("emailapp", "Email app", emailAppSection()));
+    body.append(section("lookup", "Email lookup", lookupSection({ platform, field })));
     body.append(section("signoff", "Email sign-off", signoffSection()));
     body.append(section("data", "Your data", dataSection()));
   }

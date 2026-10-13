@@ -134,20 +134,21 @@ export function mountKnowledge(root, { store, navigate }) {
         proof: rows.filter(r => r.claim.trim()).map(r => ({ id: r.id, claim: r.claim.trim(), evidence: (r.evidence || "").trim(), type: r.type, strength: r.strength, external: !!r.external })),
       };
     };
-    const markDirty = () => { if (!sel) return; sel.dirty = true; status.textContent = "Unsaved changes"; renderReady(); };
+    const markDirty = () => { if (!sel) return; sel.dirty = true; status.textContent = "Unsaved changes"; renderReady(); if (compact) paintSummary(); };
 
     function renderReady() {
       const r = readiness(read());
       clear(readyHost).append(h("section", { "aria-labelledby": "ready-title" },
         h("h2", { id: "ready-title" }, "Is this ready to draft from?"),
         r.ready ? notice(r.advised.length ? "info" : "good", h("strong", {}, r.advised.length ? "Ready for a first draft" : "Ready: nothing missing"), h("p", {}, r.advised.length ? "These would make drafts more specific and safer:" : "Everything Cold uses is filled in.")) : notice("warn", h("strong", {}, "Not ready yet"), h("p", {}, "Cold only writes from recorded facts, so these are needed before it can draft:")),
-        h("ul", { class: "ready-list" }, r.items.map(i => h("li", {},
+        tuck(r, h("ul", { class: "ready-list" }, r.items.map(i => h("li", {},
           i.done ? chip("good", "Done") : chip(i.level === "blocking" ? "bad" : "warn", i.level === "blocking" ? "Needed" : "Recommended"),
           h("span", {}, h("strong", {}, i.label), h("span", { class: "hint" }, ` ${i.why}`)),
-          i.done ? null : button("Go to field", { kind: "ghost", onclick: () => focusField(i.id) }))))));
+          i.done ? null : button("Go to field", { kind: "ghost", onclick: () => focusField(i.id) })))))));
     }
     function focusField(id) {
       const target = id === "kAddProof" ? $("#kAddProof", el) : id === "kProof" ? $(".pEv", el) : refs[id]?.input;
+      for (let d = target?.closest("details"); d; d = d.parentElement?.closest("details")) d.open = true;   // a collapsed section holds it
       target?.scrollIntoView({ block: "center" }); target?.focus();
     }
 
@@ -183,14 +184,27 @@ export function mountKnowledge(root, { store, navigate }) {
         r.external && !(r.evidence || "").trim() ? chip("warn", "Needs evidence") : null);
     }
 
+    // Extension: one level of collapsible sections so the panel stays short. Elsewhere: plain sections, as before.
+    const compact = S.surface === "extension";
+    const sect = (id, title, open, ...kids) => compact
+      ? h("details", { class: "panel", id: `sec-${id}`, open: open || null }, h("summary", {}, title), h("div", { class: "in" }, ...kids))
+      : h("section", { "aria-labelledby": `${id}-title` }, h("h2", { id: `${id}-title` }, title), ...kids);
+    const tuck = (r, list) => (compact && r.ready && !r.advised.length ? h("details", { class: "panel" }, h("summary", {}, "What's filled in"), h("div", { class: "in" }, list)) : list);   // all done: one line, details on request
+    const summaryEl = h("p", { class: "hint", id: "kSummary" });
+    const paintSummary = () => {
+      const r = read(), ext = r.proof.filter(x => x.external).length;
+      summaryEl.textContent = `${r.proof.length} proof point${r.proof.length === 1 ? "" : "s"} (${ext} approved for drafts) · ${r.techFacts.length} technical fact${r.techFacts.length === 1 ? "" : "s"} · ${r.dontSay.length} prohibited phrase${r.dontSay.length === 1 ? "" : "s"}`;
+    };
+
     const el = h("form", { class: "peditor", id: "kForm", novalidate: true, autocomplete: "off", dataset: { id: p.id } },
       h("h2", { class: "sr-only" }, "Edit product"),
       readyHost,
-      h("section", { "aria-labelledby": "about-title" }, h("h2", { id: "about-title" }, "About this product"), refs.kName, refs.kOne, refs.kWhat, refs.kWho, refs.kProblem),
-      h("section", { "aria-labelledby": "proof-title" }, h("h2", { id: "proof-title" }, "Proof"),
+      compact ? summaryEl : null,
+      sect("about", "About this product", true, refs.kName, refs.kOne, refs.kWhat, refs.kWho, refs.kProblem),
+      sect("proof", "Proof", false,
         h("p", { class: "hint" }, "Proof points are the claims Cold can use to make the \"why it matters\" sentence credible. Choose carefully who can use each one."),
         proofHost, h("div", {}, button("Add proof", { id: "kAddProof", onclick: () => { const r = { id: uid("pr"), claim: "", evidence: "", type: "Technical", strength: "Medium", external: true }; rows.push(r); markDirty(); renderProof(); proofHost.querySelector(`[data-rid="${r.id}"] .pClaim`)?.focus(); } }))),
-      h("section", { "aria-labelledby": "words-title" }, h("h2", { id: "words-title" }, "Facts and wording"), refs.kTech, refs.kApproved, refs.kDont),
+      sect("words", "Facts and wording", false, refs.kTech, refs.kApproved, refs.kDont),
       h("details", { class: "panel" }, h("summary", {}, "More detail ", h("span", { class: "opt" }, "(optional)")), h("div", { class: "in" }, h("div", { class: "grid2" }, refs.kCat, refs.kStatus, refs.kRepo), refs.kShort, refs.kLong)),
       h("details", { class: "panel", open: !!(p.website || p.xHandle || (p.socials || []).length) }, h("summary", {}, "Links and social ", h("span", { class: "opt" }, "(used in tweets and your email sign-off)")), h("div", { class: "in" }, h("div", { class: "grid2" }, refs.kWeb, refs.kX), refs.kLinks,
         h("div", { class: "field" }, h("strong", {}, "Include in your email sign-off"), h("p", { class: "hint" }, "Your name is set once in Settings. For emails about this product, the ones ticked here go under it."), pickHost, previewEl))),
@@ -216,7 +230,7 @@ export function mountKnowledge(root, { store, navigate }) {
       } finally { saveBtn.disabled = false; }
     });
 
-    renderProof(); renderReady();
+    renderProof(); renderReady(); if (compact) paintSummary();
     [refs.kWhat, refs.kWho, refs.kProblem].forEach(c => c.input.addEventListener("input", () => autosize(c.input)));
     return { id: p.id, isNew: !!p._new, dirty: false, el, setStatus: t => { status.textContent = t; }, focus: focusField };
   }

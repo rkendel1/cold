@@ -7,19 +7,21 @@ import { copyText } from "../services/clipboard.js";
 import { openInEmail, isEmail } from "../services/handoff.js";
 import { evaluate } from "../domain/rules.js";
 import { emailText } from "../domain/email.js";
-import { applyStatus, statusOf, filterOutreach, countByStatus, preview, editedSinceSent } from "../domain/outreach.js";
+import { applyStatus, statusOf, filterOutreach, productFilterOptions, countByStatus, preview, editedSinceSent } from "../domain/outreach.js";
 import { compareEmails } from "../domain/library.js";
 import { GOALS, STATUSES, STATUS_COPY, FORMATS, UNKNOWN_STATUS } from "../domain/constants.js";
 
 export function mountHistory(root, { store, openRecord }) {
   const S = store.state;
-  let filter = "all", query = "";
+  let filter = "all", query = "", product = "all";
   const openIds = new Set();            // rows whose details are showing (kept across re-renders)
   const messages = new Map();           // per-row status line, e.g. the result of "Open in email"
   const held = new Map();               // id -> the user's own text from a save that was refused because the record changed elsewhere
   let deferred = false, settling = false;   // settling: a box was just left; hold the redraw so the click that moved focus still lands
   const filters = h("div", { class: "hfilters", role: "group", "aria-label": "Filter by status" });
   const search = h("input", { type: "search", id: "histSearch", "aria-label": "Search outreach", placeholder: "Search name, company, email, subject, notes" });
+  const productSel = h("select", { id: "histProduct", "aria-label": "Filter by product" });
+  productSel.addEventListener("change", () => { product = productSel.value; render(); });
   const listHost = h("ul", { class: "hist", "aria-label": "Outreach" });
   search.addEventListener("input", () => { query = search.value.trim(); render(); });
   const lede = h("p", { class: "lede" });
@@ -29,7 +31,7 @@ export function mountHistory(root, { store, openRecord }) {
     h("div", { class: "view-head" },
       h("h1", { id: "history-title", tabindex: "-1" }, "History"),
       lede),
-    h("div", { class: "hfilters" }, filters, search), listHost);
+    h("div", { class: "hfilters" }, filters, productSel, search), listHost);
 
   const latest = id => S.emails.find(x => x.id === id);
 
@@ -139,10 +141,14 @@ export function mountHistory(root, { store, openRecord }) {
     const counts = countByStatus(all);
     clear(filters);
     ["all", ...STATUSES, ...(counts[UNKNOWN_STATUS] ? [UNKNOWN_STATUS] : [])].forEach(s => filters.append(h("button", { type: "button", class: "btn", "aria-pressed": String(filter === s), onclick: () => { filter = s; render(); } }, s === "all" ? "All" : STATUS_COPY[s].label, h("span", { class: "mono" }, ` ${counts[s]}`))));
-    const rows = filterOutreach(all, { status: filter, query });
+    const opts = productFilterOptions(all, S.products);
+    if (product !== "all" && !opts.some(o => o.value === product)) product = "all";
+    clear(productSel).append(h("option", { value: "all" }, "All products"), ...opts.map(o => h("option", { value: o.value }, o.label)));
+    productSel.value = product; productSel.hidden = opts.length < 2 && product === "all";
+    const rows = filterOutreach(all, { status: filter, query, product });
     clear(listHost);
     if (!all.length) { listHost.append(h("li", { class: "empty" }, h("h2", {}, "No drafts yet"), h("p", {}, "Every draft you generate is saved here automatically as a draft. You decide when it counts as sent."), button("Write one", { kind: "primary", id: "hGo", onclick: () => openRecord(null) }))); return; }
-    if (!rows.length) { listHost.append(h("li", { class: "empty" }, h("p", {}, query ? "No drafts match your search." : `Nothing is marked “${STATUS_COPY[filter]?.label || filter}” yet.`))); return; }
+    if (!rows.length) { listHost.append(h("li", { class: "empty" }, h("p", {}, query || product !== "all" ? "No drafts match your search or filter." : `Nothing is marked “${STATUS_COPY[filter]?.label || filter}” yet.`))); return; }
     rows.forEach(e => listHost.append(row(e)));
   }
 

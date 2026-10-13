@@ -33,6 +33,9 @@ export function createPlatform() {
     snapshot,
     get hub() { return hub; },
     get backend() { return backend; },
+    /** Email lookup (treg): where a lookup would run, and (only on a server that keeps secrets) where its token is saved. The token is never readable from here. */
+    get people() { return backend ? { available: backend.peopleAvailable, findEmail: backend.findEmail, verifyEmail: backend.verifyEmail } : { available: () => !!(server && server.peopleSearch), findEmail: api.findEmail, verifyEmail: api.verifyEmail }; },
+    get tregSettings() { return server && server.settingsEnabled ? { status: async () => ((await api.getSettings()).integrations || {}).treg || {}, save: apiKey => api.saveSettings({ integrations: { treg: { apiKey } } }).then(s => (s.integrations || {}).treg || {}) } : null; },
     /** Settings for the model section: only a server that owns provider settings (desktop / local) offers editing. */
     get settingsApi() { return server && server.settingsEnabled ? { getSettings: api.getSettings, saveSettings: api.saveSettings, providerModels: api.providerModels, keyNote: null } : null; },
     setAccess(v) { settings.access = v.trim(); safeSet(globalThis.sessionStorage, STORAGE_KEYS.access, settings.access); },
@@ -74,7 +77,7 @@ export function createPlatform() {
         const active = await libs.init();
         let prefer = safeGet(globalThis.localStorage || {}, PREFER_KEY) || "app";
         backend = createBackend({ link, getConfig: () => ({ prefer }),
-          own: { ready: () => !!(server && server.ready), sample: api.sample, label: () => `${server.providerLabel || server.provider} · ${server.model}`, lookups: { tweet: api.tweet, profile: api.profile } } });
+          own: { ready: () => !!(server && server.ready), sample: api.sample, label: () => `${server.providerLabel || server.provider} · ${server.model}`, lookups: { tweet: api.tweet, profile: api.profile }, people: { available: () => !!(server && server.peopleSearch), findEmail: api.findEmail, verifyEmail: api.verifyEmail } } });
         hub = {
           link, libs, store, kind: "web", get replica() { return libs.db; }, origin: globalThis.location ? globalThis.location.origin : "",
           get prefer() { return prefer; },
