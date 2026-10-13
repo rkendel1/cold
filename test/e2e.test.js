@@ -331,11 +331,45 @@ test("history: Open in email from a row never changes status; a missing address 
   const known = x => (x == null || x === "" ? "draft" : x);
   const byId = (x, y) => x[0].localeCompare(y[0]);
   assert.deepEqual(after.map(e => [e.id, e.status, e.sentAt ?? null, e.repliedAt ?? null]).sort(byId), before.map(e => [e.id, known(e.status), e.sentAt ?? null, e.repliedAt ?? null]).sort(byId), "no status or timestamp changed");
-  assert.equal(after.find(e => e.id === "withmail").updatedAt, 111, "a handoff does not even re-save the record");
+  const handed = after.find(e => e.id === "withmail");   // a handoff is now recorded (with a follow-up date), but is never a status change
+  assert.deepEqual([handed.handoffs.map(x => x.how), handed.followUp.auto, handed.sentAt], [["open"], true, undefined], "the handoff and a follow-up are recorded; nothing is marked sent");
   // copy is also inert
   await row(page, "Ada Park").locator("button:text-is('Copy')").click();
   assert.deepEqual((await ls(page, "cold.emails")).map(e => e.status ?? null), after.map(e => e.status ?? null));
   assert.deepEqual(t.errors, []); await t.close();
+});
+
+test("follow-ups: copying records a handoff and sets a follow-up without marking it sent; due ones are found in History and can be done, snoozed or cleared; settings change the defaults", { skip: SKIP }, async () => {
+  const past = Date.now() - 3600000;
+  const t = await open({ seed: { "cold.products": [P1], "cold.emails": [EMAIL(), EMAIL({ id: "e2", createdAt: Date.now() - 1000, recipient: { name: "Bo Lee", company: "Beta" }, followUp: { due: past, count: 0, auto: true } })] } }); const { page } = t;
+  // Settings: change the wait for advice, save, and it is kept
+  await go(page, "settings"); await page.waitForSelector("#followUpSettings");
+  assert.equal(await page.inputValue("#fuFirst-advice"), "4"); assert.equal(await page.inputValue("#fuHour"), "9");
+  await page.fill("#fuFirst-advice", "2"); await page.fill("#fuMax", "2"); await page.click("#saveFollowUp"); await page.waitForFunction(() => /Saved/.test(document.getElementById("fuMsg").textContent));
+  const saved = JSON.parse(await page.evaluate(() => localStorage.getItem("cold.settings"))).followUp;
+  assert.deepEqual([saved.firstDays.advice, saved.max, saved.repeatDays], [2, 2, 7]);
+  // History: the due draft is listed under its own filter
+  await go(page, "history"); await page.waitForSelector("#fDue");
+  assert.match(await page.textContent("#fDue"), /Follow-up due\s*1/);
+  await page.click("#fDue"); assert.equal(await page.locator(".hrow").count(), 1); assert.match(await page.textContent(".hrow"), /Bo Lee/);
+  await page.click(".hrow .hToggle"); await page.click(".hrow .fu-done");
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.emails")).find(e => e.id === "e2").followUp.count === 1);
+  let e2 = (await ls(page, "cold.emails")).find(x => x.id === "e2");
+  assert.ok(e2.followUp.due > Date.now(), "the next follow-up is in the future"); assert.equal(e2.status, "draft");
+  // snooze and clear
+  await page.waitForSelector("#fDue", { state: "detached" });   // nothing is due any more
+  await page.click(".hrow:has-text('Bo Lee') .fu-snooze7");   // its details stayed open
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.emails")).find(e => e.id === "e2").followUp.auto === false);
+  await page.click(".hrow:has-text('Bo Lee') .fu-clear");
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.emails")).find(e => e.id === "e2").followUp.due === null);
+  // copying a draft (no follow-up yet) records the handoff and sets one; it is NOT marked sent
+  await page.click(".hrow:has-text('Ada Park') button:text-is('Copy')");
+  await page.waitForFunction(() => (JSON.parse(localStorage.getItem("cold.emails")).find(e => e.id === "e1").handoffs || []).length === 1);
+  const e1 = (await ls(page, "cold.emails")).find(x => x.id === "e1");
+  assert.equal(e1.status, "draft"); assert.equal(e1.sentAt, undefined); assert.equal(e1.handoffs[0].how, "copy");
+  assert.equal(e1.followUp.auto, true); assert.ok(e1.followUp.due > Date.now());
+  assert.match(await page.textContent(".hrow:has-text('Ada Park')"), /Follow up /);
+  await t.close();
 });
 
 test("history: the outreach status survives in the shared record that the extension and desktop app also read", { skip: SKIP }, async () => {
@@ -371,7 +405,7 @@ test("web: works on its own; connecting shows the desktop library without touchi
     // ---- on its own: everything works, and Settings says the desktop app is optional
     await go(page, "history"); assert.equal(await page.locator(".hrow").count(), 1);
     await go(page, "settings");
-    assert.deepEqual(await page.$$eval("#view-settings .set-section h2", h => h.map(x => x.textContent)), ["Model", "Cold desktop app", "Email app", "Email lookup", "Email sign-off", "Your data"]);
+    assert.deepEqual(await page.$$eval("#view-settings .set-section h2", h => h.map(x => x.textContent)), ["Model", "Cold desktop app", "Email app", "Email lookup", "Email sign-off", "Follow-ups", "Google Sheets", "Your data"]);
     assert.match(await page.textContent("#view-settings"), /This site writes with/);                    // a hosted web page shows what the server uses; keys are not editable here
     assert.equal(await page.locator("#setKey").count(), 0, "a hosted site has no key field: keys never reach the browser");
     // ---- a page the desktop app hasn't approved is told how to fix that
@@ -486,7 +520,7 @@ const LEADS_CSV = [
   ",Nameless Inc,,nobody@nameless.io,,,,,,,",
   "Sam Okafor,Okafor & Co,COO,not-an-email,,Runs the plumbing community,,somewhere,,,",
   "Priya Nair,Brightside Labs,,PRIYA@brightside.dev,,,,,,,",
-  "Sample Person,Acme,,sample@example.com,,,,,,,",
+  "Sample Person,Acme,,jordan.rivera@example.com,,,,,,,",
 ].join("\r\n");
 
 test("leads: download the template, review a CSV before anything is saved, import it, and see exactly what happened", { skip: SKIP }, async () => {
@@ -527,6 +561,30 @@ test("leads: download the template, review a CSV before anything is saved, impor
   assert.match(await page.textContent("#importSummary"), /0 new, .*4 already in your leads or repeated/); assert.equal(await page.locator("#confirmImport").isDisabled(), true);
   await page.selectOption("#dupPolicy", "update"); await page.waitForFunction(() => /to update|0 new/.test(document.getElementById("importSummary").textContent)); await page.click("#cancelImport");
   assert.deepEqual((await ls(page, "cold.leads")).map(l => l.name), ["Jordan Rivera", "Priya Nair", "Sam Okafor"]);
+  assert.deepEqual(t.errors, []); await t.close();
+});
+
+test("leads: map any file layout to Cold's fields, keep extra columns as extra fields, edit them on a lead", { skip: SKIP }, async () => {
+  const t = await open({ seed: SEED }); const { page } = t;
+  await go(page, "leads"); await page.waitForSelector("#importBtn");
+  await page.setInputFiles("#leadsFile", csvFile("Who,Employer,Mail,Lead score\r\nAna Ruiz,Acme,ana@acme.io,87\r\nBo Lee,Beta,bo@beta.io,\r\n", "other.csv")); await page.waitForSelector("#mapper");
+  assert.match(await page.textContent("#importPanel"), /Choose which column holds the name/);
+  const sels = page.locator("#mapperTable select");
+  await sels.nth(0).selectOption("name"); await page.waitForSelector("#importSummary");
+  assert.match(await page.textContent("#importSummary"), /2 rows read\. 2 new/);
+  await page.locator("#mapperTable select").nth(1).selectOption("company"); await page.locator("#mapperTable select").nth(2).selectOption("email");
+  await page.locator("#mapperTable select").nth(3).selectOption("x:+");
+  const nameBox = page.locator("#mapperTable input[aria-label*='Lead score']"); await nameBox.fill("Lead score"); await nameBox.dispatchEvent("change");
+  await page.waitForFunction(() => document.querySelector("#mapperTable select:nth-of-type(1)") && !/ignored/.test(document.getElementById("importPanel").textContent));
+  await page.click("#confirmImport"); await page.waitForSelector("#leadsTable");
+  const leads = await ls(page, "cold.leads");
+  assert.deepEqual(leads.map(l => [l.name, l.company, l.email, l.custom]), [["Ana Ruiz", "Acme", "ana@acme.io", { "Lead score": "87" }], ["Bo Lee", "Beta", "bo@beta.io", undefined]]);
+  // on a lead: the extra field is there; add another and remove it again
+  await page.click("tr:has-text('Ana Ruiz') .leadEdit"); await page.waitForSelector("#extraFields");
+  assert.equal(await page.inputValue("#extraFields .extra-value"), "87");
+  await page.click("#addExtra"); await page.locator("#extraFields .extra-name").last().fill("Region"); await page.locator("#extraFields .extra-value").last().fill("EMEA");
+  await page.click("#saveLead"); await page.waitForFunction(() => document.getElementById("leadEditor").hidden);
+  assert.deepEqual((await ls(page, "cold.leads"))[0].custom, { "Lead score": "87", Region: "EMEA" });
   assert.deepEqual(t.errors, []); await t.close();
 });
 
@@ -1066,7 +1124,7 @@ test("desktop UI: the hub's Settings shows the model form, the pairing code, and
   const t = await open({ server: hub }); const { page } = t;
   try {
     await go(page, "settings"); await page.waitForSelector("#extCode");
-    assert.deepEqual(await page.$$eval("#view-settings .set-section h2", h => h.map(x => x.textContent)), ["Model", "Browser extension & web apps", "Email app", "Email lookup", "Email sign-off", "Your data"]);
+    assert.deepEqual(await page.$$eval("#view-settings .set-section h2", h => h.map(x => x.textContent)), ["Model", "Browser extension & web apps", "Email app", "Email lookup", "Email sign-off", "Follow-ups", "Google Sheets", "Your data"]);
     assert.ok(await page.isVisible("#setProvider") && await page.locator("#setKey").count() === 1, "the desktop app owns provider keys, so it offers them");
     assert.equal(await page.inputValue("#extCode"), db.extensionToken());
     assert.equal(await page.locator("#hubConnect").count(), 0, "the hub does not connect to itself");

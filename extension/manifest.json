@@ -20,7 +20,8 @@
     "sidePanel",
     "scripting",
     "tabs",
-    "declarativeNetRequest"
+    "declarativeNetRequest",
+    "identity"
   ],
   "host_permissions": [
     "http://127.0.0.1/*",

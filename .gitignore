@@ -6,3 +6,5 @@ docs/validation/tracker/*.private.*
 dist/
 extension/dist/
 test-results/
+
+desktop/google.json

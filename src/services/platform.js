@@ -9,6 +9,8 @@ import { createLink } from "./hubLink.js";
 import { createLibraries } from "./libraries.js";
 import { createBackend } from "./backend.js";
 import { localHubStore, verifyHub } from "./hub.js";
+import { browserAuth, serverAuth } from "./googleAuth.js";
+import { createSheetsConnector, webLinkStore } from "./sheetsConnector.js";
 
 const safeGet = (area, key) => { try { return area.getItem(key) || ""; } catch { return ""; } };
 const safeSet = (area, key, v) => { try { v ? area.setItem(key, v) : area.removeItem(key); } catch {} };
@@ -18,7 +20,7 @@ const PREFER_KEY = "cold.prefer";
 export function createPlatform() {
   const settings = { model: "", access: safeGet(globalThis.sessionStorage || {}, STORAGE_KEYS.access) };
   const api = createApi({ getAccess: () => settings.access, getModel: () => settings.model });
-  let server = null, backend = null, hub = null;
+  let server = null, backend = null, hub = null, sheets = null;
   const subs = new Set();
   const notify = () => subs.forEach(fn => fn());
   /** What the rest of the app needs to know right now: the server's config, whether anything can generate, and the sync state. */
@@ -32,6 +34,8 @@ export function createPlatform() {
     subscribe(fn) { subs.add(fn); return () => subs.delete(fn); },
     snapshot,
     get hub() { return hub; },
+    /** The Google Sheets connector, or null when this build has no Google sign-in set up. */
+    get sheets() { return sheets; },
     get backend() { return backend; },
     /** Email lookup (treg): where a lookup would run, and (only on a server that keeps secrets) where its token is saved. The token is never readable from here. */
     get people() { return backend ? { available: backend.peopleAvailable, findEmail: backend.findEmail, verifyEmail: backend.verifyEmail } : { available: () => !!(server && server.peopleSearch), findEmail: api.findEmail, verifyEmail: api.verifyEmail }; },
@@ -90,6 +94,13 @@ export function createPlatform() {
         if (saved) link.connect(saved).catch(() => {});    // don't hold the page up if the app is closed
         link.start();
         db = active.db;
+      }
+      // Optional: leads and outreach kept in the person's own Google Sheet instead of in this app's storage (see sheetsConnector.js).
+      const g = server && server.google;
+      if (g && g.configured) {
+        const auth = g.mode === "server" ? serverAuth({ call: api.googleCall }) : browserAuth({ clientId: g.clientId });
+        sheets = createSheetsConnector({ auth, linkStore: webLinkStore(), sheetsBase: g.sheetsBase });
+        try { await sheets.init(); if (sheets.link && db) db = await sheets.open(db); } catch { warning = warning || "Couldn't open your Google Sheet. Open Settings to reconnect."; }
       }
       return { db, user: null, ...snapshot(), warning };
     },

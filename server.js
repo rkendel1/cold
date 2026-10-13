@@ -27,6 +27,7 @@ loadEnv(path.join(ROOT, ".env"));
 const prototypeConfig = require("./provider-config.json");
 const { BY_ID } = require("./lib/providers");
 const { createSettings } = require("./lib/settings");
+const { createGoogleOAuth } = require("./lib/google");
 // Settings (provider, model, API keys) are editable from the UI only when COLD_SETTINGS_FILE is set, i.e. on a local
 // or desktop install. A hosted deployment keeps configuring through environment variables.
 // COLD_DB_FILE switches products and drafts from browser storage to this SQLite file (the desktop app sets it).
@@ -61,7 +62,16 @@ const SECURITY_HEADERS = {
   "x-frame-options": "DENY",
 };
 // connect-src also allows the loopback address, so a page can reach the Cold desktop app on this computer (paired, with its code).
-const HTML_CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' http://127.0.0.1:* http://localhost:*; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+// Google Sheets is optional and off unless a Google client id is configured; only then does the page get to talk to Google (and, on the web, load Google's sign-in script).
+const GOOGLE_CLIENT_ID = process.env.COLD_GOOGLE_CLIENT_ID || "";
+const SHEETS_BASE = process.env.COLD_GOOGLE_SHEETS_BASE || "";
+const originOf = u => { try { return new URL(u).origin; } catch { return ""; } };
+const googleCsp = (extra = "") => (GOOGLE_CLIENT_ID ? { connect: ` https://sheets.googleapis.com https://accounts.google.com${SHEETS_BASE ? ` ${originOf(SHEETS_BASE)}` : ""}`, script: process.env.COLD_SETTINGS_FILE ? "" : " https://accounts.google.com/gsi/client", frame: process.env.COLD_SETTINGS_FILE ? "" : " frame-src https://accounts.google.com;", style: process.env.COLD_SETTINGS_FILE ? "" : " https://accounts.google.com/gsi/style" } : { connect: "", script: "", frame: "", style: "" });
+// Desktop and local installs sign in to Google here (the refresh token stays beside provider keys); the web build signs in inside the page instead.
+const googleOAuth = createGoogleOAuth({ clientId: GOOGLE_CLIENT_ID, clientSecret: process.env.COLD_GOOGLE_CLIENT_SECRET || "", settings,
+  urls: { ...(process.env.COLD_GOOGLE_AUTH_URL ? { authUrl: process.env.COLD_GOOGLE_AUTH_URL } : {}), ...(process.env.COLD_GOOGLE_TOKEN_URL ? { tokenUrl: process.env.COLD_GOOGLE_TOKEN_URL } : {}) } });
+const G = googleCsp();
+const HTML_CSP = `default-src 'self'; script-src 'self'${G.script}; style-src 'self'${G.style}; img-src 'self' data:; connect-src 'self' http://127.0.0.1:* http://localhost:*${G.connect};${G.frame} base-uri 'none'; form-action 'none'; frame-ancestors 'none'`;
 
 function send(res, status, body, type = "application/json; charset=utf-8", extra = {}) {
   res.writeHead(status, { "content-type": type, "cache-control": "no-store", ...SECURITY_HEADERS, ...extra });
@@ -292,6 +302,27 @@ async function dataRoute(req, res, url) {
   return send(res, 404, { error: { message: "Not found" } });
 }
 
+/** What a page needs to know to offer Google Sheets: whether it is set up here, and who does the sign-in (this server, or the page itself). */
+const googleConfig = () => (GOOGLE_CLIENT_ID ? { configured: true, mode: settings ? "server" : "browser", ...(settings ? {} : { clientId: GOOGLE_CLIENT_ID }), ...(SHEETS_BASE ? { sheetsBase: SHEETS_BASE } : {}) } : { configured: false });
+const CALLBACK_PAGE = (ok, message) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Cold</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font:16px system-ui,sans-serif;margin:15vh auto;max-width:28rem;padding:0 1rem;color:#1b2b34}h1{font-size:1.25rem}</style></head><body><h1>${ok ? "Connected to Google" : "Couldn't connect"}</h1><p>${message.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))}</p></body></html>`;
+async function googleRoute(req, res, url) {
+  if (url.pathname === "/oauth/google/callback") {
+    // The browser comes back here from Google. No data is returned: only a page for the person, and a state value only this server issued.
+    if (req.method !== "GET" || !settings || !LOCAL_HOST.test(String(req.headers.host || ""))) return send(res, 404, { error: { message: "Not found" } });
+    const r = await googleOAuth.callback({ code: url.searchParams.get("code") || "", state: url.searchParams.get("state") || "", error: url.searchParams.get("error") || "" });
+    return send(res, r.ok ? 200 : 400, CALLBACK_PAGE(r.ok, r.message), "text/html; charset=utf-8", { "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'" });
+  }
+  const denied = guardSettings(req);
+  if (denied) return send(res, denied.status, { error: { code: denied.code, message: denied.message } });
+  try {
+    if (req.method === "GET" && url.pathname === "/api/google/status") return send(res, 200, googleOAuth.status());
+    if (req.method === "POST" && url.pathname === "/api/google/connect") return send(res, 200, googleOAuth.start({ redirectUri: `http://${req.headers.host}/oauth/google/callback` }));
+    if (req.method === "GET" && url.pathname === "/api/google/token") return send(res, 200, await googleOAuth.token({ refresh: url.searchParams.get("refresh") === "1" }));
+    if (req.method === "POST" && url.pathname === "/api/google/disconnect") { await googleOAuth.disconnect(); return send(res, 200, googleOAuth.status()); }
+  } catch (e) { return send(res, e.status || 500, { error: { code: e.code || "google_error", message: e.status ? e.message : "Couldn't reach Google." } }); }
+  return send(res, 404, { error: { message: "Not found" } });
+}
+
 /** The treg token: saved in Settings, else TREG_TOKEN. It is only ever read here, to call treg; it is never sent to a page. */
 const tregToken = () => (settings && settings.integrationKey("treg")) || process.env.TREG_TOKEN || "";
 function tregStatus() {
@@ -362,10 +393,11 @@ const server = http.createServer(async (req, res) => {
       if (req.method === "OPTIONS") { res.writeHead(204, SECURITY_HEADERS); return res.end(); }
     }
     if (url.pathname === "/api/settings" || url.pathname.startsWith("/api/settings/")) return settingsRoute(req, res, url);
+    if (url.pathname === "/oauth/google/callback" || url.pathname.startsWith("/api/google/")) return googleRoute(req, res, url);
     if (url.pathname === "/api/data" || url.pathname.startsWith("/api/data/")) return dataRoute(req, res, url);
     if (req.method === "GET" && url.pathname === "/api/config") {
       const cfg = resolve();
-      return send(res, 200, { app: "cold", ready: cfg.ready, experimental: !!cfg.hf, model: cfg.model, provider: cfg.id, providerLabel: cfg.label, dbEnabled: !!appDb, accessRequired: !!accessToken(), keySetting: cfg.keySetting, settingsEnabled: !!settings, peopleSearch: !!tregToken() });
+      return send(res, 200, { app: "cold", ready: cfg.ready, experimental: !!cfg.hf, model: cfg.model, provider: cfg.id, providerLabel: cfg.label, dbEnabled: !!appDb, accessRequired: !!accessToken(), keySetting: cfg.keySetting, settingsEnabled: !!settings, peopleSearch: !!tregToken(), google: googleConfig() });
     }
     if (req.method === "GET" && url.pathname === "/api/models") {
       if (resolve().id !== "ai-gateway" || settings) return send(res, 200, { models: [] });

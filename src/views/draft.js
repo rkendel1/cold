@@ -9,6 +9,8 @@ import { mountSecondCheck } from "./secondCheck.js";
 import { checkGrounding } from "../domain/grounding.js";
 import { emailText } from "../domain/email.js";
 import { applyStatus, editedSinceSent, statusOf } from "../domain/outreach.js";
+import { recordHandoff, restartFromSent, fmtDue } from "../domain/followup.js";
+import { followUpPanel } from "./followUpPanel.js";
 import { GOALS, STATUSES, STATUS_COPY, UNKNOWN_STATUS } from "../domain/constants.js";
 
 const STEPS = ["Reading your saved product facts", "Drafting three sentences", "Editor pass against the 20 rules", "Running local checks"];
@@ -37,7 +39,7 @@ export function createDraftPane({ store, handlers, platform = null }) {
   /** The user's own record of what happened. Only ever called from an explicit click or menu choice. */
   async function setStatus(rec, st) {
     if (!STATUSES.includes(st) || rec.status === st) return;   // an unrecognised status is only ever replaced by a deliberate choice of a supported one
-    Object.assign(rec, applyStatus(rec, st, { signature: store.signoffFor(rec) }));
+    Object.assign(rec, restartFromSent(applyStatus(rec, st, { signature: store.signoffFor(rec) }), S.settings.followUp));
     if (await persist(rec)) toast(`Status set to “${STATUS_COPY[st].label}”`);
     renderedKey = null; render();
   }
@@ -51,6 +53,7 @@ export function createDraftPane({ store, handlers, platform = null }) {
   async function copy(text, what) {
     const ok = await copyText(text);
     toast(ok ? `${what} copied to clipboard` : "Couldn't copy automatically. Select the text and copy it yourself.");
+    return ok;
   }
 
   /* ---------- sections ---------- */
@@ -150,12 +153,22 @@ export function createDraftPane({ store, handlers, platform = null }) {
     };
     toIn.addEventListener("input", () => { rec.recipient = { ...rec.recipient, email: toIn.value.trim() }; checkTo(); handoffMsg.textContent = ""; queueSave(rec, saveStatus); });
     /** Opens the CURRENT text (including edits) as an unsent draft in the user's email app. It changes nothing about the draft. */
+    /** Copying or opening only records that you handed it off; it never marks it sent. It does set a follow-up date (changeable below) when none is set. */
+    const followUp = followUpPanel({ getRec: () => rec, getSettings: () => S.settings.followUp, announce,
+      apply: async fn => { Object.assign(rec, fn(rec)); return persist(rec); } });
+    async function handedOff(how) {
+      const had = rec.followUp && rec.followUp.due != null;
+      Object.assign(rec, recordHandoff(rec, how, S.settings.followUp));
+      await persist(rec); followUp.paint();
+      if (!had && rec.followUp && rec.followUp.due != null) announce(`Follow-up set for ${fmtDue(rec.followUp.due)}. You can change it below.`);
+    }
     async function openMail() {
       paintApp();
       const r = await openInEmail({ to: toIn.value, subject: rec.subject, body: emailText(rec, store.signoffFor(rec)), app: S.settings.emailApp, account: S.settings.gmailAccount });
       handoffMsg.textContent = r.message; handoffMsg.className = `hint handoff-msg${r.ok ? "" : " bad-text"}`;
       if (!r.ok && r.reason === "invalid") { checkTo(); toIn.focus(); }
       announce(r.message);
+      if (r.ok) handedOff("open");
     }
     const metrics = h("div", { class: "metrics", "aria-label": "Draft length" });
     const review = h("div", {});
@@ -204,7 +217,7 @@ export function createDraftPane({ store, handlers, platform = null }) {
       sentence("what", "Sentence 1: what you do", f.what), sentence("why", "Sentence 2: why it matters to them", f.why), sentence("ask", "Sentence 3: the ask", f.ask),
       h("div", { class: "actions" }, signoff, signBtn), metrics,
       h("div", { class: "actions" },
-        button("Copy email", { kind: "primary", id: "copyEmail", onclick: () => copy(emailText(rec, store.signoffFor(rec)), "Email") }),
+        button("Copy email", { kind: "primary", id: "copyEmail", onclick: async () => { if (await copy(emailText(rec, store.signoffFor(rec)), "Email")) handedOff("copy"); } }),
         button("Open in email", { id: "openEmail", onclick: () => openMail() }),
         button("Copy subject", { onclick: () => copy(rec.subject, "Subject") }),
         rec.status === "draft" ? button("Mark as sent", { id: "markSent", onclick: () => setStatus(rec, "sent") }) : null,
@@ -212,7 +225,7 @@ export function createDraftPane({ store, handlers, platform = null }) {
           if (rec.edited && !(await confirmDialog({ title: "Replace your edited draft?", body: "Regenerating writes a new draft from the same inputs. Your edits to this one stay in History.", confirmLabel: "Regenerate" }))) return;
           handlers.regenerate(rec);
         } }), undoBtn, saveStatus),
-      handoffMsg, appNote, sentNote,
+      handoffMsg, appNote, sentNote, h("h3", {}, "Follow up"), followUp.el,
       h("div", { class: "field" }, h("label", { for: "eNote" }, "Notes ", h("span", { class: "opt" }, "Optional, only for you")), noteIn),
       h("p", { class: "next-step" }, h("strong", {}, "Next: "), "open it in your email app (or copy it) and send it yourself. Cold can't send, and can't see your inbox. Come back and press “Mark as sent”, then record a reply in History when one arrives."));
     const wrap = h("div", { class: "stack-lg" }, card,

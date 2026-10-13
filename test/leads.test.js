@@ -58,7 +58,7 @@ test('an import is planned without saving anything: adds, invalid rows, warnings
     'Cy Diaz,CyCo,Founder,,,,,',                                                                       // duplicate by name + company
     'Dee Evans,DeeCo,,not-an-email,https://example.org/dee,,somewhere,',                               // add with three warnings
     'Dee Evans,DeeCo,,not-an-email,,,,',                                                               // duplicate of the row above (within the file)
-    'Sample Person,Acme,,sample@example.com,,,,',                                                      // the template\'s sample
+    'Sample Person,Acme,,jordan.rivera@example.com,,,,',                                                      // the template\'s sample
   ].join('\n');
   const p = planImport(csv, existing, { list: 'Imported', now: 1000 });
   assert.equal(p.ok, true); assert.equal(p.total, 9);
@@ -124,4 +124,35 @@ test('progress comes from the drafts written to a lead, and filters combine', as
   assert.deepEqual(filterLeads(leads, { progress: 'none', emails }).map(l => l.id), ['c']);
   assert.deepEqual(filterLeads(leads, { query: 'boco' }).map(l => l.id), ['b']);
   assert.deepEqual(filterLeads(leads, { query: 'q4', progress: 'sent', emails }).map(l => l.id), ['a']);
+});
+
+test('a column mapping turns any file layout into Cold\'s fields, and extra columns can be kept as extra fields', async () => {
+  const L = await load('src/domain/leads.js');
+  const csv = ['Who,Employer,Mail,Lead score,Region', 'Ana Ruiz,Acme,ana@acme.io,87,EMEA', 'Bo Lee,Beta,bo@beta.io,,APAC'].join('\n');
+  // unmapped columns are not imported until chosen; nothing here is recognised as a name
+  const first = L.planImport(csv, []);
+  assert.equal(first.ok, false); assert.deepEqual(first.headers, ['Who', 'Employer', 'Mail', 'Lead score', 'Region']);
+  assert.match(first.message, /Choose which column holds the name/);
+  assert.deepEqual(first.samples.slice(0, 2), ['Ana Ruiz', 'Acme']);
+  const p = L.planImport(csv, [], { mapping: ['name', 'company', 'email', 'x:Lead score', 'x:Region'] });
+  assert.equal(p.ok, true); assert.equal(p.adds.length, 2);
+  assert.deepEqual(p.adds[0].custom, { 'Lead score': '87', Region: 'EMEA' });
+  assert.deepEqual(p.adds[1].custom, { Region: 'APAC' }, 'blank extra values are not stored');
+  assert.equal(p.adds[0].company, 'Acme');
+  // a field chosen twice keeps its first column and says so; first + last name join; unmapped columns are listed as ignored
+  const q = L.planImport('A,B,C\nAda,Lovelace,x', [], { mapping: ['first', 'last', ''] });
+  assert.equal(q.adds[0].name, 'Ada Lovelace'); assert.deepEqual(q.ignored, ['C']);
+  const r = L.planImport('A,B\nAda,Bob', [], { mapping: ['name', 'name'] });
+  assert.deepEqual(r.repeated, ['name']); assert.equal(r.adds[0].name, 'Ada');
+  // extra fields are cleaned, kept through save/load, searchable and exported; exported files re-import into the same extra fields
+  assert.deepEqual(L.cleanCustom({ ' a  b ': ' 1 ', empty: '  ', n: 5, o: { x: 1 }, __proto__: 'x' }), { 'a b': '1', n: '5' });
+  const leads = p.adds.map(a => L.normalizeLead(a));
+  assert.deepEqual(L.customNames(leads), ['Lead score', 'Region']);
+  assert.equal(L.filterLeads(leads, { query: 'apac' }).length, 1);
+  const out = L.leadsToCsv(leads);
+  assert.match(out.split('\r\n')[0], /,notes,Lead score,Region$/);
+  const again = L.planImport(out, leads, { duplicates: 'update' });
+  assert.deepEqual(again.mapping.slice(-2), ['x:Lead score', 'x:Region']); assert.equal(again.updates.length + again.unchanged, 2);
+  const upd = L.planImport('name,email,Region\nAna Ruiz,ana@acme.io,LATAM', leads, { duplicates: 'update' });
+  assert.deepEqual(upd.updates[0].next.custom, { 'Lead score': '87', Region: 'LATAM' });
 });

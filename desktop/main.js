@@ -14,6 +14,8 @@ if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 process.env.COLD_SETTINGS_FILE = path.join(app.getPath("userData"), "settings.json");
 process.env.COLD_DB_FILE = path.join(app.getPath("userData"), "cold.db");   // products and drafts (SQLite)
 process.env.HOST = "127.0.0.1";
+// Optional Google Sheets sign-in for this build: desktop/google.json = { "clientId": "...", "clientSecret": "..." } (see docs/google-sheets.md). Without it the option is simply off.
+try { const g = require("./google.json"); process.env.COLD_GOOGLE_CLIENT_ID ||= String(g.clientId || ""); process.env.COLD_GOOGLE_CLIENT_SECRET ||= String(g.clientSecret || ""); } catch { /* not configured */ }
 
 let win = null;
 

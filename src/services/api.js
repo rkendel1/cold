@@ -56,5 +56,5 @@ export function createApi({ fetchImpl = (...a) => globalThis.fetch(...a), getAcc
   }
   sample.json = async (prompt, opts) => parseLooseJson((await sample(prompt, opts)).text);
 
-  return { config, models, sample, profile, tweet, findEmail, verifyEmail, getExtension, rotateExtension, setWebOrigins, getSettings, saveSettings, providerModels };
+  return { googleCall: settingsCall, config, models, sample, profile, tweet, findEmail, verifyEmail, getExtension, rotateExtension, setWebOrigins, getSettings, saveSettings, providerModels };
 }
