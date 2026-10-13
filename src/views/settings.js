@@ -8,6 +8,8 @@ import { h, clear, append } from "../components/dom.js";
 import { button, notice, toast, announce } from "../components/ui.js";
 import { confirmDialog } from "../components/dialog.js";
 import { copyText } from "../services/clipboard.js";
+import { signoffBlock } from "../domain/signoff.js";
+import { openInEmail, isEmail, APPS, APP_LABELS } from "../services/handoff.js";
 
 const OTHER = "__other__";
 const KEY_NOTE = {
@@ -268,6 +270,64 @@ export function mountSettings(root, { store, platform }) {
     return box;
   }
 
+  /* ---------- Email app: where "Open in email" goes. Chosen once; no sign-in, no account access. ---------- */
+  function emailAppSection() {
+    const sel = h("select", { id: "emailApp" }, APPS.map(a => h("option", { value: a }, APP_LABELS[a]))); sel.value = S.settings.emailApp || "mailto";
+    const acct = h("input", { type: "email", id: "gmailAccount", autocomplete: "off", placeholder: "you@gmail.com", value: S.settings.gmailAccount || "", "aria-describedby": "acctHint acctErr" });
+    const acctErr = h("p", { class: "field-error", id: "acctErr" });
+    const acctField = h("div", { class: "field" }, h("label", { for: "gmailAccount" }, "Gmail address ", h("span", { class: "opt" }, "Optional")), h("p", { class: "hint", id: "acctHint" }, "Only if you're signed into more than one Google account: this tells Gmail which one to open."), acct, acctErr);
+    const explain = h("p", { class: "hint", id: "emailAppHelp" });
+    const msg = h("p", { class: "hint", role: "status", id: "emailAppMsg" });
+    const paint = () => {
+      acctField.hidden = sel.value !== "gmail";
+      explain.textContent = sel.value === "mailto"
+        ? "Uses whichever app your computer (or browser) has set to handle email links. If you read mail in the browser (Gmail, Outlook) and nothing opens, choose it here."
+        : `Opens a ready-to-edit compose window in a new browser tab, using the account you're already signed into${platform.hub && platform.hub.kind === "extension" ? "" : S.backend === "sqlite" ? " (the desktop app opens your default web browser)" : ""}. Cold never signs in, never sees your mail and never sends anything: you review the draft and press Send.`;
+    };
+    sel.addEventListener("change", paint); paint();
+    const bad = () => { const v = acct.value.trim(), b = sel.value === "gmail" && !!v && !isEmail(v); acctErr.textContent = b ? "That doesn't look like an email address." : ""; return b; };
+    acct.addEventListener("input", bad);
+    const save = button("Save", { kind: "primary", id: "saveEmailApp", onclick: async () => {
+      if (bad()) { acct.focus(); return; }
+      try { await store.saveSettings({ emailApp: sel.value, gmailAccount: sel.value === "gmail" ? acct.value.trim() : S.settings.gmailAccount || "" }); msg.textContent = `Saved. Open in email now uses ${APP_LABELS[sel.value]}.`; toast("Email app saved"); }
+      catch { msg.textContent = "Couldn't save that."; }
+    } });
+    // A harmless trial: opens a compose window with sample text and no recipient, so the choice can be checked before a real email depends on it.
+    const tryIt = button("Try it", { id: "tryEmailApp", onclick: async () => {
+      if (bad()) { acct.focus(); return; }
+      const r = await openInEmail({ to: "", subject: "A test from Cold", body: "This is a test draft from Cold. Nothing has been sent. You can close this window.", app: sel.value, account: sel.value === "gmail" ? acct.value.trim() : "" });
+      msg.textContent = r.message; announce(r.message);
+    } });
+    return h("div", { class: "form" }, field("Open in email with", sel), acctField, explain, h("div", { class: "actions" }, save, tryIt), msg);
+  }
+
+  /* ---------- Email sign-off: set once; product details come from each product's profile ---------- */
+  function signoffSection() {
+    const name = h("textarea", { id: "signName", rows: 3, placeholder: "Randy Kendel\nFounder", "aria-describedby": "signHint" }); name.value = S.settings.signature || "";
+    const withProduct = h("input", { type: "checkbox", id: "signProduct" }); withProduct.checked = S.settings.signoffProduct !== false;
+    const preview = h("p", { class: "signoff", id: "signPreview", role: "status" });
+    const productSel = h("select", { id: "signPreviewProduct", "aria-label": "Preview for which product" });
+    const paint = () => {
+      const product = S.products.find(p => p.id === productSel.value) || null;
+      const block = signoffBlock({ settings: { signature: name.value, signoffProduct: withProduct.checked }, product });
+      preview.textContent = block ? block : "Set your name above and every email ends with it.";
+    };
+    const fill = () => { const keep = productSel.value; clear(productSel).append(...S.products.map(p => h("option", { value: p.id }, p.name || "Untitled"))); productSel.value = S.products.some(p => p.id === keep) ? keep : (S.products[0] ? S.products[0].id : ""); productSel.hidden = !S.products.length; paint(); };
+    fill(); name.addEventListener("input", paint); withProduct.addEventListener("change", paint); productSel.addEventListener("change", paint);
+    store.subscribe(t => { if (t === "products" || t === "ready") fill(); });
+    const msg = h("p", { class: "hint", role: "status" });
+    const save = button("Save sign-off", { kind: "primary", id: "saveSignoff", onclick: async () => {
+      try { await store.saveSettings({ signature: name.value.trim(), signoffProduct: withProduct.checked }); msg.textContent = "Saved. New and existing drafts use it when you copy or open them."; toast("Sign-off saved"); }
+      catch { msg.textContent = "Couldn't save your sign-off."; }
+    } });
+    return h("div", { class: "form" },
+      field("Your sign-off", name, h("p", { class: "hint", id: "signHint" }, "Your name, and a title or company on extra lines. Set it once; it goes under every email.")),
+      h("label", { class: "check" }, withProduct, " Add the product's name and links under it"),
+      h("p", { class: "hint" }, "Which links appear is chosen in each product's profile (Knowledge > Links and social), so an email about one product shows that product's links."),
+      h("div", { class: "field" }, h("strong", {}, "Preview"), productSel, preview),
+      h("div", { class: "actions" }, save), msg);
+  }
+
   /* ---------- Your data ---------- */
   function dataSection() {
     const p = h("p", { class: "hint", id: "dataLine" });
@@ -294,6 +354,8 @@ export function mountSettings(root, { store, platform }) {
     append(body, [section("model", "Model", model, preference())]);
     if (platform.hub) body.append(section("hub", "Cold desktop app", hubSection()));
     if (S.server.dbEnabled && platform.api.getExtension) body.append(section("pairing", "Browser extension & web apps", await pairingSection()));
+    body.append(section("emailapp", "Email app", emailAppSection()));
+    body.append(section("signoff", "Email sign-off", signoffSection()));
     body.append(section("data", "Your data", dataSection()));
   }
 

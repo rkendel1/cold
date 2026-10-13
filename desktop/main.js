@@ -2,7 +2,7 @@
 // A fixed port keeps the page origin stable between launches, which is what keeps saved products and drafts.
 const { app, BrowserWindow, Menu, shell, safeStorage, dialog, session, ipcMain } = require("electron");
 const path = require("node:path");
-const { isSafeMailto } = require("../lib/mailto.js");
+const { isSafeHandoff } = require("../lib/mailto.js");
 
 const PORT = parseInt(process.env.COLD_PORT || "47821", 10);
 const ORIGIN = `http://127.0.0.1:${PORT}`;
@@ -55,13 +55,13 @@ function createWindow() {
   win.on("closed", () => { win = null; });
 }
 
-// "Open in email": the page may ask the OS to open ONE kind of link, a mailto: draft in the user's email app, and only from Cold's
+// "Open in email": the page may ask the OS to open ONE kind of link: a mailto: draft in the user's email app, or the exact compose link of Gmail or Outlook in the browser, and only from Cold's
 // own window. Anything else (other schemes, extra parameters, other senders) is refused here, in the main process, regardless of
 // what the page sends. Cold never sends mail; this only opens an unsent draft.
 ipcMain.handle("cold:open-mail", async (event, url) => {
   const from = event.senderFrame && event.senderFrame.url;
   if (!from || !from.startsWith(ORIGIN)) return { ok: false, message: "not allowed from here" };
-  if (!isSafeMailto(url)) return { ok: false, message: "not a valid email link" };
+  if (!isSafeHandoff(url)) return { ok: false, message: "not a valid email link" };
   try { await shell.openExternal(url); return { ok: true }; }
   catch (e) { return { ok: false, message: e && e.message ? String(e.message).split("\n")[0].slice(0, 120) : "the system couldn't open it" }; }
 });

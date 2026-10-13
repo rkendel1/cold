@@ -58,7 +58,7 @@ export function mountHistory(root, { store, openRecord }) {
   /** The user's explicit record of what happened: the only way a status changes. */
   async function setStatus(e, st) {
     if (!STATUSES.includes(st)) return;   // "Unknown status" is not something the user can set; only a supported status is a deliberate correction
-    if (await save(e.id, cur => applyStatus(cur, st, { signature: S.settings.signature }), "Couldn't update the status.")) { toast(`Status set to “${STATUS_COPY[st].label}”`); announce(`Status set to ${STATUS_COPY[st].label}`); }
+    if (await save(e.id, cur => applyStatus(cur, st, { signature: store.signoffFor(cur) }), "Couldn't update the status.")) { toast(`Status set to “${STATUS_COPY[st].label}”`); announce(`Status set to ${STATUS_COPY[st].label}`); }
   }
 
   const timers = new Map();   // id -> { t, run }: the change waiting for its 600 ms pause
@@ -72,10 +72,10 @@ export function mountHistory(root, { store, openRecord }) {
 
   async function emailIt(e, toInput, msgEl, expand) {
     const cur = latest(e.id) || e;
-    const r = await openInEmail({ to: toInput ? toInput.value : cur.recipient?.email, subject: cur.subject, body: emailText(cur, S.settings.signature) });
+    const r = await openInEmail({ to: toInput ? toInput.value : cur.recipient?.email, subject: cur.subject, body: emailText(cur, store.signoffFor(cur)), app: S.settings.emailApp, account: S.settings.gmailAccount });
     messages.set(e.id, r.message); if (msgEl) msgEl.textContent = r.message; else render();
     announce(r.message);
-    if (!r.ok && (r.reason === "missing" || r.reason === "invalid")) { openIds.add(e.id); expand(); }
+    if (!r.ok && r.reason === "invalid") { openIds.add(e.id); expand(); }
   }
 
   /** Adds a hook class (used by tests and styles) without losing the button's own classes. */
@@ -102,7 +102,7 @@ export function mountHistory(root, { store, openRecord }) {
     const noteIn = h("textarea", { class: "hNote", rows: 3, "aria-label": `Notes for ${e.recipient?.name || "this draft"}`, placeholder: "Why they fit, what you actually sent, what the reply said, what to follow up on…" }); noteIn.value = (held.get(e.id)?.note ?? e.note) || "";
     noteIn.addEventListener("input", () => saveLater(e.id, { note: noteIn.value }));
     for (const el of [toIn, noteIn]) { el.dataset.keep = "1"; el.addEventListener("blur", () => { settling = true; flush(e.id); setTimeout(() => { settling = false; if (deferred && !typing()) { deferred = false; render(); } }, 400); }); }
-    const edited = editedSinceSent(e, S.settings.signature);
+    const edited = editedSinceSent(e, store.signoffFor(e));
     const details = h("div", { class: "hdetails", hidden: !openIds.has(e.id) },
       isSocial ? null : h("div", { class: "field" }, h("label", {}, "Email address ", h("span", { class: "opt" }, "Optional")), toIn, toMsg),
       h("div", { class: "field" }, h("label", {}, "Notes ", h("span", { class: "opt" }, "Optional, only for you")), noteIn),
@@ -128,7 +128,7 @@ export function mountHistory(root, { store, openRecord }) {
         e.note ? h("div", { class: "hnote" }, h("strong", {}, "Note: "), e.note) : null),
       h("div", { class: "ctl" }, statusChip(st), score != null ? h("span", { class: "hint", title: "Style checklist score. Not a prediction of replies." }, `Checklist ${score}`) : null, nextStep, sel,
         isSocial ? null : tag(button("Open in email", { onclick: () => emailIt(e, toIn, msg, () => { details.hidden = false; toggle.setAttribute("aria-expanded", "true"); toIn.focus(); }) }), "hEmail"),
-        button("Copy", { onclick: async () => toast((await copyText(emailText(e, S.settings.signature))) ? "Copied to clipboard" : "Couldn't copy automatically.") }),
+        button("Copy", { onclick: async () => toast((await copyText(emailText(e, store.signoffFor(e)))) ? "Copied to clipboard" : "Couldn't copy automatically.") }),
         button("Open", { title: "Reopen and edit this draft", onclick: () => openRecord(e) }), toggle, del),
       msg, details);
   }

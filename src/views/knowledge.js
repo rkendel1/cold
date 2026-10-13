@@ -3,7 +3,8 @@ import { h, $, $$, clear, autosize } from "../components/dom.js";
 import { field, textInput, textArea, button, chip, toast, notice } from "../components/ui.js";
 import { confirmDialog } from "../components/dialog.js";
 import { PROOF_TYPES, PROOF_STRENGTHS } from "../domain/constants.js";
-import { readiness, externalProof, normalizeHandle } from "../domain/knowledge.js";
+import { readiness, externalProof, normalizeHandle, productLinks } from "../domain/knowledge.js";
+import { linkKey, orderLinks, signoffBlock } from "../domain/signoff.js";
 import { uid } from "../domain/ids.js";
 
 export function mountKnowledge(root, { store, navigate }) {
@@ -103,12 +104,31 @@ export function mountKnowledge(root, { store, navigate }) {
     const status = h("span", { class: "status", role: "status" }, p._new ? "Not saved yet" : `Saved ${store.where()}`);
     const saveBtn = h("button", { type: "submit", class: "btn primary", id: "kSave" }, "Save product");
 
+    /* sign-off: which of this product's links go under your name in emails about it */
+    const skip = new Set(p.signoffSkip || []);
+    const pickHost = h("div", { class: "form", id: "signoffPick" });
+    const previewEl = h("p", { class: "signoff", id: "signoffPreview", role: "status" });
+    function renderSignoffPick() {
+      const links = orderLinks(productLinks({ website: refs.kWeb.input.value.trim(), xHandle: normalizeHandle(refs.kX.input.value), repo: refs.kRepo.input.value.trim(), socials: refs.kLinks.input.value.split("\n").map(s => s.trim()).filter(Boolean) }));
+      clear(pickHost);
+      if (!links.length) pickHost.append(h("p", { class: "hint" }, "Add a website, X handle or other links above, then choose which go under your name in emails about this product."));
+      for (const l of links) {
+        const key = linkKey(l), cb = h("input", { type: "checkbox", checked: !skip.has(key) });
+        cb.addEventListener("change", () => { cb.checked ? skip.delete(key) : skip.add(key); renderSignoffPreview(); if (sel) { sel.dirty = true; status.textContent = "Unsaved changes"; } });
+        pickHost.append(h("label", { class: "check" }, cb, ` ${l[0]}: ${l[1]}`));
+      }
+      renderSignoffPreview();
+    }
+    function renderSignoffPreview() {
+      const block = signoffBlock({ settings: { ...S.settings, signature: S.settings.signature || "Your name" }, product: { ...read(), name: refs.kName.input.value.trim() } });
+      previewEl.textContent = `Under your name in emails about ${refs.kName.input.value.trim() || "this product"}:\n${block}${S.settings.signature ? "" : "\n(Set your name in Settings or on any draft.)"}`;
+    }
     const read = () => {
       const val = k => refs[k].input.value.trim();
       const lines = k => refs[k].input.value.split("\n").map(s => s.trim()).filter(Boolean);
       return {
         ...p, _new: undefined, id: p.id, order: p.order ?? S.products.length,
-        name: val("kName"), status: val("kStatus"), oneLiner: val("kOne"), category: val("kCat"), website: val("kWeb"), repo: val("kRepo"), xHandle: normalizeHandle(val("kX")), socials: lines("kLinks"),
+        name: val("kName"), status: val("kStatus"), oneLiner: val("kOne"), category: val("kCat"), website: val("kWeb"), repo: val("kRepo"), xHandle: normalizeHandle(val("kX")), socials: lines("kLinks"), signoffSkip: [...skip],
         what: val("kWhat"), who: val("kWho"), problem: val("kProblem"), shortDesc: val("kShort"), longDesc: val("kLong"),
         techFacts: lines("kTech"), approved: lines("kApproved"), dontSay: lines("kDont"),
         proof: rows.filter(r => r.claim.trim()).map(r => ({ id: r.id, claim: r.claim.trim(), evidence: (r.evidence || "").trim(), type: r.type, strength: r.strength, external: !!r.external })),
@@ -172,12 +192,14 @@ export function mountKnowledge(root, { store, navigate }) {
         proofHost, h("div", {}, button("Add proof", { id: "kAddProof", onclick: () => { const r = { id: uid("pr"), claim: "", evidence: "", type: "Technical", strength: "Medium", external: true }; rows.push(r); markDirty(); renderProof(); proofHost.querySelector(`[data-rid="${r.id}"] .pClaim`)?.focus(); } }))),
       h("section", { "aria-labelledby": "words-title" }, h("h2", { id: "words-title" }, "Facts and wording"), refs.kTech, refs.kApproved, refs.kDont),
       h("details", { class: "panel" }, h("summary", {}, "More detail ", h("span", { class: "opt" }, "(optional)")), h("div", { class: "in" }, h("div", { class: "grid2" }, refs.kCat, refs.kStatus, refs.kRepo), refs.kShort, refs.kLong)),
-      h("details", { class: "panel", open: !!(p.website || p.xHandle || (p.socials || []).length) }, h("summary", {}, "Links and social ", h("span", { class: "opt" }, "(used in tweets)")), h("div", { class: "in" }, h("div", { class: "grid2" }, refs.kWeb, refs.kX), refs.kLinks)),
+      h("details", { class: "panel", open: !!(p.website || p.xHandle || (p.socials || []).length) }, h("summary", {}, "Links and social ", h("span", { class: "opt" }, "(used in tweets and your email sign-off)")), h("div", { class: "in" }, h("div", { class: "grid2" }, refs.kWeb, refs.kX), refs.kLinks,
+        h("div", { class: "field" }, h("strong", {}, "Include in your email sign-off"), h("p", { class: "hint" }, "Your name is set once in Settings. For emails about this product, the ones ticked here go under it."), pickHost, previewEl))),
       h("div", { class: "savebar" }, saveBtn,
         button("Write an email with this", { kind: "ghost", id: "kCompose", onclick: () => { if (sel?.dirty) toast("Unsaved edits aren't used in drafts until you save."); navigate("compose", { productId: p.id }); } }),
         status, button("Delete", { kind: "ghost danger", id: "kDelete", onclick: () => remove(p) })));
 
-    el.addEventListener("input", e => { if (e.target.closest(".proof")) return; markDirty(); });
+    el.addEventListener("input", e => { if (e.target.closest(".proof")) return; markDirty(); if ([refs.kWeb, refs.kX, refs.kRepo, refs.kLinks, refs.kName].some(c => c.input === e.target)) renderSignoffPick(); });
+    renderSignoffPick();
     el.addEventListener("submit", async ev => {
       ev.preventDefault();
       const rec = read();

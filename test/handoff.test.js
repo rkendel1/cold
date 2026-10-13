@@ -33,13 +33,17 @@ test('desktop handoff: success is reported by the OS; failure and exceptions kee
   assert.deepEqual([browserThrows.ok, browserThrows.reason], [false, 'failed']);
 });
 
-test('nothing opens for a missing, invalid or too-long message, and each says what to do', async () => {
+test('no recipient is fine; a typo, or a too-long message, opens nothing and says what to do', async () => {
   const { openInEmail } = await load('src/services/handoff.js');
   const opts = { desktop: { openMail: never }, open: never };
-  const missing = await openInEmail({ ...draft, to: '' }, opts);
-  assert.deepEqual([missing.ok, missing.reason], [false, 'missing']); assert.match(missing.message, /Add the recipient's email address/);
+  // no address: still opens a draft (To line empty) and says so
+  const opened = [];
+  const none = await openInEmail({ ...draft, to: '' }, { desktop: null, open: u => opened.push(u) });
+  assert.equal(none.ok, true); assert.match(none.message, /with no recipient \(add one there\)/); assert.match(opened[0], /^mailto:\?subject=trial%20drop-off&body=/);
+  const viaApp = await openInEmail({ ...draft, to: undefined }, { desktop: { openMail: async u => { opened.push(u); return { ok: true }; } }, open: never });
+  assert.equal(viaApp.ok, true); assert.match(viaApp.message, /with no recipient/); assert.ok(opened[1].startsWith('mailto:?subject='));
   const invalid = await openInEmail({ ...draft, to: 'sam@' }, opts);
-  assert.deepEqual([invalid.ok, invalid.reason], [false, 'invalid']); assert.match(invalid.message, /valid email address/);
+  assert.deepEqual([invalid.ok, invalid.reason], [false, 'invalid']); assert.match(invalid.message, /valid email address/); assert.match(invalid.message, /clear it/);
   const long = await openInEmail({ ...draft, body: 'x '.repeat(2000) }, opts);
   assert.deepEqual([long.ok, long.reason], [false, 'too_long']); assert.match(long.message, /Nothing was shortened/); assert.match(long.message, /Copy email/); assert.match(long.message, /\d{4} characters/);
 });
@@ -56,4 +60,53 @@ test('the recipient address is stored with the draft, survives normalisation, an
   assert.equal(rec.recipient.email, 'sam@trialco.com');
   const none = await generateEmail({ sample, product, form: { name: 'Sam', company: 'TrialCo', why: 'x', goal: 'advice' } });
   assert.equal(none.recipient.email, '');
+});
+
+test('generated subjects start with a capital; edits and improvements keep it; the user\'s own typing is never altered', async () => {
+  const { generateEmail, improveEmail } = await load('src/services/generation.js');
+  const product = { id: 'p', name: 'Acme', what: 'Does a thing.', proof: [], techFacts: [], approved: [], dontSay: [] };
+  const sample = { json: async () => ({ subject: 'quick question', what: 'a.', why: 'b.', ask: 'c?', final: { subject: 'state for ai-native founders', what: 'a.', why: 'b.', ask: 'c?' } }) };
+  const rec = await generateEmail({ sample, product, form: { name: 'Sam', company: 'TrialCo', why: 'x', goal: 'advice' } });
+  assert.equal(rec.subject, 'State for ai-native founders');
+  const again = await improveEmail({ sample, product, current: { ...rec, subject: 'my own lowercase subject' }, focus: 'tighten' });
+  assert.equal(again.subject, 'State for ai-native founders');          // the editor's new subject is capitalised too
+  const edited = { ...rec, subject: 'my own lowercase subject' };
+  assert.equal(edited.subject, 'my own lowercase subject');              // nothing re-capitalises what the user typed
+});
+
+test('Gmail and Outlook: the draft opens in a compose tab (or the default browser on desktop), with the right link and honest wording', async () => {
+  const { openInEmail } = await load('src/services/handoff.js');
+  const opened = [];
+  const web = await openInEmail({ ...draft, app: 'gmail', account: 'me@gmail.com' }, { desktop: null, open: u => opened.push(u) });
+  assert.equal(web.ok, true); assert.equal(web.app, 'gmail');
+  assert.equal(opened[0], 'https://mail.google.com/mail/?authuser=me%40gmail.com&view=cm&fs=1&to=sam%40trialco.com&su=trial%20drop-off&body=Line%20one.%0A%0ALine%20two%20%E2%9C%93');
+  assert.match(web.message, /Opened a Gmail compose tab/); assert.match(web.message, /sign in/); assert.match(web.message, /hasn't sent anything/); assert.match(web.message, /pop-ups/);
+  // no recipient is fine here too
+  const none = await openInEmail({ ...draft, to: '', app: 'outlook' }, { desktop: null, open: u => opened.push(u) });
+  assert.match(none.message, /Outlook\.com compose tab with no recipient/); assert.match(opened[1], /^https:\/\/outlook\.live\.com\/mail\/0\/deeplink\/compose\?subject=/);
+  // desktop: the same link goes to the bridge, which opens the default browser
+  const sent = [];
+  const desk = await openInEmail({ ...draft, app: 'm365' }, { desktop: { openMail: async u => { sent.push(u); return { ok: true }; } }, open: never });
+  assert.equal(desk.via, 'desktop'); assert.match(desk.message, /Opened your browser to a Outlook for work or school compose window/); assert.ok(sent[0].startsWith('https://outlook.office.com/mail/deeplink/compose?'));
+  // failures keep the draft and point to Copy; too long and typos open nothing
+  const failed = await openInEmail({ ...draft, app: 'gmail' }, { desktop: { openMail: async () => ({ ok: false, message: 'no browser' }) }, open: never });
+  assert.deepEqual([failed.ok, failed.reason], [false, 'failed']); assert.match(failed.message, /Couldn't open Gmail \(no browser\)/); assert.match(failed.message, /Copy email/);
+  const long = await openInEmail({ ...draft, body: 'word '.repeat(2000), app: 'gmail' }, { desktop: null, open: never });
+  assert.deepEqual([long.ok, long.reason], [false, 'too_long']); assert.match(long.message, /Gmail \(\d{4,} characters; the limit is 6000\)\. Nothing was shortened/);
+  assert.equal((await openInEmail({ ...draft, to: 'sam@', app: 'gmail' }, { desktop: null, open: never })).reason, 'invalid');
+  // an unknown or missing choice falls back to the default mailto link
+  const fallback = []; await openInEmail({ ...draft, app: 'something-else' }, { desktop: null, open: u => fallback.push(u) });
+  assert.ok(fallback[0].startsWith('mailto:'));
+  // the mailto default now points people who use webmail to the fix
+  const def = await openInEmail(draft, { desktop: null, open: () => {} });
+  assert.match(def.message, /choose Gmail or Outlook in Settings > Email app/);
+});
+
+test('the saved email-app choice is validated: unknown values and non-addresses are dropped, never trusted', async () => {
+  const { emailApp, emailAccount, loadAll } = await load('src/state/storage.js');
+  assert.deepEqual(['gmail', 'outlook', 'm365', 'mailto'].map(emailApp), ['gmail', 'outlook', 'm365', 'mailto']);
+  assert.deepEqual(['yahoo', '', null, undefined, 7, '<script>'].map(emailApp), Array(6).fill('mailto'));
+  assert.deepEqual(['me@gmail.com', ' me@gmail.com ', 'not an address', '', null, 'a@b.co?x=1'].map(emailAccount), ['me@gmail.com', 'me@gmail.com', '', '', '', '']);
+  const store = { getItem: k => (k === 'cold.settings' ? JSON.stringify({ signature: 'R', emailApp: 'bogus', gmailAccount: 'x' }) : null), setItem() {} };
+  assert.deepEqual(loadAll(store).settings, { signature: 'R', signoffProduct: true, emailApp: 'mailto', gmailAccount: '' });
 });

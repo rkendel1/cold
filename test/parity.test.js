@@ -14,12 +14,13 @@ let pw; try { pw = require('playwright-core'); } catch { pw = null; }
 const chromium = process.env.CHROMIUM || (() => { for (const b of [process.env.PLAYWRIGHT_BROWSERS_PATH, path.join(os.homedir(), 'Library/Caches/ms-playwright'), path.join(os.homedir(), '.cache/ms-playwright'), '/opt/pw-browsers'].filter(Boolean)) { try { for (const d of fs.readdirSync(b).filter(x => /^chromium-\d+$/.test(x))) for (const sub of ['chrome-mac/Chromium.app/Contents/MacOS/Chromium', 'chrome-linux/chrome', 'chrome-linux64/chrome']) { const p = path.join(b, d, sub); if (fs.existsSync(p)) return p; } } catch { /* next */ } } return null; })();
 const SKIP = !pw || !chromium || !fs.existsSync(path.join(__dirname, '../extension/dist/panel.js')) ? 'Chromium, playwright-core or the built extension (npm run build:extension) is not available' : false;
 const F = env.FINAL;
+const SUBJECT = F.subject[0].toUpperCase() + F.subject.slice(1);   // generated subjects start with a capital
 
 /** What each surface may and may not offer. Anything not listed here must be identical everywhere. */
 const EXPECT = {
-  web:       { settings: ['Model', 'Cold desktop app', 'Your data'], keyField: false, pairing: false, hubForm: true,  readPage: false, insertTweet: false },
-  desktop:   { settings: ['Model', 'Browser extension & web apps', 'Your data'], keyField: true, pairing: true, hubForm: false, readPage: false, insertTweet: false },
-  extension: { settings: ['Model', 'Cold desktop app', 'Your data'], keyField: true, pairing: false, hubForm: true, readPage: true, insertTweet: true },
+  web:       { settings: ['Model', 'Cold desktop app', 'Email app', 'Email sign-off', 'Your data'], keyField: false, pairing: false, hubForm: true,  readPage: false, insertTweet: false },
+  desktop:   { settings: ['Model', 'Browser extension & web apps', 'Email app', 'Email sign-off', 'Your data'], keyField: true, pairing: true, hubForm: false, readPage: false, insertTweet: false },
+  extension: { settings: ['Model', 'Cold desktop app', 'Email app', 'Email sign-off', 'Your data'], keyField: true, pairing: false, hubForm: true, readPage: true, insertTweet: true },
 };
 
 /** A mock OpenAI-style model for the extension's own connection; returns the same canned email the web mock does. */
@@ -38,6 +39,7 @@ function openaiMock() {
   return new Promise(r => server.listen(0, '127.0.0.1', () => r({ port: server.address().port, close: () => new Promise(x => server.close(x)) })));
 }
 
+const BLOCK = 'Sam Founder\nAcme Flow\nhttps://acme.dev\nX: @acmeflow';
 const until = async (fn, ms = 15000) => { const t = Date.now(); for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t > ms) throw new Error('timed out: ' + fn); await new Promise(r => setTimeout(r, 120)); } };
 const go = (page, v) => page.click(`#nav-${v}`);
 
@@ -56,21 +58,33 @@ async function workflow(name, page, s) {
   assert.equal(await page.locator('#hubConnect, #hubDisconnect').count() > 0, x.hubForm, `${name}: desktop-app connection only on web and extension`);
   assert.equal(await page.locator('#readPage').count() > 0, x.readPage, `${name}: page reading only in the extension`);
 
+  // your sign-off name is set once, in Settings (the same screen everywhere)
+  await page.fill('#signName', 'Sam Founder'); await page.click('#saveSignoff'); await page.waitForFunction(() => /Saved/.test(document.querySelector('#saveSignoff').closest('.form').innerText));
   // product, through the same Knowledge editor
   await go(page, 'knowledge'); await page.click('#emptyAdd');
   await page.fill('#kName', 'Acme Flow'); await page.fill('#kWhat', 'Acme Flow turns a signup into a first booked job for plumbers.'); await page.fill('#kWho', 'Plumbing shops'); await page.fill('#kProblem', 'Trials stall before a teammate is invited.');
+  await page.click('summary:has-text("Links and social")'); await page.fill('#kWeb', 'https://acme.dev'); await page.fill('#kX', 'acmeflow'); await page.fill('#kLinks', 'LinkedIn: https://linkedin.com/company/acme');
+  await page.uncheck('#signoffPick label:has-text("LinkedIn") input');                    // the product profile decides which links go in the sign-off
   await page.click('#kSave'); await page.waitForFunction(() => /Saved/.test(document.querySelector('#view-knowledge .status')?.textContent || ''));
   // compose a draft, through the same Write screen
   await go(page, 'compose'); await page.waitForFunction(() => document.querySelector('#rProduct'));
   await page.fill('#rName', 'Sam Ortiz'); await page.fill('#rCompany', 'TrialCo'); await page.fill('#rWhy', 'Wrote that most trial users stall before inviting a teammate.'); await page.fill('#rEmail', 'sam@trialco.com');
   await page.click('#genBtn'); await page.waitForSelector('#eSubject');
-  assert.equal(await page.inputValue('#eSubject'), F.subject); assert.equal(await page.inputValue('#eWhat'), F.what);
+  assert.equal(await page.inputValue('#eSubject'), SUBJECT); assert.equal(await page.inputValue('#eWhat'), F.what);
   for (const id of ['#copyEmail', '#openEmail', '#markSent', '#eNote', '#eTo']) assert.ok(await page.isVisible(id), `${name}: draft card has ${id}`);
   // opening it in an email app (mocked) and copying never change the status
   await page.evaluate(() => { window.__mail = []; window.coldDesktop = { openMail: async u => { window.__mail.push(u); return { ok: true }; } }; });
   await page.click('#openEmail'); await page.waitForFunction(() => window.__mail.length === 1); await page.click('#copyEmail');
-  assert.match(await page.evaluate(() => window.__mail[0]), /^mailto:sam@trialco\.com\?subject=trial%20drop-off&body=/);
+  assert.equal(await page.textContent('.signoff'), `Sign-off:\n${BLOCK}`, `${name}: sign-off preview`);
+  assert.ok((await page.evaluate(() => navigator.clipboard.readText())).endsWith(`\n\n${BLOCK}`), `${name}: Copy ends with the sign-off`);
+  assert.ok(decodeURIComponent((await page.evaluate(() => window.__mail[0])).split('&body=')[1]).replace(/\r\n/g, '\n').endsWith(`\n\n${BLOCK}`), `${name}: Open in email ends with the sign-off`);
+  assert.match(await page.evaluate(() => window.__mail[0]), /^mailto:sam@trialco\.com\?subject=Trial%20drop-off&body=/);
   let rec = await s.read(); assert.deepEqual([rec.status, rec.sentAt, rec.repliedAt, rec.sentCopy], ['draft', undefined, undefined, undefined], `${name}: new draft`);
+  // the email app is chosen once, in the same Settings screen, and Open in email honours it (a Gmail compose link, not a mailto: link)
+  await go(page, 'settings'); await page.selectOption('#emailApp', 'gmail'); await page.click('#saveEmailApp'); await page.waitForFunction(() => /Saved/.test(document.querySelector('#emailAppMsg').textContent));
+  await go(page, 'compose'); await page.click('#openEmail'); await page.waitForFunction(() => window.__mail.length === 2);
+  assert.match(await page.evaluate(() => window.__mail[1]), /^https:\/\/mail\.google\.com\/mail\/\?view=cm&fs=1&to=sam%40trialco\.com&su=Trial%20drop-off&body=/, `${name}: Gmail compose link`);
+  assert.match(await page.textContent('#emailAppNote'), /Gmail/);
   await page.fill('#eNote', 'Good fit: wrote about trial stalls');
   await until(async () => (await s.read()).note === 'Good fit: wrote about trial stalls');
   // History: explicit actions only
@@ -86,7 +100,7 @@ async function workflow(name, page, s) {
   await page.click('#genBtn'); await page.waitForSelector('#tweetDraft');
   assert.equal(await page.locator('#insertTweet').count() > 0, x.insertTweet, `${name}: "put it in the tweet box" only in the extension`);
   assert.ok(await page.isVisible('button:has-text("Copy tweet")'), `${name}: Copy tweet`);
-  return { status: rec.status, sentAt: typeof rec.sentAt, repliedAt: typeof rec.repliedAt, note: rec.note, sentCopySubject: rec.sentCopy.subject, sentCopyHasBody: rec.sentCopy.text.includes(F.what), email: rec.recipient.email, subject: rec.subject, what: rec.what };
+  return { status: rec.status, sentAt: typeof rec.sentAt, repliedAt: typeof rec.repliedAt, note: rec.note, sentCopySubject: rec.sentCopy.subject, sentCopyHasBody: rec.sentCopy.text.includes(F.what), sentCopyEndsWithSignoff: rec.sentCopy.text.endsWith(BLOCK), sentBodyHasNoSignoff: !rec.sentCopy.body.includes('acme.dev'), email: rec.recipient.email, subject: rec.subject, what: rec.what };
 }
 
 test('parity: the same workflow gives the same records, words and gates on web, desktop and the extension', { skip: SKIP, timeout: 170000 }, async () => {
@@ -123,6 +137,6 @@ test('parity: the same workflow gives the same records, words and gates on web, 
     // ---- the three records are the same, field for field, wherever they were made
     assert.deepEqual(results.desktop, results.web, 'desktop record matches web record');
     assert.deepEqual(results.extension, results.web, 'extension record matches web record');
-    assert.deepEqual(results.web, { status: 'replied', sentAt: 'number', repliedAt: 'number', note: 'Good fit: wrote about trial stalls', sentCopySubject: F.subject, sentCopyHasBody: true, email: 'sam@trialco.com', subject: F.subject, what: F.what });
+    assert.deepEqual(results.web, { status: 'replied', sentAt: 'number', repliedAt: 'number', note: 'Good fit: wrote about trial stalls', sentCopySubject: SUBJECT, sentCopyHasBody: true, sentCopyEndsWithSignoff: true, sentBodyHasNoSignoff: true, email: 'sam@trialco.com', subject: SUBJECT, what: F.what });
   } finally { await browser.close(); web.stop(); desk.stop(); await mock.server.close(); await own.close(); }
 });

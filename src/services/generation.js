@@ -4,6 +4,7 @@ import { buildKnowledge } from "../domain/knowledge.js";
 import { draftPrompt, editorPrompt, tweetPrompt, tweetUseOf, profilePrompt, reasonPrompt } from "../domain/prompts.js";
 import { evaluate } from "../domain/rules.js";
 import { uid } from "../domain/ids.js";
+import { capitalizeFirst } from "../domain/email.js";
 
 /** Turn a thrown error into { message, retryable } copy a founder can act on. */
 export function describeError(e) {
@@ -30,7 +31,7 @@ function emailRecord({ id, createdAt, status, form, product, fin, draft, ed, pre
     id, createdAt, status,
     recipient: { name: form.name, role: form.role, company: form.company, why: form.why, profileUrl: form.profileUrl || "", profile: form.profile || "", email: String(form.email || "").trim() },
     productId: product.id, productName: product.name, goal: form.goal, goalOther: form.goalOther || "", convey: form.convey || "",
-    subject: trim(fin.subject), what: trim(fin.what), why: trim(fin.why), ask: trim(fin.ask),
+    subject: capitalizeFirst(trim(fin.subject)), what: trim(fin.what), why: trim(fin.why), ask: trim(fin.ask),
     relevance: prev ? prev.relevance : (draft.relevance || null),
     retrieved: prev ? prev.retrieved : (Array.isArray(draft.retrieved) ? draft.retrieved.slice(0, 8) : []),
     proofId: ed.proof_id || draft.proof_id || null,

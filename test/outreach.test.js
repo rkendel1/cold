@@ -13,7 +13,7 @@ test('status changes only through applyStatus, never mutate, and never invent a 
   const sent = applyStatus(draft, 'sent', { now: 5000, signature: 'Randy' });
   assert.deepEqual([sent.status, sent.sentAt, sent.repliedAt], ['sent', 5000, undefined]);
   assert.equal(draft.status, 'draft'); assert.equal(draft.sentCopy, undefined);                       // input untouched
-  assert.deepEqual(sent.sentCopy, { subject: 'trial drop-off', text: 'We help. You wrote it.\n\nCould I ask?\n\nRandy', at: 5000 });
+  assert.deepEqual(sent.sentCopy, { subject: 'trial drop-off', text: 'We help. You wrote it.\n\nCould I ask?\n\nRandy', body: 'We help. You wrote it.\n\nCould I ask?', at: 5000 });
   assert.equal(applyStatus(sent, 'sent', { now: 9999 }), sent, 'setting the same status is a no-op');
   const replied = applyStatus(sent, 'replied', { now: 7000 });
   assert.deepEqual([replied.status, replied.sentAt, replied.repliedAt, replied.sentCopy.at], ['replied', 5000, 7000, 5000]);
@@ -62,4 +62,18 @@ test('older records load unchanged; notes and the sent copy are kept; nothing is
   assert.equal(normalizeEmail({ id: 'y', sentCopy: [1, 2] }).sentCopy, undefined);
   assert.equal(normalizeEmail({ id: 'z', recipient: null }).status, 'draft');   // a MISSING status keeps the legacy default
   assert.equal(normalizeEmail({ id: 'z', recipient: null, status: 7 }).status, 7);   // an unfamiliar one is kept
+});
+
+test('changing your sign-off or a product link later is not an edit to what was sent', async () => {
+  const { applyStatus, editedSinceSent } = await load('src/domain/outreach.js');
+  const draft = rec({ subject: 'Hello' });
+  const sent = applyStatus(draft, 'sent', { now: 1, signature: 'Randy\nFeltDB\nhttps://feltdb.com' });
+  assert.equal(editedSinceSent(sent, 'Randy\nFeltDB\nhttps://feltdb.com'), false);
+  assert.equal(editedSinceSent(sent, 'Randy K.'), false, 'a different sign-off is not an edit');
+  assert.equal(editedSinceSent(sent, ''), false);
+  assert.equal(editedSinceSent({ ...sent, what: 'Rewritten.' }, 'Randy K.'), true, 'but changing the message is');
+  assert.equal(editedSinceSent({ ...sent, subject: 'Changed' }, ''), true);
+  // a sent copy saved before `body` existed is still compared the old way
+  const legacy = { ...sent, sentCopy: { subject: 'Hello', text: sent.sentCopy.text, at: 1 } };
+  assert.equal(editedSinceSent(legacy, 'Randy\nFeltDB\nhttps://feltdb.com'), false);
 });

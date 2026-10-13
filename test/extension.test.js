@@ -217,14 +217,27 @@ test('extension paired with a running app: reads pages into the shared Write scr
     await panel.click('#genBtn'); await panel.waitForSelector('#eSubject');
     await until(() => app.db.snapshot().emails.find(e => e.mode !== 'reply'));
     const email = app.db.snapshot().emails.find(e => e.mode !== 'reply');
-    assert.deepEqual([email.recipient.name, email.subject, email.productId, email.recipient.email], ['Priya Nair', 'edge jobs', 'p1', 'priya@northwind.example']);
+    assert.deepEqual([email.recipient.name, email.subject, email.productId, email.recipient.email], ['Priya Nair', 'Edge jobs', 'p1', 'priya@northwind.example']);
     // Open in email (the browser's mailto handoff is MOCKED: this proves what the extension asks for, not that an email app is installed)
-    await panel.evaluate(() => { window.__mail = []; HTMLAnchorElement.prototype.click = function () { if (/^mailto:/i.test(this.href)) window.__mail.push(this.href); }; });
+    await panel.evaluate(() => { window.__mail = []; const orig = HTMLAnchorElement.prototype.click; HTMLAnchorElement.prototype.click = function () { if (/^mailto:/i.test(this.href)) window.__mail.push(this.href); else return orig.call(this); }; });
     await panel.fill('#eSubject', 'Edited subject & more'); await panel.click('#openEmail');
     await panel.waitForFunction(() => window.__mail.length === 1);
     assert.match(await panel.evaluate(() => window.__mail[0]), /^mailto:priya@northwind\.example\?subject=Edited%20subject%20%26%20more&body=/);
     assert.match(await panel.textContent('#handoffMsg'), /hasn't sent anything/);
     assert.equal(app.db.snapshot().emails.find(e => e.id === email.id).status, 'draft', 'opening an email never marks it sent');
+    // People who read mail in the browser choose Gmail once; then a REAL new tab opens on Gmail's compose address (only Gmail's server is stubbed here)
+    await ctx.route('https://mail.google.com/**', r => r.fulfill({ contentType: 'text/html', body: '<title>Gmail stub</title>compose' }));
+    await nav(panel, 'settings'); await panel.selectOption('#emailApp', 'gmail'); await panel.click('#saveEmailApp');
+    await panel.waitForFunction(() => /Saved/.test(document.querySelector('#emailAppMsg').textContent));
+    await nav(panel, 'write'); await panel.waitForSelector('#openEmail');
+    const [gmailTab] = await Promise.all([ctx.waitForEvent('page'), panel.click('#openEmail')]);
+    await gmailTab.waitForLoadState();
+    const gu = new URL(gmailTab.url());
+    assert.deepEqual([gu.origin + gu.pathname, gu.searchParams.get('to'), gu.searchParams.get('su'), gu.searchParams.get('view')], ['https://mail.google.com/mail/', 'priya@northwind.example', 'Edited subject & more', 'cm']);
+    assert.match(gu.searchParams.get('body'), /Acme Edge runs batch jobs/);
+    assert.match(await panel.textContent('#handoffMsg'), /Opened a Gmail compose tab/);
+    assert.equal(app.db.snapshot().emails.find(e => e.id === email.id).status, 'draft', 'opening Gmail never marks it sent');
+    await gmailTab.close();
     // notes on the draft, then mark sent in History: the app's database sees the same status, note and sent copy
     await panel.fill('#eNote', 'Good fit: writes about batch workloads');
     await nav(panel, 'history'); await panel.locator('.hrow', { hasText: 'Priya Nair' }).locator('.hMarkSent').click();

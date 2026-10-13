@@ -4,7 +4,8 @@
 import { STORAGE_KEYS } from "../domain/constants.js";
 import { loadAll, writeJson } from "./storage.js";
 import { normalizeProduct } from "../domain/knowledge.js";
-import { normalizeEmail, readJson } from "./storage.js";
+import { signoffBlock } from "../domain/signoff.js";
+import { normalizeEmail, readJson, emailApp, emailAccount } from "./storage.js";
 import { saveIntent, deleteIntent, applySave, compareProducts, compareEmails } from "../domain/library.js";
 
 export { uid } from "../domain/ids.js";
@@ -14,7 +15,7 @@ export function createStore({ storage = globalThis.localStorage, platform = null
   const state = {
     ready: false,
     backend: "local",
-    products: [], emails: [], settings: { signature: "" },
+    products: [], emails: [], settings: { signature: "", signoffProduct: true, emailApp: "mailto", gmailAccount: "" },
     compose: null,           // last compose form values (persisted)
     current: null,           // draft shown in Compose
     undo: null,              // { id, rec } snapshot taken before an Improve
@@ -61,7 +62,7 @@ export function createStore({ storage = globalThis.localStorage, platform = null
       db.collection("emails").orderBy("createdAt", "desc").limit(500).onSnapshot(snap => {
         set({ emails: snap.docs.map(d => normalizeEmail({ ...d.data(), id: d.id })).filter(Boolean) }, "emails");
       }, fail),
-      db.doc("settings/me").onSnapshot(snap => { if (snap.exists) set({ settings: { ...state.settings, signature: String(snap.data().signature || "") } }, "settings"); }, fail),
+      db.doc("settings/me").onSnapshot(snap => { if (snap.exists) set({ settings: { ...state.settings, signature: String(snap.data().signature || ""), signoffProduct: snap.data().signoffProduct !== false, emailApp: emailApp(snap.data().emailApp), gmailAccount: emailAccount(snap.data().gmailAccount) } }, "settings"); }, fail),
     ];
   }
 
@@ -74,7 +75,7 @@ export function createStore({ storage = globalThis.localStorage, platform = null
      */
     switchLibrary(next) {
       unsubs.forEach(off => { try { off(); } catch { /* ignore */ } });
-      Object.assign(state, { products: [], emails: [], current: null, undo: null, settings: { signature: "" } });
+      Object.assign(state, { products: [], emails: [], current: null, undo: null, settings: { signature: "", signoffProduct: true, emailApp: "mailto", gmailAccount: "" } });
       attach(next); emit("ready");
     },
 
@@ -96,6 +97,12 @@ export function createStore({ storage = globalThis.localStorage, platform = null
       : state.library === "shared" ? `are in your Cold Desktop library. ${state.surface === "extension" ? "This extension" : "This browser"} keeps a working copy, so you can keep working while the app is closed and changes sync when it is back.`
       : state.paired ? `are saved ${api.where()} and sync with the Cold desktop app whenever it is running.`
       : `are saved ${api.where()} only and are not backed up or synced to other devices${state.surface === "extension" ? " until you connect the Cold desktop app" : ""}.`),
+
+    /** The sign-off for an email about this record's product: the user's name, plus the product's selected links and social. */
+    signoffFor(rec) {
+      const product = rec && (state.products.find(p => p.id === rec.productId) || state.products.find(p => p.name && p.name === rec.productName)) || null;
+      return signoffBlock({ settings: state.settings, product });
+    },
 
     productById: id => state.products.find(p => p.id === id),
 

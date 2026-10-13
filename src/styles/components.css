@@ -177,3 +177,8 @@ details.panel .in { padding: 0 16px 16px; display: grid; gap: 10px; font-size: v
 .set-section { display: grid; gap: 14px; margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--line); }
 .set-section:first-of-type { margin-top: 0; padding-top: 0; border-top: 0; }
 .set-section h2 { margin: 0; font-size: 1.15rem; }
+
+/* Sign-off: product link chooser and previews */
+.check { display: flex; gap: 8px; align-items: center; font-weight: 400; }
+.check input { width: auto; min-height: 0; }
+#signoffPreview, #signPreview { margin: 0; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 6px; white-space: pre-line; }

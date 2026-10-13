@@ -3,7 +3,7 @@ import { h, clear, autosize, fmtDate } from "../components/dom.js";
 import { chip, button, notice, toast, announce } from "../components/ui.js";
 import { confirmDialog, promptDialog } from "../components/dialog.js";
 import { copyText } from "../services/clipboard.js";
-import { openInEmail, isEmail } from "../services/handoff.js";
+import { openInEmail, isEmail, APP_LABELS } from "../services/handoff.js";
 import { evaluate, checklistVerdict, words } from "../domain/rules.js";
 import { checkGrounding } from "../domain/grounding.js";
 import { emailText } from "../domain/email.js";
@@ -36,7 +36,7 @@ export function createDraftPane({ store, handlers, platform = null }) {
   /** The user's own record of what happened. Only ever called from an explicit click or menu choice. */
   async function setStatus(rec, st) {
     if (!STATUSES.includes(st) || rec.status === st) return;   // an unrecognised status is only ever replaced by a deliberate choice of a supported one
-    Object.assign(rec, applyStatus(rec, st, { signature: S.settings.signature }));
+    Object.assign(rec, applyStatus(rec, st, { signature: store.signoffFor(rec) }));
     if (await persist(rec)) toast(`Status set to “${STATUS_COPY[st].label}”`);
     renderedKey = null; render();
   }
@@ -130,9 +130,13 @@ export function createDraftPane({ store, handlers, platform = null }) {
     f.what.value = rec.what; f.why.value = rec.why; f.ask.value = rec.ask;
     const saveStatus = h("span", { class: "hint", role: "status" }, rec.edited ? "" : `Saved ${store.where()}`);
     // Recipient address: optional, kept with the draft, and only used for "Open in email".
-    const toIn = h("input", { type: "email", id: "eTo", value: rec.recipient.email || "", placeholder: "name@company.com", autocomplete: "off", inputmode: "email", "aria-describedby": "eToMsg" });
+    const toIn = h("input", { type: "email", id: "eTo", value: rec.recipient.email || "", placeholder: "name@company.com", autocomplete: "off", inputmode: "email", "aria-describedby": "eToHint eToMsg" });
     const toMsg = h("p", { class: "field-error", id: "eToMsg" });
     const handoffMsg = h("p", { class: "hint handoff-msg", id: "handoffMsg", role: "status" });
+    // Which email app "Open in email" uses is chosen once in Settings; say which, and make changing it one click.
+    const appNote = h("p", { class: "hint", id: "emailAppNote" });
+    const paintApp = () => { appNote.textContent = `Open in email uses ${APP_LABELS[S.settings.emailApp] || APP_LABELS.mailto}. `; appNote.append(h("button", { type: "button", class: "linkbtn", id: "changeEmailApp", onclick: () => { location.hash = "#/settings"; setTimeout(() => document.getElementById("emailApp")?.focus(), 200); } }, "Change")); };
+    paintApp();
     // Optional private note (why they fit, what you sent, what the reply said). Saved with the record.
     const noteIn = h("textarea", { id: "eNote", rows: 2, placeholder: "Why they fit, what you actually sent, what the reply said, what to follow up on…", "aria-describedby": "eNoteHint" }); noteIn.value = rec.note || "";
     noteIn.addEventListener("input", () => { rec.note = noteIn.value; queueSave(rec, saveStatus); });
@@ -146,21 +150,22 @@ export function createDraftPane({ store, handlers, platform = null }) {
     toIn.addEventListener("input", () => { rec.recipient = { ...rec.recipient, email: toIn.value.trim() }; checkTo(); handoffMsg.textContent = ""; queueSave(rec, saveStatus); });
     /** Opens the CURRENT text (including edits) as an unsent draft in the user's email app. It changes nothing about the draft. */
     async function openMail() {
-      const r = await openInEmail({ to: toIn.value, subject: rec.subject, body: emailText(rec, S.settings.signature) });
+      paintApp();
+      const r = await openInEmail({ to: toIn.value, subject: rec.subject, body: emailText(rec, store.signoffFor(rec)), app: S.settings.emailApp, account: S.settings.gmailAccount });
       handoffMsg.textContent = r.message; handoffMsg.className = `hint handoff-msg${r.ok ? "" : " bad-text"}`;
-      if (!r.ok && (r.reason === "missing" || r.reason === "invalid")) { checkTo(); toIn.focus(); }
+      if (!r.ok && r.reason === "invalid") { checkTo(); toIn.focus(); }
       announce(r.message);
     }
     const metrics = h("div", { class: "metrics", "aria-label": "Draft length" });
     const review = h("div", {});
     const checklist = h("div", {});
     const signoff = h("p", { class: "signoff" });
-    const renderSignoff = () => { signoff.textContent = S.settings.signature ? `Sign-off: ${S.settings.signature}` : "No sign-off set. The copied email ends without one."; };
+    const renderSignoff = () => { const b = store.signoffFor(rec); signoff.textContent = b ? `Sign-off:\n${b}` : "No sign-off set. Set your name once (here or in Settings) and every email ends with it, plus this product's links."; };
     const refresh = () => {
       const ev = evaluate(rec, product);
       clear(metrics).append(h("span", {}, h("span", { class: ev.wc > 80 ? "over" : "" }, String(ev.wc)), ` words${ev.wc > 80 ? " (over 80)" : ""}`), h("span", {}, `~${Math.max(ev.secs, 1)} sec read`), h("span", {}, h("span", { class: ev.sentences !== 3 ? "over" : "" }, String(ev.sentences)), " sentences"), h("span", {}, `subject ${words(rec.subject)} words`));
       clear(review).append(groundingSection(rec, product));
-      sentNote.textContent = rec.sentCopy && rec.status !== "draft" && editedSinceSent(rec, S.settings.signature) ? `You edited this after marking it sent on ${fmtDate(rec.sentCopy.at)}. Cold keeps the text as it was when you marked it sent (see “Text when you marked it sent” below). Editing doesn't change your sent or reply record.` : "";
+      sentNote.textContent = rec.sentCopy && rec.status !== "draft" && editedSinceSent(rec, store.signoffFor(rec)) ? `You edited this after marking it sent on ${fmtDate(rec.sentCopy.at)}. Cold keeps the text as it was when you marked it sent (see “Text when you marked it sent” below). Editing doesn't change your sent or reply record.` : "";
       clear(checklist).append(checklistSection(rec, product));
       renderSignoff();
     };
@@ -180,7 +185,7 @@ export function createDraftPane({ store, handlers, platform = null }) {
     const undoBtn = S.undo && S.undo.id === rec.id ? button("Undo last improvement", { onclick: () => handlers.undo() }) : null;
 
     const signBtn = button(S.settings.signature ? "Edit sign-off" : "Set sign-off", { kind: "ghost", onclick: async () => {
-      const v = await promptDialog({ title: "Your sign-off", hint: "Added under every copied email. Use line breaks for title or company." , value: S.settings.signature });
+      const v = await promptDialog({ title: "Your sign-off", hint: "Your name (and title or company on extra lines). Set once; added under every email, followed by the selected links of the product the email is about." , value: S.settings.signature });
       if (v !== null) { try { await store.saveSettings({ signature: v }); signBtn.textContent = v ? "Edit sign-off" : "Set sign-off"; refresh(); } catch { toast("Couldn't save your sign-off."); } }
     } });
 
@@ -192,12 +197,12 @@ export function createDraftPane({ store, handlers, platform = null }) {
           chip("accent", rec.productName || "No product", { glyph: false }),
           chip("neutral", rec.goal === "other" ? rec.goalOther || "Other" : GOALS[rec.goal]?.label || "", { glyph: false })),
         h("div", { class: "status-wrap" }, h("label", { class: "hint", for: "curStatus" }, "Status (you set this)"), statusSelect(rec))),
-      h("div", { class: "sentence to-field" }, h("label", { for: "eTo" }, "To ", h("span", { class: "opt" }, "Optional")), toIn, toMsg),
+      h("div", { class: "sentence to-field" }, h("label", { for: "eTo" }, "To ", h("span", { class: "opt" }, "Optional")), h("p", { class: "hint", id: "eToHint" }, "Leave it blank and your email app opens the draft with the To line empty."), toIn, toMsg),
       h("div", { class: "sentence" }, h("label", { for: "eSubject" }, "Subject"), f.subject),
       sentence("what", "Sentence 1: what you do", f.what), sentence("why", "Sentence 2: why it matters to them", f.why), sentence("ask", "Sentence 3: the ask", f.ask),
       h("div", { class: "actions" }, signoff, signBtn), metrics,
       h("div", { class: "actions" },
-        button("Copy email", { kind: "primary", id: "copyEmail", onclick: () => copy(emailText(rec, S.settings.signature), "Email") }),
+        button("Copy email", { kind: "primary", id: "copyEmail", onclick: () => copy(emailText(rec, store.signoffFor(rec)), "Email") }),
         button("Open in email", { id: "openEmail", onclick: () => openMail() }),
         button("Copy subject", { onclick: () => copy(rec.subject, "Subject") }),
         rec.status === "draft" ? button("Mark as sent", { id: "markSent", onclick: () => setStatus(rec, "sent") }) : null,
@@ -205,7 +210,7 @@ export function createDraftPane({ store, handlers, platform = null }) {
           if (rec.edited && !(await confirmDialog({ title: "Replace your edited draft?", body: "Regenerating writes a new draft from the same inputs. Your edits to this one stay in History.", confirmLabel: "Regenerate" }))) return;
           handlers.regenerate(rec);
         } }), undoBtn, saveStatus),
-      handoffMsg, sentNote,
+      handoffMsg, appNote, sentNote,
       h("div", { class: "field" }, h("label", { for: "eNote" }, "Notes ", h("span", { class: "opt" }, "Optional, only for you")), noteIn),
       h("p", { class: "next-step" }, h("strong", {}, "Next: "), "open it in your email app (or copy it) and send it yourself. Cold can't send, and can't see your inbox. Come back and press “Mark as sent”, then record a reply in History when one arrives."));
     const wrap = h("div", { class: "stack-lg" }, card,

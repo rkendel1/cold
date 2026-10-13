@@ -24,12 +24,19 @@ test('desktop: the page can open a valid mailto draft and nothing else', { skip:
     const good = 'mailto:sam@trialco.com?subject=Hello%20there&body=Line%201%0D%0ALine%202';
     assert.deepEqual(await win.evaluate(u => window.coldDesktop.openMail(u), good), { ok: true });
     assert.deepEqual(await app.evaluate(() => globalThis.__opened), [good]);
+    // Gmail / Outlook compose links open in the default browser, but only the exact links, never a look-alike host
+    const gmail = 'https://mail.google.com/mail/?view=cm&fs=1&to=sam%40trialco.com&su=Hello&body=Line%201%0ALine%202';
+    assert.deepEqual(await win.evaluate(u => window.coldDesktop.openMail(u), gmail), { ok: true });
+    for (const bad of ['https://mail.google.com.evil.test/mail/?view=cm&fs=1&su=S', 'http://mail.google.com/mail/?view=cm&fs=1&su=S', 'https://mail.google.com/mail/?view=cm&fs=1&cc=x@y.com&su=S', 'https://accounts.google.com/o/oauth2/auth?client_id=x', 'https://mail.google.com@evil.test/mail/?view=cm']) {
+      assert.equal((await win.evaluate(u => window.coldDesktop.openMail(u), bad)).ok, false, bad);
+    }
+    assert.deepEqual(await app.evaluate(() => globalThis.__opened), [good, gmail]);
     // anything else is refused in the main process and never reaches the OS
     for (const bad of ['https://evil.test', 'file:///etc/passwd', 'javascript:alert(1)', 'mailto:a@b.com?cc=x@y.com', 'mailto:a@b.com,c@d.com', 'mailto:nobody', 'tel:+15551234567', '']) {
       const r = await win.evaluate(u => window.coldDesktop.openMail(u), bad);
       assert.equal(r.ok, false, bad);
     }
-    assert.deepEqual(await app.evaluate(() => globalThis.__opened), [good], 'only the one valid link was passed to the system');
+    assert.deepEqual(await app.evaluate(() => globalThis.__opened), [good, gmail], 'only the valid links were passed to the system');
     // a system failure is reported to the page (which keeps the draft and offers Copy)
     await app.evaluate(() => { globalThis.__fail = true; });
     const failed = await win.evaluate(u => window.coldDesktop.openMail(u), good);
@@ -37,7 +44,7 @@ test('desktop: the page can open a valid mailto draft and nothing else', { skip:
     // navigating the window to a mailto link directly is still blocked: only the bridge opens email
     await win.evaluate(() => { location.href = 'mailto:sam@trialco.com'; });
     await win.waitForTimeout(300);
-    assert.deepEqual(await app.evaluate(() => globalThis.__opened), [good]);
+    assert.deepEqual(await app.evaluate(() => globalThis.__opened), [good, gmail]);
     assert.match(win.url(), /^http:\/\/127\.0\.0\.1:\d+\//);
   } finally { await app.close(); }
 });

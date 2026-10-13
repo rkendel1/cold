@@ -25,7 +25,7 @@ export const statusOf = e => {
 export function applyStatus(rec, status, { now = Date.now(), signature = "" } = {}) {
   if (!STATUSES.includes(status) || statusOf(rec) === status) return rec;
   const next = { ...rec, status };
-  if (status === "sent") { next.sentAt = now; next.sentCopy = { subject: String(rec.subject || ""), text: emailText(rec, signature), at: now }; }
+  if (status === "sent") { next.sentAt = now; next.sentCopy = { subject: String(rec.subject || ""), text: emailText(rec, signature), body: emailText(rec, ""), at: now }; }
   if (status === "replied") next.repliedAt = now;
   return next;
 }
@@ -33,7 +33,9 @@ export function applyStatus(rec, status, { now = Date.now(), signature = "" } = 
 /** Has the text been changed since the user marked it sent? (Only meaningful when a sentCopy exists.) */
 export function editedSinceSent(rec, signature = "") {
   if (!rec || !rec.sentCopy) return false;
-  return rec.sentCopy.text !== emailText(rec, signature) || String(rec.sentCopy.subject || "") !== String(rec.subject || "");
+  // Compare the message itself (not the sign-off): changing your sign-off or a product link later isn't an edit to what was sent.
+  const same = typeof rec.sentCopy.body === "string" ? rec.sentCopy.body === emailText(rec, "") : rec.sentCopy.text === emailText(rec, signature);
+  return !same || String(rec.sentCopy.subject || "") !== String(rec.subject || "");
 }
 
 const hay = e => [e.recipient && e.recipient.name, e.recipient && e.recipient.company, e.recipient && e.recipient.email, e.subject, e.productName, e.what, e.note].filter(Boolean).join(" ").toLowerCase();

@@ -1,3 +1,6 @@
+/** "trial drop-off" -> "Trial drop-off": capitalises the first letter, leaves the rest as written. */
+export const capitalizeFirst = s => String(s == null ? "" : s).replace(/^(\s*)(\p{L})/u, (_, sp, c) => sp + c.toLocaleUpperCase());
+
 export const emailText = (e, signature = "") =>
   e.mode && e.mode !== "email" ? e.what : `${String(e.what || "").trim()} ${String(e.why || "").trim()}\n\n${String(e.ask || "").trim()}${signature ? `\n\n${signature}` : ""}`.trim();
 

@@ -20,6 +20,13 @@ export function writeJson(key, value, storage = globalThis.localStorage) {
   }
 }
 
+import mailto from "../../lib/mailto.js";
+
+/** The saved email-app choice, or the default when it is missing or not one we know. */
+export const emailApp = v => (mailto.APPS.includes(v) ? v : "mailto");
+/** An optional Gmail address (for people with several Google accounts); anything that isn't an address is dropped. */
+export const emailAccount = v => (mailto.isEmail(v) ? String(v).trim() : "");
+
 const str = v => (typeof v === "string" ? v : v == null ? "" : String(v));
 
 export function normalizeEmail(raw) {
@@ -62,7 +69,7 @@ export function loadAll(storage = globalThis.localStorage, keys = STORAGE_KEYS) 
   const compose = c.value && typeof c.value === "object" && !Array.isArray(c.value) ? c.value : null;
   return {
     products: products.items, emails: emails.items,
-    settings: { signature: str(settings.signature) },
+    settings: { signature: str(settings.signature), signoffProduct: settings.signoffProduct !== false, emailApp: emailApp(settings.emailApp), gmailAccount: emailAccount(settings.gmailAccount) },
     compose,
     warnings: [products.warning, emails.warning, s.warning, c.warning].filter(Boolean),
   };

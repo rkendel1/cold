@@ -126,12 +126,35 @@ Cold runs its own server inside the app on `127.0.0.1:47821` (override with `COL
 
 ## Open in email
 
-An email draft has an optional **Email address** (in Write, and a **To** field on the draft). **Open in email** hands the current text, including your edits and sign-off, to your own email app as an *unsent* draft: recipient, subject and body filled in, line breaks kept. You review and press Send there. Cold never sends mail, never connects to an email account, never looks an address up, and opening a draft does not change its status.
+An email draft has an optional **Email address** (in Write, and a **To** field on the draft). **Open in email** hands the current text, including your edits and sign-off, to your own email app as an *unsent* draft: subject and body filled in, line breaks kept. You review and press Send there. Cold never sends mail, never signs in to or connects to an email account, never reads your mail, never looks an address up, and opening a draft does not change its status.
 
-- **No address, or an invalid one:** nothing opens. Cold says so, puts the cursor in the To field and keeps your draft. **Copy email** always works without an address.
-- **Long messages:** `mailto:` links are unreliable past roughly 2,000 characters (`MAILTO_MAX_LENGTH` in `lib/mailto.js`). Longer drafts are never shortened; Cold tells you and you use Copy.
-- **Desktop app:** a one-function bridge (`desktop/preload.js`) asks the main process to open the link; the main process only accepts a single valid address with `subject`/`body` and refuses everything else, and reports failure back so the page can point to Copy.
-- **Browser, web and extension:** a normal `mailto:` link. A browser cannot tell whether an email app answered, so the message says "if nothing opened, this device may not have an email app set up". Chrome may ask once before handing off to an app. This depends on your local email-app / browser setup and is the one part automated tests cannot prove.
+**Choose your email app once** (Settings > Email app; the draft also says which one it will use, with a *Change* link):
+
+- **Your computer's default email app** (a `mailto:` link). This only works if your computer or browser has an email app registered for email links, which people who read mail in the browser usually don't.
+- **Gmail**, **Outlook.com** or **Outlook for work or school (Microsoft 365)**, in your browser. Cold opens a pre-filled compose window in a new tab using the account you're already signed into: no sign-in, no permissions, no account access. If you use several Google accounts, add your Gmail address and Gmail opens the right one. **Try it** opens a harmless sample compose window so you can check the choice. In the desktop app these open in your default web browser.
+
+Details:
+
+- **No address needed.** With none, the compose window opens with the To line empty (Cold says so). An address you did type must be valid: a typo opens nothing, says how to fix it (correct it, or clear it) and keeps your draft. **Copy email** never needs an address.
+- **Long messages:** mail apps are unreliable past roughly 2,000 characters of link, web compose past about 6,000 (`MAILTO_MAX_LENGTH`, `WEB_MAX_LENGTH` in `lib/mailto.js`). Longer drafts are never shortened; Cold tells you and you use Copy.
+- **Desktop app:** a one-function bridge (`desktop/preload.js`) asks the main process to open the link; the main process accepts only a valid `mailto:` link or the exact Gmail / Outlook compose link (right host and path, known parameters only; never a look-alike host) and reports failure back so the page can point to Copy.
+- **A browser can't tell whether anything opened,** so messages say "if nothing opened" and what to try. Whether an email app (or a tab, if pop-ups are blocked) opens depends on your local setup, which automated tests can't prove; they check the exact link Cold asks for, and in the extension that a real new tab opens on it.
+
+## Subjects and your sign-off
+
+- **Subjects** Cold writes start with a capital letter. Anything you type yourself is left exactly as you wrote it.
+- **Your sign-off is set once**, in Settings > Email sign-off (or "Edit sign-off" on any draft): your name, and a title or company on extra lines.
+- **Each product adds its own details under your name.** In a product's profile (Knowledge > Links and social) you choose which of its website, X handle, repository and other links go in the sign-off. An email about that product ends like this, and an email about another product gets that product's block instead:
+
+  ```
+  Randy Kendel
+  FeltDB
+  https://feltdb.com
+  X: @feltdb
+  LinkedIn: https://linkedin.com/company/feltdb
+  ```
+  A product with nothing ticked adds nothing, and "Add the product's name and links under it" in Settings turns the whole block off. With no name set there is no sign-off at all.
+- Copy, Open in email and the sent copy all use the same block, so they can't disagree. Changing your sign-off or a link later is not an edit to a message you already marked sent.
 
 ## Tracking outreach (History)
 

@@ -85,7 +85,7 @@ export function normalizeProduct(raw, index = 0) {
   return {
     ...raw, id,
     name: str(raw.name), oneLiner: str(raw.oneLiner), category: str(raw.category), status: str(raw.status),
-    website: str(raw.website), repo: str(raw.repo), xHandle: normalizeHandle(raw.xHandle), socials: strList(raw.socials), what: str(raw.what), who: str(raw.who), problem: str(raw.problem),
+    website: str(raw.website), repo: str(raw.repo), xHandle: normalizeHandle(raw.xHandle), socials: strList(raw.socials), signoffSkip: strList(raw.signoffSkip), what: str(raw.what), who: str(raw.who), problem: str(raw.problem),
     shortDesc: str(raw.shortDesc), longDesc: str(raw.longDesc),
     order: Number.isFinite(raw.order) ? raw.order : index,
     techFacts: strList(raw.techFacts), approved: strList(raw.approved), dontSay: strList(raw.dontSay),

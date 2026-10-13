@@ -100,7 +100,7 @@ test("generation: expected two-call API contract, editable draft, saved product 
   assert.equal(mock.prompts.length, 2);
   assert.match(mock.prompts[0], /You write cold emails/); assert.match(mock.prompts[0], /RECIPIENT: Sam Ortiz at TrialCo/); assert.match(mock.prompts[0], /\[WHAT\] What it does: Acme Flow turns/);
   assert.match(mock.prompts[1], /You are the editor/);
-  assert.equal(await page.inputValue("#eSubject"), "trial drop-off");
+  assert.equal(await page.inputValue("#eSubject"), "Trial drop-off", "a generated subject starts with a capital");
   assert.equal((await page.locator("#eAsk").inputValue()).endsWith("?"), true);
   assert.equal(await page.isVisible("#rProduct"), true, "the product entered inline is now a saved product");
   assert.equal((await ls(page, "cold.products")).length, 1);
@@ -144,25 +144,29 @@ test("open in email: uses the CURRENT edited draft, keeps Copy, never marks the 
   assert.deepEqual(t.errors, []); await t.close();
 });
 
-test("open in email without an address: nothing opens, the draft is untouched, and typing the address fixes it", { skip: SKIP }, async () => {
+test("open in email needs no address: it opens a draft with an empty To line; a typo is caught; a good address is saved and used", { skip: SKIP }, async () => {
   const t = await open({ seed: SEED }); const { page } = t;
   await fillCompose(page); await generate(page);                                    // no email address entered
   await mockDesktopMail(page);
   const before = await page.inputValue("#eWhat");
   await page.click("#openEmail");
-  assert.match(await page.textContent("#handoffMsg"), /Add the recipient's email address/);
-  assert.deepEqual(await mailed(page), [], "no blank or misleading email window");
-  assert.equal(await page.evaluate(() => document.activeElement.id), "eTo", "focus goes to the field that fixes it");
+  await page.waitForFunction(() => window.__mail.length === 1);
+  const first = parseMail((await mailed(page))[0]);
+  assert.equal(first.to, "", "no recipient: the To line is left for the user to fill in in their email app");
+  assert.match(first.subject, /^Trial drop-off$/); assert.ok(first.body.startsWith(before));
+  assert.match(await page.textContent("#handoffMsg"), /with no recipient \(add one there\)\. Review it and press Send there\. Cold hasn't sent anything/);
   assert.equal(await page.inputValue("#eWhat"), before);
-  await page.click("#copyEmail");                                                    // Copy needs no address
+  await page.click("#copyEmail");
   assert.ok((await page.evaluate(() => navigator.clipboard.readText())).startsWith(before));
-  // a typo is caught inline and still opens nothing
+  // a typo is caught inline and opens nothing, and says how to get unstuck
   await page.fill("#eTo", "sam@"); await page.click("#openEmail");
   assert.match(await page.textContent("#eToMsg"), /doesn't look like a valid email address/);
-  assert.equal(await page.getAttribute("#eTo", "aria-invalid"), "true"); assert.deepEqual(await mailed(page), []);
-  // the corrected address is saved with the draft and now works
+  assert.match(await page.textContent("#handoffMsg"), /Fix it, or clear it to open the draft without a recipient/);
+  assert.equal(await page.getAttribute("#eTo", "aria-invalid"), "true"); assert.equal((await mailed(page)).length, 1);
+  // the corrected address is saved with the draft and used
   await page.fill("#eTo", "sam@trialco.com"); await page.click("#openEmail");
-  await page.waitForFunction(() => window.__mail.length === 1);
+  await page.waitForFunction(() => window.__mail.length === 2);
+  assert.equal(parseMail((await mailed(page))[1]).to, "sam@trialco.com");
   await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.emails"))[0].recipient.email === "sam@trialco.com");
   assert.equal((await ls(page, "cold.emails"))[0].status, "draft");
   assert.deepEqual(t.errors, []); await t.close();
@@ -218,7 +222,7 @@ test("open in email (plain web, no desktop bridge): asks the browser for a mailt
   await page.click("#openEmail");
   await page.waitForFunction(() => window.__mail.length === 1);
   const m = parseMail((await mailed(page))[0]); assert.equal(m.to, "sam@trialco.com");
-  assert.match(await page.textContent("#handoffMsg"), /If nothing opened, this device may not have an email app set up: use Copy email/);
+  assert.match(await page.textContent("#handoffMsg"), /If nothing opened, this device may have no email app set up: choose Gmail or Outlook in Settings > Email app, or use Copy email/);
   assert.equal((await ls(page, "cold.emails"))[0].status, "draft");
   await t.close();
 });
@@ -309,12 +313,16 @@ test("history: Open in email from a row never changes status; a missing address 
   await page.waitForFunction(() => window.__mail.length === 1);
   assert.match((await mailed(page))[0], /^mailto:ada@pipeco\.example\?subject=onboarding&body=/);
   assert.match(await row(page, "Ada Park").locator(".hmsg").textContent(), /Cold hasn't sent anything/);
-  // without one: nothing opens, the details open with the address field focused
+  // without one: it still opens, with an empty To line
   await row(page, "Bo Chen").locator(".hEmail").click();
-  assert.equal((await mailed(page)).length, 1);
-  assert.match(await row(page, "Bo Chen").locator(".hmsg").textContent(), /Add the recipient's email address/);
-  assert.equal(await page.evaluate(() => document.activeElement.className), "hTo");
-  // typing the address saves it, still without touching the status
+  await page.waitForFunction(() => window.__mail.length === 2);
+  assert.match((await mailed(page))[1], /^mailto:\?subject=onboarding&body=/);
+  assert.match(await row(page, "Bo Chen").locator(".hmsg").textContent(), /with no recipient \(add one there\)/);
+  // a typo in the address is caught: nothing opens and the field is shown
+  await row(page, "Bo Chen").locator(".hToggle").click(); await page.fill(".hrow[data-id=nomail] .hTo", "bo@");
+  await row(page, "Bo Chen").locator(".hEmail").click();
+  assert.match(await row(page, "Bo Chen").locator(".hmsg").textContent(), /valid email address/); assert.equal((await mailed(page)).length, 2);
+  // typing a good address saves it, still without touching the status
   await page.fill(".hrow[data-id=nomail] .hTo", "bo@boco.example");
   await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.emails")).find(e => e.id === "nomail").recipient.email === "bo@boco.example");
   const after = await ls(page, "cold.emails");
@@ -363,7 +371,7 @@ test("web: works on its own; connecting shows the desktop library without touchi
     // ---- on its own: everything works, and Settings says the desktop app is optional
     await go(page, "history"); assert.equal(await page.locator(".hrow").count(), 1);
     await go(page, "settings");
-    assert.deepEqual(await page.$$eval("#view-settings .set-section h2", h => h.map(x => x.textContent)), ["Model", "Cold desktop app", "Your data"]);
+    assert.deepEqual(await page.$$eval("#view-settings .set-section h2", h => h.map(x => x.textContent)), ["Model", "Cold desktop app", "Email app", "Email sign-off", "Your data"]);
     assert.match(await page.textContent("#view-settings"), /This site writes with/);                    // a hosted web page shows what the server uses; keys are not editable here
     assert.equal(await page.locator("#setKey").count(), 0, "a hosted site has no key field: keys never reach the browser");
     // ---- a page the desktop app hasn't approved is told how to fix that
@@ -422,6 +430,97 @@ test("web: works on its own; connecting shows the desktop library without touchi
     // the only console noise allowed is the network failures this test causes on purpose (unapproved page, app stopped)
     assert.deepEqual(t.errors.filter(e => !/ERR_CONNECTION_REFUSED|ERR_FAILED|CORS policy|status of 403/.test(e)), []);
   } finally { await t.close(); hub.stop(); hubDb.close(); }
+});
+
+/** Records every link the page asks the browser to open (mailto: or web email), without leaving the page. MOCKED navigation. */
+const recordLinks = page => page.evaluate(() => { window.__links = []; HTMLAnchorElement.prototype.click = function () { if (/^(mailto:|https:\/\/(mail\.google\.com|outlook\.))/i.test(this.href)) window.__links.push({ href: this.href, target: this.target }); }; });
+const links = page => page.evaluate(() => window.__links);
+
+test("email app: choose Gmail once in Settings; Open in email then opens a Gmail compose tab with the draft; Try it checks the choice; nothing is sent", { skip: SKIP }, async () => {
+  const t = await open({ seed: SEED }); const { page } = t;
+  await go(page, "settings"); await page.waitForSelector("#emailApp");
+  assert.equal(await page.inputValue("#emailApp"), "mailto", "the default is the computer's own email app");
+  assert.deepEqual(await page.$$eval("#emailApp option", o => o.map(x => x.textContent)), ["Your computer's default email app", "Gmail (in your browser)", "Outlook.com (in your browser)", "Outlook for work or school (in your browser)"]);
+  assert.match(await page.textContent("#emailAppHelp"), /If you read mail in the browser \(Gmail, Outlook\) and nothing opens, choose it here/);
+  await page.selectOption("#emailApp", "gmail");
+  assert.match(await page.textContent("#emailAppHelp"), /Cold never signs in, never sees your mail and never sends anything/);
+  await page.fill("#gmailAccount", "nope"); await page.click("#saveEmailApp");
+  assert.match(await page.textContent("#acctErr"), /doesn't look like an email address/);
+  assert.equal((await ls(page, "cold.settings") || {}).emailApp, undefined, "nothing saved while the address is wrong");
+  await page.fill("#gmailAccount", "randy@kendelconsulting.com"); await page.click("#saveEmailApp");
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.settings")).emailApp === "gmail");
+  // Try it: a harmless sample compose window, no recipient
+  await recordLinks(page); await page.click("#tryEmailApp"); await page.waitForFunction(() => window.__links.length === 1);
+  const trial = (await links(page))[0];
+  assert.match(trial.href, /^https:\/\/mail\.google\.com\/mail\/\?authuser=randy%40kendelconsulting\.com&view=cm&fs=1&su=A%20test%20from%20Cold&body=/); assert.equal(trial.target, "_blank");
+  assert.match(await page.textContent("#emailAppMsg"), /Opened a Gmail compose tab with no recipient/);
+  // a real draft
+  await page.reload(); await page.waitForSelector("#genBtn", { state: "attached" }); await recordLinks(page);
+  await go(page, "compose"); await fillCompose(page); await page.fill("#rEmail", "sam@trialco.com"); await generate(page);
+  assert.match(await page.textContent("#emailAppNote"), /Open in email uses Gmail \(in your browser\)/);
+  await page.fill("#eWhat", "Edited sentence for Gmail ✓."); await page.click("#openEmail"); await page.waitForFunction(() => window.__links.length === 1);
+  const link = (await links(page))[0], u = new URL(link.href);
+  assert.deepEqual([u.origin + u.pathname, link.target, u.searchParams.get("to"), u.searchParams.get("su"), u.searchParams.get("authuser")], ["https://mail.google.com/mail/", "_blank", "sam@trialco.com", "Trial drop-off", "randy@kendelconsulting.com"]);
+  assert.ok(u.searchParams.get("body").startsWith("Edited sentence for Gmail ✓."), "the current edited text goes to Gmail");
+  assert.match(await page.textContent("#handoffMsg"), /Opened a Gmail compose tab\. If it asks you to sign in, do that first\. Review the draft and press Send there; Cold hasn't sent anything/);
+  assert.equal((await ls(page, "cold.emails"))[0].status, "draft"); assert.equal((await ls(page, "cold.emails"))[0].sentAt, undefined);
+  await page.click("#copyEmail"); assert.ok((await page.evaluate(() => navigator.clipboard.readText())).includes("Edited sentence for Gmail ✓."));
+  // too long for a compose link: refused, not shortened, Copy still has everything
+  await page.fill("#eWhat", "Long sentence number one. ".repeat(260)); await page.click("#openEmail");
+  assert.match(await page.textContent("#handoffMsg"), /too long to open reliably in Gmail \(\d{4,} characters; the limit is 6000\)\. Nothing was shortened/); assert.equal((await links(page)).length, 1);
+  // changing it is one click from the draft, and goes to the same setting
+  await page.click("#changeEmailApp"); await page.waitForSelector("#emailApp");
+  await page.waitForFunction(() => document.activeElement && document.activeElement.id === "emailApp");   // focus lands on the setting itself
+  await page.selectOption("#emailApp", "outlook"); await page.click("#saveEmailApp");
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.settings")).emailApp === "outlook");
+  await go(page, "history"); await row(page, "Sam Ortiz").locator(".hEmail").click(); await page.waitForFunction(() => window.__links.length === 2);
+  assert.match((await links(page))[1].href, /^https:\/\/outlook\.live\.com\/mail\/0\/deeplink\/compose\?to=sam%40trialco\.com&subject=Trial%20drop-off/);
+  assert.deepEqual(t.errors, []); await t.close();
+});
+
+test("sign-off: your name is set once; each product adds its own chosen links; Copy, Open in email and the sent copy all use the same block", { skip: SKIP }, async () => {
+  const FELT = { id: "pf", name: "FeltDB", order: 0, what: "FeltDB is an application-state database for AI agents.", who: "AI teams", problem: "Agent state is hard to inspect.", website: "https://feltdb.com", xHandle: "@feltdb", socials: ["LinkedIn: https://linkedin.com/company/feltdb", "GitHub: https://github.com/feltdb/feltdb"], signoffSkip: ["GitHub|https://github.com/feltdb/feltdb"], proof: [], techFacts: [], approved: [], dontSay: [] };
+  const t = await open({ seed: { "cold.products": [FELT, { ...P2, what: "Beacon watches job queues.", who: "Ops teams", problem: "Queues back up unseen." }] } }); const { page } = t;
+  const BLOCK = "Randy Kendel\nFeltDB\nhttps://feltdb.com\nX: @feltdb\nLinkedIn: https://linkedin.com/company/feltdb";
+  // set once, in Settings
+  await go(page, "settings"); await page.waitForSelector("#signName");
+  assert.match(await page.textContent("#signPreview"), /Set your name above/);
+  await page.fill("#signName", "Randy Kendel"); await page.selectOption("#signPreviewProduct", "pf");
+  assert.equal(await page.textContent("#signPreview"), BLOCK, "the preview shows exactly what will go under the email");
+  await page.click("#saveSignoff"); await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.settings")).signature === "Randy Kendel");
+  // the product profile says which links are included
+  await go(page, "knowledge"); await page.selectOption("#kProduct", "pf"); await page.click("summary:has-text('Links and social')");
+  assert.deepEqual(await page.$$eval("#signoffPick label", l => l.map(x => x.textContent.trim() + (x.querySelector("input").checked ? " [x]" : " [ ]"))),
+    ["Website: https://feltdb.com [x]", "X handle: @feltdb [x]", "LinkedIn: https://linkedin.com/company/feltdb [x]", "GitHub: https://github.com/feltdb/feltdb [ ]"]);
+  // an email about FeltDB
+  await go(page, "compose"); await page.selectOption("#rProduct", "pf"); await fillCompose(page); await generate(page);
+  assert.equal(await page.inputValue("#eSubject"), "Trial drop-off");
+  assert.equal(await page.textContent(".signoff"), `Sign-off:\n${BLOCK}`);
+  await mockDesktopMail(page);
+  await page.click("#copyEmail"); const copied = await page.evaluate(() => navigator.clipboard.readText());
+  assert.ok(copied.endsWith(`\n\n${BLOCK}`), "Copy ends with the sign-off");
+  await page.click("#openEmail"); await page.waitForFunction(() => window.__mail.length === 1);
+  assert.equal(parseMail((await mailed(page))[0]).body.replace(/\r\n/g, "\n"), copied, "Open in email carries exactly what Copy does");
+  // marking it sent keeps the block in the sent copy
+  await go(page, "history"); await row(page, "Sam Ortiz").locator(".hMarkSent").click();
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.emails"))[0].status === "sent");
+  const rec = (await ls(page, "cold.emails"))[0];
+  assert.equal(rec.sentCopy.text, copied); assert.ok(!rec.sentCopy.body.includes("feltdb.com"), "the message body is kept apart from the sign-off");
+  // changing the sign-off or a link later is not an edit to what was sent
+  await go(page, "settings"); await page.fill("#signName", "Randy K."); await page.click("#saveSignoff");
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.settings")).signature === "Randy K.");
+  await go(page, "history"); await row(page, "Sam Ortiz").locator('button[title="Reopen and edit this draft"]').click(); await page.waitForSelector("#eSubject");
+  assert.equal(await page.textContent("#sentNote"), "", "no 'you edited this after sending' for a sign-off change");
+  assert.ok(await page.isVisible("summary:has-text('Text when you marked it sent')"));
+  // a product with no links ends with just the name; the global switch removes product details everywhere
+  await go(page, "compose"); await page.click("#clearBtn"); await page.selectOption("#rProduct", "p2"); await fillCompose(page, { name: "Bo Chen", company: "BoCo" });
+  await page.click("#genBtn"); await page.waitForFunction(() => document.querySelector("#eSubject") && /Bo Chen/.test(document.querySelector("#draft-title ~ .chip, .draft-meta")?.textContent || ""));
+  assert.equal(await page.textContent(".signoff"), "Sign-off:\nRandy K.");
+  await go(page, "settings"); await page.uncheck("#signProduct"); await page.click("#saveSignoff");
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.settings")).signoffProduct === false);
+  await go(page, "history"); await row(page, "Sam Ortiz").locator("button:text-is('Copy')").click();
+  assert.ok((await page.evaluate(() => navigator.clipboard.readText())).endsWith("\n\nRandy K."), "with product details off, only the name is added");
+  assert.deepEqual(t.errors, []); await t.close();
 });
 
 test("sentence boxes always show all their text, including after the window is resized or the view was hidden", { skip: SKIP }, async () => {
@@ -806,7 +905,7 @@ test("desktop UI: the hub's Settings shows the model form, the pairing code, and
   const t = await open({ server: hub }); const { page } = t;
   try {
     await go(page, "settings"); await page.waitForSelector("#extCode");
-    assert.deepEqual(await page.$$eval("#view-settings .set-section h2", h => h.map(x => x.textContent)), ["Model", "Browser extension & web apps", "Your data"]);
+    assert.deepEqual(await page.$$eval("#view-settings .set-section h2", h => h.map(x => x.textContent)), ["Model", "Browser extension & web apps", "Email app", "Email sign-off", "Your data"]);
     assert.ok(await page.isVisible("#setProvider") && await page.locator("#setKey").count() === 1, "the desktop app owns provider keys, so it offers them");
     assert.equal(await page.inputValue("#extCode"), db.extensionToken());
     assert.equal(await page.locator("#hubConnect").count(), 0, "the hub does not connect to itself");
