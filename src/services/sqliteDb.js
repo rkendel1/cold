@@ -7,7 +7,7 @@ import { queryCollection } from "./collection.js";
 const POLL_MS = 3000;
 
 export function createRemoteDb({ fetchImpl = (...a) => globalThis.fetch(...a), headers = () => ({}), readLocal = () => null, poll = true, migrate = true } = {}) {
-  const cache = { products: new Map(), emails: new Map(), leads: new Map(), settings: null, compose: null };
+  const cache = { products: new Map(), emails: new Map(), leads: new Map(), settings: null, compose: null, unreadable: {} };
   const listeners = { products: new Set(), emails: new Set(), leads: new Set(), "settings/me": new Set() };
   let version = -1, timer = null;
   const queue = { tail: Promise.resolve() };
@@ -28,6 +28,7 @@ export function createRemoteDb({ fetchImpl = (...a) => globalThis.fetch(...a), h
     cache.leads = new Map((snap.leads || []).map(l => [l.id, l]));
     cache.settings = snap.settings && Object.keys(snap.settings).length ? snap.settings : null;
     cache.compose = snap.compose || null;
+    cache.unreadable = snap.unreadable || {};
     version = snap.version;
   }
 
@@ -127,5 +128,11 @@ export function createRemoteDb({ fetchImpl = (...a) => globalThis.fetch(...a), h
   const deleteMany = (name, ids) => { const prev = ids.map(id => [id, cache[name].get(id)]);
     return many(name, () => ids.forEach(id => cache[name].delete(id)), () => prev.forEach(([id, p]) => p && cache[name].set(id, p)), async () => { for (const id of ids) await call(url(name, id), { method: "DELETE" }); }); };
 
-  return { kind: "sqlite", load, collection, doc, setMany, deleteMany, get initialCompose() { return cache.compose; }, stop() { clearInterval(timer); timer = null; } };
+  /** The notice for rows the database holds but this view can't show; [] when there are none. Counts only: no row content, no database detail. */
+  const warnings = () => {
+    const u = cache.unreadable || {}, parts = [["draft", u.emails], ["lead", u.leads], ["product", u.products]].filter(([, n]) => n > 0).map(([k, n]) => `${n} ${k}${n === 1 ? "" : "s"}`);
+    const total = (u.emails || 0) + (u.leads || 0) + (u.products || 0);
+    return total ? [`${total} saved item${total === 1 ? " was" : "s were"} unreadable and left out of this view (${parts.join(", ")}). ${total === 1 ? "It is" : "They are"} still in the database file and nothing was deleted. Back up the file before changing anything; see docs/troubleshooting.md.`] : [];
+  };
+  return { kind: "sqlite", load, collection, doc, setMany, deleteMany, get warnings() { return warnings(); }, get initialCompose() { return cache.compose; }, stop() { clearInterval(timer); timer = null; } };
 }

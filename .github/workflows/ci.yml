@@ -1,0 +1,72 @@
+name: CI
+
+# One gate for all three surfaces. It must not be possible for this to be green while coverage was skipped:
+#  - test/00-ci-prerequisites.test.js fails when Chromium, extension/dist, Electron, node:sqlite or a display is missing (CI=true);
+#  - scripts/ci-check-skips.cjs fails on any skipped test that is not on its allow-list (only the real-model smoke test, which needs a
+#    separately provisioned model, is allowed).
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.pw-browsers
+      COLD_REQUIRE_PREREQS: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      # node:sqlite (used by the desktop database) needs 22.13+. package.json "engines" says >=18 because the server runs without SQLite.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies (lockfile, reproducible)
+        run: npm ci
+
+      - name: Build the application bundle
+        run: npm run build:app
+
+      - name: Verify the committed bundle is current
+        run: npm run check:app
+
+      - name: Build the extension
+        run: npm run build:extension
+
+      - name: Install Chromium (the version playwright-core 1.56 expects) and its system libraries
+        run: npx playwright-core install --with-deps chromium
+
+      - name: Install a virtual display and the libraries Electron needs
+        run: sudo apt-get update && sudo apt-get install -y xvfb libgtk-3-0t64 libnss3 libgbm1 libasound2t64 libxss1 libxtst6 libxkbcommon0 libdrm2
+
+      - name: Test (virtual display; spec output in the log, TAP kept for the skip check)
+        run: |
+          mkdir -p test-results
+          xvfb-run -a --server-args="-screen 0 1280x1024x24" \
+            node --test --test-reporter=spec --test-reporter-destination=stdout \
+                        --test-reporter=tap  --test-reporter-destination=test-results/results.tap \
+                        test/*.test.js
+
+      - name: Fail if any test was skipped without an allowed reason
+        if: always()
+        run: node scripts/ci-check-skips.cjs test-results/results.tap
+
+      - name: Check documentation links
+        run: node scripts/audit-links.cjs
+
+      - name: Keep test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results/
+          if-no-files-found: warn

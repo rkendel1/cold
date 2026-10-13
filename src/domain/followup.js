@@ -94,6 +94,24 @@ export function completeFollowUp(rec, settings, now = Date.now()) {
 /** Records waiting on you, soonest first. */
 export const dueRecords = (emails, now = Date.now()) => emails.filter(e => isDue(e, now)).sort((a, b) => fu(a).due - fu(b).due);
 
+/** "Tue, 8 Oct". */
+export const fmtDay = ts => new Date(ts).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+
+/**
+ * Words for a follow-up on a draft that is still marked Draft. Copying or opening an email proves nothing about whether it was sent, so say so, and use
+ * the handoff the record actually holds (never an invented date). null when there is nothing to say: no active follow-up, or the record is no longer a Draft.
+ */
+export function unsentGuidance(rec) {
+  const f = fu(rec);
+  if (!f || f.due == null) return null;
+  const status = rec.status == null || rec.status === "" ? "draft" : rec.status;
+  if (status !== "draft") return null;
+  const hs = Array.isArray(rec.handoffs) ? rec.handoffs.filter(h => h && Number.isFinite(h.at)) : [];
+  const last = hs[hs.length - 1], tail = "If you haven't sent it, send it first, then mark it as sent.";
+  if (!last) return `This is still marked Draft, so Cold has no record that it was sent. ${tail}`;
+  return last.how === "open" ? `You opened this in your email app on ${fmtDay(last.at)}. Opening an email doesn't prove it was sent. ${tail}` : `You copied this on ${fmtDay(last.at)}. Copying an email doesn't prove it was sent. ${tail}`;
+}
+
 /** "Mon 14 Oct, 09:00". */
 export const fmtDue = ts => new Date(ts).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 /** The value for a datetime-local box (local time, no zone) and back. */

@@ -4,9 +4,21 @@ Only failure modes that were observed in the code and tests are listed, with the
 
 ## Generate draft is disabled
 
-* **"This site has no model yet: whoever runs it adds a provider key on the server…"** (web). The server has no provider key. If you run it: add the key for your provider to `.env` (names in [configuration.md](configuration.md)) and restart. If you don't: use the Cold desktop app, or ask the operator. Your products, drafts and leads keep working meanwhile.
+* **"Writing drafts isn't available on this site yet"** (web; shown above the disabled **Generate draft** button, with *Why*, *Who can change it* and *What you can do now*). The site has no AI model connected, and only whoever runs it can add one, from the server: a visitor can't do it from the page. If you run it: add your provider's key to `.env` (names in [configuration.md](configuration.md)) and restart. If you don't: use the Cold desktop app (it works with your own model or one on your computer) or run Cold yourself. Your products, drafts and leads keep working meanwhile.
 * **"The Cold desktop app isn't running and no other model is set up here yet."** (extension/web paired to the app). Open the desktop app, or choose a provider in Settings > Model.
 * **The server asks for an access code.** `COLD_ACCESS_TOKEN` is set on that server; enter it in the field the page shows.
+
+## "Some saved data couldn't be read" (desktop)
+
+A notice such as **"2 saved items were unreadable and left out of this view (1 draft, 1 lead)"** means the SQLite database holds rows whose contents Cold can't parse (for example a damaged write or a hand edit). **Cold has not deleted or changed them**; it only leaves them out of what you see, so everything else keeps working. The notice shows counts only, never the content.
+
+1. **Make a backup first**: follow [Backing up the desktop library](getting-started.md#backing-up-the-desktop-library-do-this-before-anything-risky) (quit Cold, copy all the `cold.db*` files).
+2. *(Optional, to see which rows.)* With a SQLite tool such as `sqlite3` open on the **backup copy**, list the row ids (not their content) of each table:
+   `sqlite3 cold.db "SELECT id FROM emails WHERE NOT json_valid(data)"`, and the same for `leads` and `products`. (This query was tested on a database with a deliberately corrupted row.)
+3. Decide: you can leave things as they are (the notice stays), or, only after the backup, repair or remove those rows with a SQLite tool, then start Cold again. A change made outside the app shows the next time the page loads; the notice goes when nothing is unreadable.
+4. If you think Cold caused it, [open an issue](https://github.com/rkendel1/cold/issues/new/choose) with the counts and what you were doing. **Do not paste the row contents** if they include real people's details.
+
+Automated repair is not built.
 
 ## A draft failed to generate
 
@@ -36,7 +48,7 @@ A browser can't tell whether a mail window opened. Check, in Settings > Email ap
 
 ## "Follow-up due" but I never sent it
 
-Copying or opening an email sets a reminder because Cold can't tell whether you sent it. Send it and press **Mark sent** (the date restarts from then), or choose **No follow-up** on that draft. See [getting-started.md](getting-started.md#5-record-what-happened-history).
+Copying or opening an email sets a reminder because Cold can't tell whether you sent it, and the follow-up says so: *"You copied this on {date}. Copying an email doesn't prove it was sent. If you haven't sent it, send it first, then mark it as sent."* (It uses the handoff Cold actually recorded; with none, it says the draft is still marked Draft.) Send it and press **Mark sent** (the date restarts from then, and the guidance goes away), or choose **No follow-up** on that draft. See [getting-started.md](getting-started.md#5-record-what-happened-history).
 
 ## Desktop app
 

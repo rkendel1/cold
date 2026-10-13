@@ -4,22 +4,42 @@ Every finding from the audit, with a stable ID. **State:** *Open* · *Fixed in t
 
 **No Critical finding stands open.** One High data-loss defect in the optional Sheets feature (DATA-011) was found and fixed during the audit; it would have been Critical had the feature been generally available.
 
+## Status after the pilot-readiness PR (`feat/cold-pilot-readiness`)
+
+Only what was actually done and verified is marked closed. "Partly" says what remains. Evidence is in [08](08-test-and-verification-report.md) (section "Pilot-readiness PR").
+
+| ID | Now | What changed | What remains |
+|---|---|---|---|
+| QUALITY-002 | **Partly closed** | `.github/workflows/ci.yml`; `test/00-ci-prerequisites.test.js` (fails in CI on a missing Chromium, extension build, Electron, display, Node/SQLite); `scripts/ci-check-skips.cjs` (fails on any skip not allow-listed; only `REAL MODEL:` is). Each failure mode was demonstrated locally | **The workflow has not run on GitHub yet** (it runs on a pull request or a push to `main`). Branch protection requiring it is a repository setting |
+| QUALITY-003 | **Partly closed** | The display-dependent tests are included in the CI job under `xvfb-run` | **Still unrun in this environment** (no `xvfb-run`): `desktop-mail` and four `extension-layout` tests. They have never been seen passing here |
+| QUALITY-004 | **Closed for the diagnosed cause; stability not yet proven** | Real cause found and fixed: the open-in-email message was wiped ~100 ms after appearing because the store re-announced unchanged settings on every save (a product bug, see below), and the test read it without waiting. Also `until`/`expectText` now say what they waited for and what they last saw | Consecutive-run count in [08](08-test-and-verification-report.md); not ten unless stated there |
+| QUALITY-005 | **Closed** | Deleted `production-readiness.js` and the dead `cx-consistency-check.js`; removed the `store.set` monkey-patch, the false "System error" notice and ~100 lines of no-op consistency code from `src/app.js`; added log-only `src/components/global-errors.js`; deleted two vacuous tests (`assert.ok(true)`) | none known |
+| QUALITY-001 | Stays fixed | Regression tests in `test/error-visibility.test.js` and `test/e2e.test.js` ("errors: …") | |
+| DATA-008 | **Closed** (desktop SQLite) | `lib/db.js` counts unreadable rows (never deletes or rewrites them); `sqliteDb.js` turns the count into a content-free notice; the store keeps it in step; `#notices` is a polite live region | The same for other backends was already handled by browser storage's own notice |
+| DATA-009 | **Pilot portion closed; the rest open** | Backup and restore procedure with the real WAL behaviour, tested at the database layer (`test/db-backup.test.js`) | Full JSON export/import and erase-all are **not built** (out of scope; follow-up) |
+| CX-002 | **Closed** | Explanation (why / who can change it / what to do instead) sits directly above the disabled Generate button; 375 px browser assertion | |
+| CX-004 | **Closed** | Follow-up panel and History say copying/opening doesn't prove it was sent, using the recorded handoff date; absent for sent records | |
+| CX-001 | **Partly closed** | First-run checklist for an install that hasn't used Cold yet, derived from real state (nothing stored as done; only Hide is remembered), accessible (axe), per-surface | The "five unassisted users reach a first draft in ≤ 10 minutes" target is a **human validation requirement and has not been run** |
+| DOCS-005 | **Partly closed; owner action required** | `SECURITY.md`, issue template config, README links | The owner must enable GitHub private vulnerability reporting (or confirm the fallback mailbox). This could not be verified from here |
+| (new) QUALITY-012 | **Found and fixed (twice)** | My first-run design wrote a marker setting; in web mode a settings write rewrites every stored list, which (1) clobbered a damaged store on page load and (2) rewrote the standalone library when a library arrived through a switch (caught by the existing `malformed localStorage` and `switching libraries never merges or destroys` tests). The checklist now writes nothing: visibility is derived from real state (established = a sent/replied draft or 3+ drafts), and only an explicit **Hide** is stored | Heuristic for "established" is simple by design; revisit with pilot feedback |
+| (new) UX-regression | **Found and fixed** | After "Open in email" the on-screen "Cold hasn't sent anything" message vanished ~100 ms later in paired mode (every replica save re-announced unchanged settings; Write rebuilt the draft card). I introduced this with the follow-up handoff recording. Now announced only when settings change; asserted in `test/extension.test.js` | |
+
 ## Summary
 
 | ID | Title | Severity | State | Blocks launch |
 |---|---|---|---|---|
 | QUALITY-001 | Head of the branch had 12 red browser tests; a regression from `1e34b87` | High | Fixed | (was) all |
-| QUALITY-002 | No CI or release gating; tests skip silently | High | Open | **All** |
+| QUALITY-002 | No CI or release gating; tests skip silently | High | Partly closed (workflow written, not yet run on GitHub) | **All** until it has run green |
 | QUALITY-008 | No evidence of draft quality with a real model | High | Open | **All** |
 | QUALITY-010 | Desktop distribution unsigned, no update path, never built here | High | Open | **Desktop** |
-| CX-001 | No onboarding or first-run guidance | High | Open | **All** |
+| CX-001 | No onboarding or first-run guidance | High | Partly closed (checklist built; usability target unmeasured) | **All** until measured |
 | DATA-001 | Google Sheets never run against real Google | High | Open | **Sheets** |
 | DATA-011 | Cold blanked user-added Outreach columns on save | High | Fixed | (was) Sheets |
 | SEC-006 | Privacy/README said "no cloud storage" after Sheets existed | High | Fixed | (was) all |
-| DOCS-005 | No security-reporting, support or feedback route | Medium | Open | **All** (minimal route) |
+| DOCS-005 | No security-reporting, support or feedback route | Medium | Partly closed (needs owner setting) | **All** until the owner confirms |
 | QUALITY-011 | Extension is "load unpacked" only | Medium | Open | **Extension** |
-| CX-002 | Hosted web with no model is a dead end for visitors | Medium | Open | Hosted web |
-| CX-004 | "Follow-up due" for an unsent draft is unexplained | Medium | Open | No |
+| CX-002 | Hosted web with no model is a dead end for visitors | Medium | Fixed | — |
+| CX-004 | "Follow-up due" for an unsent draft is unexplained | Medium | Fixed | — |
 | CX-005 | Mapper didn't match recognised columns without a name column | Medium | Fixed | No |
 | PARITY-001 | Sheets verified on web only, via a fake sign-in | Medium | Open | Sheets |
 | PARITY-002 | Sheets removes leads/drafts from desktop pairing sync | Medium | Open | Sheets |
@@ -30,11 +50,11 @@ Every finding from the audit, with a stable ID. **State:** *Open* · *Fixed in t
 | DATA-004 | Leads are last-writer-wins (all backends) | Medium | Open | No (document) |
 | DATA-005 | Unreadable sheet at start-up shows an empty list | Medium | Mitigated | Sheets |
 | DATA-007 | Sheets mode has no offline copy | Medium | Open | Sheets |
-| DATA-008 | SQLite silently omits unreadable rows | Medium | Open | No (condition) |
-| DATA-009 | No full export, backup/restore or erase | Medium | Open | Condition |
-| QUALITY-003 | 5 tests need a display/Electron; unrunnable here | Medium | Open | via G1 |
-| QUALITY-004 | Extension integration tests flaked in whole-suite runs | Medium | Partly fixed | via G1 |
-| QUALITY-005 | Global error layer masks failures; dead module | Medium | Open | No |
+| DATA-008 | SQLite silently omits unreadable rows | Medium | Fixed | — |
+| DATA-009 | No full export, backup/restore or erase | Medium | Backup/restore documented and tested at the database layer; export/import/erase open | Condition met for a pilot |
+| QUALITY-003 | 5 tests need a display/Electron; unrunnable here | Medium | In the CI job; still unrun here | via G1 |
+| QUALITY-004 | Extension integration tests flaked in whole-suite runs | Medium | Cause fixed; stability per [08](08-test-and-verification-report.md) | via G1 |
+| QUALITY-005 | Global error layer masks failures; dead module | Medium | Fixed | — |
 | QUALITY-007 | On-device model unverifiable offline; pins not recorded in shipped build | Medium | Open | On-device model |
 | SEC-001 | Extension provider keys unencrypted | Medium | Open (documented) | Accepted limitation |
 | SEC-003 | Hosted web without access code is open | Medium | Open (documented) | Operator |

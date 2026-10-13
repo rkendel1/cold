@@ -1,11 +1,12 @@
 // Compose: the primary workspace. Form on the left, result on the right (stacked on narrow screens).
-import { h, $, $$, clear } from "../components/dom.js";
+import { h, $, $$, clear, append } from "../components/dom.js";
 import { field, textInput, textArea, button, notice, chip, announce, toast } from "../components/ui.js";
 import { confirmDialog } from "../components/dialog.js";
 import { GOALS, FORMAT_CHOICES } from "../domain/constants.js";
 import { isEmail } from "../services/handoff.js";
 import { readiness } from "../domain/knowledge.js";
 import { uid } from "../domain/ids.js";
+import { mountFirstRun } from "./firstRun.js";
 import { generateEmail, improveEmail, generateTweet, describeError } from "../services/generation.js";
 import { createDraftPane } from "./draft.js";
 import { createRecipientAssist } from "./recipient.js";
@@ -53,6 +54,9 @@ export function mountCompose(root, { store, platform, navigate }) {
   const genBtn = h("button", { type: "submit", class: "btn primary", id: "genBtn" }, "Generate draft");
   const genHint = h("p", { class: "hint", id: "genHint", role: "status" });
   genBtn.setAttribute("aria-describedby", "genHint");
+  // Hosted site with no model: the explanation sits directly above the disabled Generate button (visible whenever the button is), not as small text after it.
+  const firstRunList = mountFirstRun({ store, navigate });
+  const genUnavailable = h("div", { id: "genUnavailable", class: "notice warn", hidden: true });
 
   const tw = createTweetForm({ platform, persist: () => persistForm() });
   const socialGroup = tw.el;
@@ -75,11 +79,13 @@ export function mountCompose(root, { store, platform, navigate }) {
     h("div", { class: "view-head" },
       h("h1", { id: "compose-title", tabindex: "-1" }, "Write an outreach draft"),
       h("p", { class: "lede" }, "Tell Cold who you're writing to and why they should care. It drafts a short, editable message from the product facts you've saved. It never sends anything.")),
+    firstRunList.el,
     errorSummary,
     h("fieldset", {}, h("legend", { class: "sr-only" }, "Format"), h("div", { class: "pills", role: "radiogroup", "aria-label": "Format" }, formatRadios)),
     emailGroup, socialGroup, productGroup, tw.useField,
     h("details", { class: "panel" }, h("summary", {}, "More context ", h("span", { class: "opt" }, "(optional)")), h("div", { class: "in" }, f.convey)),
     h("details", { class: "panel", id: "connectionPanel" }, h("summary", {}, "Connection and model"), connection),
+    genUnavailable,
     h("div", { class: "actions" }, genBtn, button("Clear all", { kind: "ghost", id: "clearBtn", onclick: () => clearAll() })),
     genHint);
 
@@ -211,25 +217,35 @@ export function mountCompose(root, { store, platform, navigate }) {
   }
   modelSelect.addEventListener("change", () => { platform.setModel(modelSelect.value); modelHint.textContent = modelSelect.value ? `Using ${modelSelect.value}. Model pricing varies.` : "Using the server default. Model pricing varies."; });
 
-  /** Why nothing can write yet, and the way out for THIS surface. Knowledge and History keep working either way. */
+  /** Where Settings exists (desktop, extension, local install): why nothing can write yet and the way out. Hosted sites use paintUnavailable instead. */
   function noModelHint() {
     const link = platform.hub && platform.hub.link.state;
-    if (S.server?.settingsEnabled) {
-      return link && link.conn && !link.online
-        ? "No model is set up here, and the Cold desktop app you paired isn't running. Open the app to use its model, or open Settings and choose a model for this one. Your products and drafts are still available."
-        : "No provider is set up yet. Open Settings to add a key or pick a local model.";
-    }
     return link && link.conn && !link.online
-      ? "This site has no model of its own, and the Cold desktop app you paired isn't running. Open the app, or ask whoever runs this site to add a provider. Your products and drafts are still available."
-      : "This site has no model yet: whoever runs it adds a provider key on the server (the Cold desktop app can supply one instead; see Settings). Your products and drafts work meanwhile.";
+      ? "No model is set up here, and the Cold desktop app you paired isn't running. Open the app to use its model, or open Settings and choose a model for this one. Your products and drafts are still available."
+      : "No provider is set up yet. Open Settings to add a key or pick a local model.";
+  }
+
+  /** The hosted-site explanation (no Settings here): why, who can fix it, and what a visitor can do instead. Names no credential and offers no client-side way to set server-owned values. */
+  function paintUnavailable(show) {
+    genUnavailable.hidden = !show; clear(genUnavailable);
+    genBtn.setAttribute("aria-describedby", show ? "genUnavailable genHint" : "genHint");
+    if (!show) return;
+    const link = platform.hub && platform.hub.link.state, paired = link && link.conn && !link.online;
+    append(genUnavailable, [
+      h("strong", {}, "Writing drafts isn't available on this site yet"),
+      h("p", {}, "Why: this site has no AI model connected, so Cold can't generate text here."),
+      h("p", {}, "Who can change it: only whoever runs this site. A visitor can't connect a model from this page."),
+      h("p", {}, "What you can do now: keep saving products, leads and drafts here. To write drafts yourself, use the Cold desktop app (it works with your own model or one on your computer) or run Cold yourself."
+        + (paired ? " You've paired the desktop app but it isn't running: open it and this page will use its model." : ""))]);
   }
 
   function renderGenHint() {
     const st = S.sampleState;
+    paintUnavailable(!S.busy && st === "noconfig" && !S.server?.settingsEnabled);
     genHint.textContent = S.busy ? "Writing your draft…"
       : st === "pending" ? "Connecting…"
       : st === "none" ? "Generation needs the Cold server (npm start) or the Claude app."
-      : st === "noconfig" ? noModelHint()
+      : st === "noconfig" ? (S.server?.settingsEnabled ? noModelHint() : "Drafting is unavailable until a model is connected: see the note above.")
       : st === "blocked" ? "Claude access was declined for this page. Reload to allow it."
       : "Takes a minute or less: a draft, then an editor pass. You can edit the result.";
     genBtn.disabled = S.busy || ["none", "blocked", "noconfig", "pending"].includes(st);

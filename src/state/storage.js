@@ -1,5 +1,6 @@
 // localStorage access with validation. Reads never throw; writes report failure instead of swallowing it.
 import { normalizeFollowUpSettings } from "../domain/followup.js";
+import { normalizeFirstRun } from "../domain/firstRun.js";
 import { STORAGE_KEYS } from "../domain/constants.js";
 import { normalizeProduct } from "../domain/knowledge.js";
 import { normalizeLead } from "../domain/leads.js";
@@ -72,7 +73,7 @@ export function loadAll(storage = globalThis.localStorage, keys = STORAGE_KEYS) 
   const compose = c.value && typeof c.value === "object" && !Array.isArray(c.value) ? c.value : null;
   return {
     products: products.items, emails: emails.items, leads: leads.items,
-    settings: { signature: str(settings.signature), signoffProduct: settings.signoffProduct !== false, emailApp: emailApp(settings.emailApp), gmailAccount: emailAccount(settings.gmailAccount), followUp: normalizeFollowUpSettings(settings.followUp) },
+    settings: { signature: str(settings.signature), signoffProduct: settings.signoffProduct !== false, emailApp: emailApp(settings.emailApp), gmailAccount: emailAccount(settings.gmailAccount), followUp: normalizeFollowUpSettings(settings.followUp), firstRun: normalizeFirstRun(settings.firstRun) },
     compose,
     warnings: [products.warning, emails.warning, leads.warning, s.warning, c.warning].filter(Boolean),
   };

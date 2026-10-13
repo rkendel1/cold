@@ -78,7 +78,21 @@ const nav = async (panel, v) => {
   await panel.click(`#nav-${v === 'write' ? 'compose' : v}`);
   await panel.evaluate(() => document.querySelectorAll('details.set-group, details.x-discover').forEach(d => { d.open = true; }));
 };
-const until = async (fn, ms = 20000) => { const t = Date.now(); for (;;) { const v = await fn(); if (v) return v; if (Date.now() - t > ms) throw new Error('timed out waiting for condition: ' + fn); await new Promise(r => setTimeout(r, 150)); } };
+/** Waits until `sel` shows text matching `re` (the message is set after an async step), then asserts it. A bare textContent() right after a click races that step. */
+const expectText = async (panel, sel, re, ms = 15000) => {
+  await panel.waitForFunction(([q, src, fl]) => new RegExp(src, fl).test(document.querySelector(q).textContent), [sel, re.source, re.flags], { timeout: ms })
+    .catch(async () => { throw new Error(`${sel} never matched ${re} within ${ms} ms. Last text: ${JSON.stringify(await panel.textContent(sel).catch(() => null))}`); });
+  assert.match(await panel.textContent(sel), re);
+};
+/** Polls until `fn` is truthy. On timeout the error says WHAT was awaited (`what`) and what was last seen (`observe()`), not just a function body. */
+const until = async (fn, ms = 20000, { what = '', observe = null } = {}) => {
+  const t = Date.now();
+  for (;;) {
+    const v = await fn(); if (v) return v;
+    if (Date.now() - t > ms) { let seen = ''; try { seen = observe ? ` Last seen: ${JSON.stringify(await observe())}` : ''; } catch (e) { seen = ` (observe failed: ${e.message})`; } throw new Error(`timed out after ${ms} ms waiting for ${what || String(fn)}.${seen}`); }
+    await new Promise(r => setTimeout(r, 150));
+  }
+};
 const hubOnline = panel => panel.evaluate(() => __cold.platform.hub.link.state.online);
 const model = panel => panel.evaluate(() => (__cold.platform.backend.describe() || {}).label || null);
 const saveCustomModel = async (panel, port, name) => {
@@ -241,7 +255,7 @@ test('extension paired with a running app: reads pages into the shared Write scr
     await panel.fill('#eSubject', 'Edited subject & more'); await panel.click('#openEmail');
     await panel.waitForFunction(() => window.__mail.length === 1);
     assert.match(await panel.evaluate(() => window.__mail[0]), /^mailto:priya@northwind\.example\?subject=Edited%20subject%20%26%20more&body=/);
-    assert.match(await panel.textContent('#handoffMsg'), /hasn't sent anything/);
+    await expectText(panel, '#handoffMsg', /hasn't sent anything/);
     assert.equal(app.db.snapshot().emails.find(e => e.id === email.id).status, 'draft', 'opening an email never marks it sent');
     // People who read mail in the browser choose Gmail once; then a REAL new tab opens on Gmail's compose address (only Gmail's server is stubbed here)
     await ctx.route('https://mail.google.com/**', r => r.fulfill({ contentType: 'text/html', body: '<title>Gmail stub</title>compose' }));
@@ -253,13 +267,20 @@ test('extension paired with a running app: reads pages into the shared Write scr
     const gu = new URL(gmailTab.url());
     assert.deepEqual([gu.origin + gu.pathname, gu.searchParams.get('to'), gu.searchParams.get('su'), gu.searchParams.get('view')], ['https://mail.google.com/mail/', 'priya@northwind.example', 'Edited subject & more', 'cm']);
     assert.match(gu.searchParams.get('body'), /Acme Edge runs batch jobs/);
-    assert.match(await panel.textContent('#handoffMsg'), /Opened a Gmail compose tab/);
+    await expectText(panel, '#handoffMsg', /Opened a Gmail compose tab/);
+    // Regression (found by the audit follow-up): once the handoff is saved to the app, the on-screen "Cold hasn't sent anything" message must STAY.
+    // It used to be wiped ~100 ms later because every save re-announced unchanged settings and Write rebuilt the draft card.
+    await until(() => (app.db.snapshot().emails.find(e => e.id === email.id).handoffs || []).some(h => h.how === 'open'), 20000, { what: 'the open-in-email handoff to be saved to the desktop database' });
+    await panel.waitForTimeout(500);    // a settle window: the bug cleared the message within ~150 ms of the save
+    assert.match(await panel.textContent('#handoffMsg'), /Opened a Gmail compose tab.*hasn't sent anything/s);
     assert.equal(app.db.snapshot().emails.find(e => e.id === email.id).status, 'draft', 'opening Gmail never marks it sent');
     await gmailTab.close();
     // notes on the draft, then mark sent in History: the app's database sees the same status, note and sent copy
     await panel.fill('#eNote', 'Good fit: writes about batch workloads');
     await nav(panel, 'history'); await panel.locator('.hrow', { hasText: 'Priya Nair' }).locator('.hMarkSent').click();
-    await until(() => { const e = app.db.snapshot().emails.find(x => x.id === email.id); return e.status === 'sent' && e.note?.startsWith('Good fit') && e.sentCopy?.text.includes('Acme Edge runs batch jobs'); });
+    const stored = () => app.db.snapshot().emails.find(x => x.id === email.id);
+    await until(() => { const e = stored(); return e.status === 'sent' && e.note?.startsWith('Good fit') && e.sentCopy?.text.includes('Acme Edge runs batch jobs'); }, 20000,
+      { what: 'the desktop database to hold status "sent", the note and the sent copy for the draft marked sent in History', observe: () => { const e = stored(); return { status: e.status, note: e.note, hasSentCopy: !!e.sentCopy, updatedAt: e.updatedAt }; } });
     await liTab.close();
 
     // ---- the extension can never reach keys or settings, even with its code; the pairing code can't approve web pages

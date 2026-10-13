@@ -372,6 +372,33 @@ test("follow-ups: copying records a handoff and sets a follow-up without marking
   await t.close();
 });
 
+test("follow-ups (CX-004): a due follow-up on a record still marked Draft says copying or opening doesn't prove it was sent; a sent record gets no such text; it goes away when marked sent", { skip: SKIP }, async () => {
+  const past = Date.now() - 3600000, copiedAt = Date.now() - 4 * 86400000;
+  const t = await open({ seed: { "cold.products": [P1], "cold.emails": [
+    EMAIL({ id: "e-draft", recipient: { name: "Dana Draft", company: "DraftCo" }, handoffs: [{ at: copiedAt, how: "copy" }], followUp: { due: past, count: 0, auto: true } }),
+    EMAIL({ id: "e-sent", createdAt: Date.now() - 1000, status: "sent", sentAt: copiedAt, recipient: { name: "Sam Sent", company: "SentCo" }, handoffs: [{ at: copiedAt, how: "copy" }], followUp: { due: past, count: 0, auto: true } })] } }); const { page } = t;
+  const expected = await page.evaluate(ts => new Date(ts).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" }), copiedAt);
+  await go(page, "history"); await page.waitForSelector(".hrow");
+  const draft = page.locator(".hrow", { hasText: "Dana Draft" }), sent = page.locator(".hrow", { hasText: "Sam Sent" });
+  // History row line + the follow-up panel (opened from Notes & details)
+  assert.match(await draft.locator(".fu-line").textContent(), /Follow-up due:.*Still marked Draft: You copied this on .*If you haven't sent it, send it first, then mark it as sent\./);
+  await draft.locator(".hToggle").click();
+  assert.equal((await draft.locator(".fu-unsent").textContent()).trim(), `You copied this on ${expected}. Copying an email doesn't prove it was sent. If you haven't sent it, send it first, then mark it as sent.`, "the real handoff date, not an invented one");
+  // a record already marked sent: the same due follow-up, with no draft guidance anywhere
+  await sent.locator(".hToggle").click();
+  assert.match(await sent.locator(".fu-state").textContent(), /Follow-up due/);
+  assert.equal(await sent.locator(".fu-unsent").count(), 0); assert.equal(await sent.locator(".fu-unsent-line").count(), 0);
+  // the same panel on the Write screen
+  await draft.getByRole("button", { name: "Open", exact: true }).click(); await page.waitForSelector("#eSubject");
+  assert.match(await page.textContent(".followup .fu-unsent"), /You copied this on .* doesn't prove it was sent/);
+  // marking it sent removes the guidance (and restarts the automatic date from the send)
+  await go(page, "history"); await page.locator(".hrow", { hasText: "Dana Draft" }).locator(".hMarkSent").click();
+  await page.waitForFunction(() => !document.querySelector(".hrow .fu-unsent-line"));
+  const d2 = page.locator(".hrow", { hasText: "Dana Draft" }); if (!(await d2.locator(".fu-state").isVisible())) await d2.locator(".hToggle").click();
+  assert.equal(await d2.locator(".fu-unsent").count(), 0, "no guidance once the record is Marked sent");
+  assert.deepEqual(t.errors, []); await t.close();
+});
+
 test("history: the outreach status survives in the shared record that the extension and desktop app also read", { skip: SKIP }, async () => {
   const t = await open({ seed: { "cold.products": [P1], "cold.emails": [EMAIL()] } }); const { page } = t;
   await go(page, "history");
@@ -667,6 +694,39 @@ test("leads: a large file imports quickly, in one save, and is shown a page at a
   await t.close();
 });
 
+test("desktop UI: unreadable rows in the SQLite file are left in place, counted in an accessible notice with no content, and the valid data still works (DATA-008)", { skip: SKIP }, async () => {
+  const { DatabaseSync } = require("node:sqlite");
+  const dir = hubDir(), port = await freePort(), file = path.join(dir, "cold.db");
+  const hub = await startHub(dir, port);
+  const c = new DatabaseSync(file);
+  c.prepare("INSERT INTO leads(id, name, company, email, list, created_at, data, updated_at) VALUES('good-l','Ada Good','Co','ada@co.io','Q4',1,?,1)").run(JSON.stringify({ name: "Ada Good", company: "Co", email: "ada@co.io", list: "Q4", createdAt: 1 }));
+  c.prepare("INSERT INTO emails(id, created_at, status, mode, product_id, recipient_name, recipient_company, subject, data, updated_at) VALUES('bad-e',1,'draft','email','','','','',?,0)").run("{broken SECRET-IN-ROW");
+  const bad = () => c.prepare("SELECT data FROM emails WHERE id='bad-e'").get();
+  const t = await open({ server: hub, bypassCSP: true }); const { page } = t;   // bypassCSP only so axe can be injected
+  try {
+    const notice = page.locator("#notices .notice.warn");
+    await notice.waitFor();
+    assert.match(await notice.textContent(), /Some saved data couldn't be read/);
+    assert.match(await notice.textContent(), /1 saved item was unreadable and left out of this view \(1 draft\)/);
+    assert.match(await notice.textContent(), /still in the database file and nothing was deleted/);
+    assert.doesNotMatch(await page.textContent("#notices"), /SECRET-IN-ROW|bad-e|cold\.db/, "no row content, id or file name in the notice");
+    assert.equal(await page.getAttribute("#notices", "aria-live"), "polite", "announced to assistive technology");
+    await go(page, "leads"); await page.waitForSelector("#leadsTable");
+    assert.match(await page.textContent("#leadsTable"), /Ada Good/, "valid records remain usable");
+    await page.click("#addLeadBtn"); await page.fill("#lf-name", "Saved Beside It"); await page.click("#saveLead");
+    await until(() => c.prepare("SELECT 1 FROM leads WHERE name='Saved Beside It'").get());
+    assert.deepEqual({ ...bad() }, { data: "{broken SECRET-IN-ROW" }, "the unreadable row was not changed by reading or by saving other records");
+    // accessibility of this state
+    await page.addScriptTag({ path: AXE });
+    const r = await page.evaluate(() => axe.run(document, { runOnly: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"] }));
+    assert.deepEqual(r.violations.map(v => v.id), [], "axe: the notice state has no WCAG A/AA violations");
+    // the condition is resolved in the file (an edit outside the app does not bump the app's version, so the page re-reads on its next load): the notice is gone
+    c.prepare("DELETE FROM emails WHERE id='bad-e'").run();
+    await page.reload(); await page.waitForSelector("#genBtn", { state: "attached" }); await page.waitForTimeout(500);
+    assert.equal(await page.locator("#notices .notice.warn").count(), 0, "no notice once nothing is unreadable");
+  } finally { await t.close(); hub.stop(); c.close(); }
+});
+
 test("desktop UI: the leads you import, edit and delete are the rows in the SQLite database, and a value fixed in SQLite shows in the app", { skip: SKIP }, async () => {
   const { DatabaseSync } = require("node:sqlite");
   const dir = hubDir(), port = await freePort(), hub = await startHub(dir, port), file = path.join(dir, "cold.db");
@@ -775,6 +835,23 @@ test("loading state: progress with Stop, button disabled, duplicate submission p
   assert.equal(mock.prompts.length, 2, "exactly one draft + one editor call");
   assert.equal((await ls(page, "cold.emails")).length, 1);
   await t.close();
+});
+
+test("errors: a failed generation shows its own actionable error, clearing it on retry shows nothing, and no false 'System error' appears at any point", { skip: SKIP }, async () => {
+  mock.failNext = 1;
+  const t = await open({ seed: SEED }); const { page } = t;
+  const systemError = () => page.locator("#notices").getByText("System error").count();
+  assert.equal(await systemError(), 0);
+  await fillCompose(page, { name: "Pat Lee" });
+  await page.click("#genBtn"); await page.locator("#genError").waitFor();
+  assert.equal(await systemError(), 0, "an expected provider failure is explained by the draft pane, not by a blanket system error");
+  assert.equal(await page.locator("#notices .notice.bad").count(), 0);
+  await page.locator("#genError").getByRole("button", { name: "Try again" }).click();     // clears the error, then generates
+  await page.waitForSelector("#eSubject");
+  assert.equal(await systemError(), 0, "clearing an error is not a failure");
+  assert.equal(await page.locator("#notices .notice.bad").count(), 0);
+  // the only console error is the browser's own report of the provider's failed request; the app logged no fault of its own
+  assert.deepEqual(t.errors.filter(e => !/Failed to load resource: the server responded with a status of 502/.test(e)), []); await t.close();
 });
 
 test("failure keeps inputs and offers a nontechnical retry that works", { skip: SKIP }, async () => {

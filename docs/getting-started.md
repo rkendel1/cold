@@ -42,7 +42,27 @@ Cold can't see your inbox. After you send, open **History** and press **Mark sen
 
 ## 6. Where your data is, and keeping a copy
 
-The footer and **Settings > Your data** say where your library lives: this browser (web), a SQLite file (desktop), the extension's storage, or a shared library if paired. Back up the desktop library by copying `cold.db` (path in Settings). **Leads → Export CSV** exports leads only. There is no export for products or drafts other than the database file, and no "erase everything" button: delete records one by one, or remove the browser data / database file.
+On a new, empty install, **Write** shows a short **Get started** checklist (connect a model, add what you offer, generate and copy a first draft, optionally import leads). Each step turns to *Done* only when it has really happened; **Hide this checklist** removes it for good.
+
+The footer and **Settings > Your data** say where your library lives: this browser (web), a SQLite file (desktop), the extension's storage, or a shared library if paired. **Leads → Export CSV** exports leads only. There is no export for products or drafts and no "erase everything" button yet: delete records one by one, or remove the browser data / database file.
+
+### Backing up the desktop library (do this before anything risky)
+
+The desktop library is the SQLite database in the app's data folder. It runs in write-ahead-log (WAL) mode, so **recent changes live in a separate `cold.db-wal` file until SQLite merges them**, and Cold does not close the database explicitly when you quit, so those extra files are normally still there afterwards. **Copying `cold.db` by itself can silently leave out your latest records** (a test copied just that file after 5 saves and got 0 of the 5 back).
+
+1. **Quit Cold completely** (menu **Cold > Quit**, or ⌘Q; on Windows and Linux close every Cold window and check no Cold process remains). Do not copy files while the app is running.
+2. **Find the data folder.** The exact path is shown in **Settings > Browser extension & web apps**. By Electron's convention for an app named Cold it is `~/Library/Application Support/Cold` on macOS, `%APPDATA%\Cold` on Windows and `~/.config/Cold` on Linux (the path in Settings is authoritative; these defaults were not checked on each OS).
+3. **Copy every file whose name starts with `cold.db`** (`cold.db`, plus `cold.db-wal` and `cold.db-shm` if they exist) into a new folder, in one go, for example `cold-backup-2026-10-14`.
+4. Keep `settings.json` separately only if you want to keep your provider keys and Google sign-in; it contains secrets, so store it as carefully as you would a password file. It is not part of the library backup.
+
+### Restoring
+
+1. Quit Cold completely.
+2. **Move the current `cold.db*` files aside into another folder (do not delete them).**
+3. Copy your backed-up `cold.db*` files into the data folder.
+4. Start Cold and check your products, drafts and leads.
+
+**What has and hasn't been verified.** An automated test (`test/db-backup.test.js`) checks the database layer: that copying `cold.db` alone loses recent records, that copying all of the `cold.db*` files together preserves them (including after a process exits without closing the database), and that restoring such a set opens with every record. It has **not** been verified with a real quit of the packaged desktop app on macOS, Windows or Linux, through the app's own interface, or for the default folder paths above. Treat your first backup as unproven until you have restored it once into a spare copy of the app's data folder.
 
 **Optional: Google Sheets.** If your copy of Cold has it enabled, **Settings > Google Sheets** keeps leads and outreach in a spreadsheet in your own Google Drive. It is a preview feature that has not been tested with a real Google account: read [google-sheets.md](google-sheets.md) first.
 

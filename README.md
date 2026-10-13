@@ -6,6 +6,8 @@ A focused cold-email generator. Give it five facts; it gives you an email worth 
 
 > **Status: pre-1.0, not approved for general release.** What works, on which surface, and what must happen before broader adoption is assessed in the [product audit](docs/audit/README.md). New here? Start with [docs/getting-started.md](docs/getting-started.md). All documentation is indexed in [docs/README.md](docs/README.md).
 
+**Found a bug or have feedback?** [Open an issue](https://github.com/rkendel1/cold/issues/new/choose). **Found a security problem?** Don't open a public issue: follow [SECURITY.md](SECURITY.md).
+
 ## What it does
 
 - **Knowledge**: products with plain-English description, audience, problem, proof points (claim, evidence, type, strength, use-externally flag), technical facts, approved language, and do-not-say rules.
@@ -102,10 +104,10 @@ Drafts use X's weighted 280-character limit via `twitter-text`, including URL an
 npm install            # runtime: @mlc-ai/web-llm, twitter-text; dev: esbuild, electron, electron-builder, playwright-core, axe-core
 npm run build:app      # rebuild public/app.js and public/app.css after editing src/
 npm run check:app      # fail if the committed bundle is stale
-npm test               # unit, server, bundle/deploy-config and browser tests
+npm test               # unit, server, bundle/deploy-config, browser, extension and desktop tests
 ```
 
-Browser tests need Chromium (`PLAYWRIGHT_BROWSERS_PATH`, or `CHROMIUM=/path/to/chrome`); they are skipped when it is unavailable. They use a **mock** model, so they verify UI behaviour and plumbing, not output quality.
+Browser tests need Chromium (`PLAYWRIGHT_BROWSERS_PATH`, or `CHROMIUM=/path/to/chrome`), extension tests need `npm run build:extension`, and the desktop-handoff and four side-panel layout tests need a display (use `xvfb-run -a npm test` on a headless Linux machine). Locally they are skipped when a prerequisite is missing; **in CI (`CI=true`) a missing prerequisite fails the run** (`test/00-ci-prerequisites.test.js`), and `scripts/ci-check-skips.cjs` fails on any skipped test that isn't on its allow-list (only the real-model smoke test). See `.github/workflows/ci.yml`. They use a **mock** model, so they verify UI behaviour and plumbing, not output quality.
 
 ## Local models (Ollama)
 
