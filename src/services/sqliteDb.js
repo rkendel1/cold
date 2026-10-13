@@ -134,5 +134,11 @@ export function createRemoteDb({ fetchImpl = (...a) => globalThis.fetch(...a), h
     const total = (u.emails || 0) + (u.leads || 0) + (u.products || 0);
     return total ? [`${total} saved item${total === 1 ? " was" : "s were"} unreadable and left out of this view (${parts.join(", ")}). ${total === 1 ? "It is" : "They are"} still in the database file and nothing was deleted. Back up the file before changing anything; see docs/troubleshooting.md.`] : [];
   };
-  return { kind: "sqlite", load, collection, doc, setMany, deleteMany, get warnings() { return warnings(); }, get initialCompose() { return cache.compose; }, stop() { clearInterval(timer); timer = null; } };
+  /** Erase the library on this computer (the server does it in one transaction), then re-read what the database holds. Resolves with what remains. */
+  async function erase() {
+    const r = await call("api/data/erase", { method: "POST", body: JSON.stringify({ confirm: "erase-my-cold-data" }) });
+    await refresh();
+    return r.remaining;
+  }
+  return { kind: "sqlite", load, collection, doc, setMany, deleteMany, erase, get warnings() { return warnings(); }, get initialCompose() { return cache.compose; }, stop() { clearInterval(timer); timer = null; } };
 }

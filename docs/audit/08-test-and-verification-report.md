@@ -103,6 +103,24 @@ Environment as above (no display, no `xvfb-run`, no network to GitHub, so **the 
 
 My first first-run design wrote a marker setting; in web mode a settings write rewrites every stored list. The existing `malformed localStorage…` test failed (a damaged store was clobbered on page load) and then `switching libraries never merges or destroys…` failed (the standalone library was rewritten when a library arrived). The checklist now writes nothing; see [11](11-remediation-backlog.md), QUALITY-012.
 
+## Data portability PR (export, restore, erase): results
+
+Run in this environment (Node 22, Chromium from `/opt/pw-browsers`, and `xvfb-run` **was** available this time).
+
+| Run | Command | Result |
+|---|---|---|
+| Whole suite 1 (no display) | `npm test` | 376 tests: 370 pass, **5 fail**, 1 skipped. The five are the known display-dependent tests (`desktop-mail`, four `extension-layout`); the failure is `Missing X server or $DISPLAY`. The same five fail identically on `main` without these changes |
+| Those five under a display | `xvfb-run -a node --test test/extension-layout.test.js test/desktop-mail.test.js` | 5 pass, 0 fail (first time they have been seen passing here) |
+| Whole suite 2 and 3 (CI-style) | `CI=true xvfb-run -a --server-args="-screen 0 1280x1024x24" node --test … test/*.test.js` | **376 tests, 375 pass, 0 fail, 1 skipped**, both runs |
+| Skip auditor | `node scripts/ci-check-skips.cjs test-results/results.tap` | 376 results, 1 skipped (`REAL MODEL:`, allow-listed, **BLOCKED, not passed**), 0 unexpected |
+| Bundle and links | `npm run check:app`, `node scripts/audit-links.cjs` | current; 166 links in 43 files, 0 problems |
+
+**Not run:** GitHub Actions for this branch (see the PR for its status); ten consecutive runs (two full CI-style runs, no failures); the packaged desktop app; Firefox or Safari; real Google; screen-reader use.
+
+New tests (all pass): `test/data-portability.test.js` (14: format, secrets, empty and 20,000-lead files, invalid/truncated/unsupported/malformed files, conflict and duplicate policy, round trip, replace with injected mid-restore failure and rollback, refusal on paired/Sheets, erase with stale-save and autosave checks, failed and incomplete erase reported, erase endpoint refused for cross-site, extension token and missing confirmation, raw `cold.db*` bytes searched for deleted text), `test/data-portability-e2e.test.js` (7: web export, empty export, restore review/bad files/add/cancel/replace with backup, typed-confirmation erase, erase failure shown, desktop SQLite flow, axe light/dark), and one extension test (export, key exclusion, erase, no recreation, restore on `chrome.storage.local`).
+
+Two defects found by these tests during development and fixed: an unlabeled input in the erase dialog (axe `label`), and a test written against the wrong settings key. No existing test was weakened or skipped.
+
 ### Still not verified
 
 CI on GitHub; the five display-dependent tests; ten consecutive runs; the Electron quit → backup → restore workflow on a real OS (the database-layer behaviour is tested); real model quality; real Google; packaged installers; manual accessibility; the five-unassisted-users, ten-minute first-draft target (human validation); the pilot protocol; GitHub private vulnerability reporting (an owner setting).

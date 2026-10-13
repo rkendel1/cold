@@ -24,6 +24,20 @@ Automated repair is not built.
 
 Your inputs are kept and a retry is offered. Provider outages, rate limits and bad keys show the provider's own message. Nothing partial is saved to History.
 
+## Export, restore and erase
+
+Background: [data-portability.md](data-portability.md).
+
+* **"There's nothing to export yet"**: the library is empty; no file is made.
+* **"Couldn't create the export, so no file was made."** Cold checks its own export before offering it. Nothing was downloaded. Try again; if it repeats, copy the records you need by hand and report it.
+* **"Can't restore …  Nothing was changed."** The file failed the check; the list says why, with positions and field names but never your content. Typical causes and fixes: *isn't valid JSON* (cut off in a download or copy: export again); *newer Cold* (update Cold); *has a missing or invalid id*, *repeats the id*, *may be truncated or edited* (the file was changed by hand: use the original). Cold never restores part of a file.
+* **"N kept your version"** (add mode): a record with the same id but different content exists here. Yours was kept and the file's was not applied. Use **Replace** only if you want the file's version, and read the list of what it will delete first.
+* **Replace is greyed out.** This library is paired with the desktop app or stored in Google Sheets, where replacing could delete records elsewhere. The reason is shown next to the option.
+* **"The restore failed, and your library has been put back exactly as it was."** Something failed part-way and Cold undid it and checked. **"…could not confirm that your library is exactly as it was"**: check your drafts and leads, and restore the `cold-backup-before-restore-…` file Cold downloaded first.
+* **"Erasing didn't finish" / "Don't treat it as erased".** Cold read the storage back and some of it was still there, or the storage refused. Nothing is claimed as deleted; the page is writable again. Try again, or clear it by hand: web, the site's data in browser settings; extension, remove and reinstall (this also removes its pairing); desktop, quit Cold and move the `cold.db*` files aside.
+* **"Your data was erased on this device. Reload Cold to continue."** After an erase the page refuses writes so nothing old can come back. Reload.
+* **Erase is greyed out.** Paired or Google Sheets library; the message names the next step. Erase never touches Google or the desktop app's data from here.
+
 ## "Draft shown, but browser storage is full" / "Not saved: browser storage is full"
 
 The browser refused the write; nothing was reported as saved. Delete old drafts in History (or use the desktop app, whose SQLite file has no such limit), then save again. Copy the draft now if it only exists on screen.

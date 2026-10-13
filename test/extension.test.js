@@ -184,6 +184,37 @@ test('extension works with the app closed, then syncs with it when it starts, su
   } finally { await ctx.close(); await app.stop().catch(() => {}); app.db.close(); await model1.close(); await ownModel.close(); }
 });
 
+test('extension: export, restore and erase work on the extension\'s own storage; keys stay out of the export and survive an erase; erase leaves nothing for autosave to recreate', { skip: SKIP, timeout: 120000 }, async () => {
+  const model1 = await mockModel();
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-dp-ext-'));
+  const app = await coldApp(model1, dir); await app.stop();
+  const { ctx, panel, errors } = await launch(dir);
+  try {
+    const lib = { products: { p1: { id: 'p1', name: 'Ext Co', what: 'x' } }, emails: { e1: { id: 'e1', createdAt: 5, status: 'sent', sentAt: 77, note: 'EXT-NOTE', recipient: { name: 'Own Person', company: 'OwnCo' }, subject: 's', what: 'w', why: 'y', ask: 'a?' } }, leads: { l1: { id: 'l1', name: 'Ext Lead', company: 'Acme', email: 'l@acme.io', list: 'Q4', createdAt: 1 } }, outbox: [], lastSync: 0 };
+    await panel.evaluate(async lib => { await chrome.storage.local.set({ 'cold.replica': lib, 'cold.model': { provider: 'custom', configured: true, providers: { custom: { baseUrl: 'http://x/v1', model: 'm', key: 'sk-EXT-KEY-SECRET' } } } }); }, lib);
+    await panel.reload(); await panel.waitForSelector('#genBtn', { state: 'attached' });
+    await nav(panel, 'settings'); await panel.waitForSelector('#exportBtn2');
+    const [dl] = await Promise.all([panel.waitForEvent('download', { timeout: 15000 }), panel.click('#exportBtn2')]);
+    const text = fs.readFileSync(await dl.path(), 'utf8'); const f = JSON.parse(text);
+    assert.deepEqual([f.format, f.source, f.counts], ['cold-export', 'extension', { products: 1, emails: 1, leads: 1 }]);
+    assert.equal(f.data.emails[0].sentAt, 77); assert.ok(!/EXT-KEY-SECRET|sk-/.test(text), 'the extension\'s provider key is not exported');
+    // erase
+    await panel.click('#eraseBtn'); await panel.fill('#eraseWord', 'erase'); await panel.click('#eraseConfirm');
+    await panel.waitForSelector('#eraseResult'); assert.match(await panel.textContent('#eraseResult'), /Erased 1 product, 1 draft, 1 lead/);
+    await panel.waitForTimeout(900);
+    const st = await panel.evaluate(async () => { const all = await chrome.storage.local.get(null); return { replica: all['cold.replica'] || null, model: all['cold.model'] || null }; });
+    assert.equal(st.replica, null, 'the library is gone and was not recreated');
+    assert.match(JSON.stringify(st.model), /EXT-KEY-SECRET/, 'provider settings are not Cold records and stay');
+    // restore the export into the now-empty extension
+    await panel.reload(); await panel.waitForSelector('#genBtn', { state: 'attached' }); await nav(panel, 'settings'); await panel.waitForSelector('#restoreBtn');
+    await panel.setInputFiles('#restoreFile', { name: 'again.json', mimeType: 'application/json', buffer: Buffer.from(text) });
+    await panel.waitForSelector('#restoreGo'); await panel.click('#restoreGo'); await panel.waitForSelector('#restoreResult'); assert.match(await panel.textContent('#restoreResult'), /read back/);
+    const back = await panel.evaluate(async () => Object.values((await chrome.storage.local.get('cold.replica'))['cold.replica'].emails).map(e => [e.id, e.sentAt, e.note]));
+    assert.deepEqual(back, [['e1', 77, 'EXT-NOTE']]);
+    assert.deepEqual(errors, []);
+  } finally { await ctx.close(); await model1.close(); }
+});
+
 test('extension also talks to a local Ollama directly (which refuses extension origins unless the header is removed)', { skip: SKIP, timeout: 200000 }, async () => {
   let tags; try { tags = await (await fetch('http://127.0.0.1:11434/api/tags', { signal: AbortSignal.timeout(1500) })).json(); } catch { return; }   // no Ollama here: nothing to check
   const small = (tags.models || []).map(m => m.name).find(n => /1\.5b|0\.5b|3b|llama3\.2|qwen2\.5/.test(n)) || (tags.models || [])[0]?.name;

@@ -103,7 +103,7 @@ Perspectives: a **new user** (never saw Cold), an **established user**, and a us
 
 * **Where.** Desktop (and a local install with `COLD_DB_FILE`). Leads are rows in the `leads` table with real columns for name/company/email/list; the JSON in `data` is the record.
 * **Probe (R6).** A double write is idempotent; a write based on a stale version is refused with `conflict`; a 700 KB document is refused (413); an invalid id is refused (400); WAL mode and schema v2 confirmed.
-* **Gaps.** A hand-corrupted row is silently left out of what the app shows (not deleted) with no warning (DATA-008); there is no in-app backup, restore, or export of products/drafts (DATA-009); the README documents copying the file as the backup.
+* **Gaps.** A hand-corrupted row is silently left out of what the app shows (not deleted) with no warning (DATA-008); in-app export, restore and erase now exist (DATA-009, fixed); the file backup remains the exact-copy option.
 * **Status.** Verified for the implemented behaviour; Surface-specific.
 
 ## J11. Select a lead and produce relevant, personalised outreach
@@ -157,7 +157,7 @@ Perspectives: a **new user** (never saw Cold), an **established user**, and a us
 
 * **Google Sheets.** *Stop using Google Sheets* → confirmation that says what will happen → everything currently in the sheet is **copied back** into the app's own storage → the sheet link is forgotten → the page reloads. The spreadsheet itself is untouched in Drive. **Defect found and fixed (DATA-003):** this did not forget or revoke the Google authorisation (desktop kept a refresh token in `settings.json`; web kept a "connected" flag). It now signs out and asks Google to revoke (web: Google's `revoke`; desktop: the server's `disconnect` calls Google's revoke endpoint; the extension forgets its flag but does not call a revoke endpoint). Verified by `T:sheets-e2e`.
 * **Desktop pairing.** Settings > Cold desktop app > Disconnect: the surface returns to its own library; nothing is sent after disconnect (`T:privacy`, `T:shared-library`).
-* **Gaps.** No "erase everything" in any surface (DATA-009).
+* **Gaps.** Erase now exists on web, desktop and extension; it is refused for paired/shared and Sheets libraries and doesn't revoke Google (DATA-009).
 
 ---
 

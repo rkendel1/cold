@@ -44,7 +44,7 @@ Cold can't see your inbox. After you send, open **History** and press **Mark sen
 
 On a new, empty install, **Write** shows a short **Get started** checklist (connect a model, add what you offer, generate and copy a first draft, optionally import leads). Each step turns to *Done* only when it has really happened; **Hide this checklist** removes it for good.
 
-The footer and **Settings > Your data** say where your library lives: this browser (web), a SQLite file (desktop), the extension's storage, or a shared library if paired. **Leads → Export CSV** exports leads only. There is no export for products or drafts and no "erase everything" button yet: delete records one by one, or remove the browser data / database file.
+The footer and **Settings > Your data** say where your library lives: this browser (web), a SQLite file (desktop), the extension's storage, or a shared library if paired. **Leads → Export CSV** exports leads only. For everything else, **Settings > Your data** has **Export my data** (one JSON file with products, drafts and leads, never keys), **Restore from an export…** (checked before anything changes; add what's new, or replace after a confirmation and an automatic backup) and **Erase my data on this device…** (typed confirmation). See [Export, restore and erase](data-portability.md) for exactly what each includes and what it leaves alone.
 
 ### Backing up the desktop library (do this before anything risky)
 
