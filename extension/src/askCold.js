@@ -8,7 +8,8 @@ import { button, chip, notice, toast } from "../../src/components/ui.js";
 import { confirmDialog } from "../../src/components/dialog.js";
 import { MODELS, MODEL_SOURCE, modelByKey } from "./localModels.js";
 import { readPage } from "./page.js";
-import { ASK_QUESTIONS, BROWSE_QUESTION, TYPE_LABEL, evaluatePage, localityOf, staysOnThisComputer, isLoopbackUrl, urlEligibility, createBrowseSession, opportunityKey, prospectRecord, draftPatch } from "../../src/domain/opportunity.js";
+import { verifyResult, SIGNAL_LABEL, ROLE_LABEL } from "../../src/domain/jevChecks.js";
+import { ASK_QUESTIONS, MORE_QUESTIONS, BROWSE_QUESTION, TYPE_LABEL, evaluatePage, localityOf, staysOnThisComputer, isLoopbackUrl, urlEligibility, createBrowseSession, opportunityKey, prospectRecord, draftPatch } from "../../src/domain/opportunity.js";
 
 const NEXT_LABEL = { save_prospect: "Save as a prospect", draft_outreach: "Start a draft", follow_up: "Follow up with them yourself", none: "Nothing to do yet" };
 const sitePattern = url => { const u = new URL(url); return `${u.protocol}//${u.hostname}/*`; };
@@ -49,7 +50,9 @@ export function createAskCold({ store, platform, getCompose }) {
   const smallBtn = button("Use the smaller model", { id: "localSmall", onclick: () => { localSelect.value = "qwen2.5-0.5b"; lm.select("qwen2.5-0.5b"); setupDevice(); } });
   const localBlock = h("div", { class: "x-local", id: "localBlock" }, h("strong", {}, "On-device model"), localInfo, h("div", { class: "field" }, h("label", { for: "localModel" }, "Model"), localSelect), localState,
     h("div", { class: "actions" }, setupBtn, cancelBtn, smallBtn, removeBtn));
-  const quick = h("div", { class: "actions" }, ASK_QUESTIONS.map(q => button(q, { kind: "ghost", class: "askQuick", onclick: () => { question.value = q; question.focus(); } })));
+  const quickBtn = q => button(q, { kind: "ghost", class: "askQuick", onclick: () => { question.value = q; question.focus(); } });
+  const quick = h("div", {}, h("div", { class: "actions" }, ASK_QUESTIONS.map(quickBtn)),
+    h("details", { class: "panel", id: "askMore" }, h("summary", {}, "More questions"), h("div", { class: "in" }, h("div", { class: "actions" }, MORE_QUESTIONS.map(quickBtn)))));
 
   const bwmState = h("p", { id: "bwmState", role: "status" });
   const bwmNote = h("p", { class: "hint" }, "Browse With Me looks only at the page you are on, only while it is running, only on sites you have allowed, and never on mail, sign-in, payment or private pages. Nothing is kept when you stop.");
@@ -175,7 +178,8 @@ export function createAskCold({ store, platform, getCompose }) {
     const [{ result: page }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: readPage });
     return page;
   }
-  const evaluateWith = (p, q) => page => evaluatePage({ sample: p.sample, question: q, page, products: S.products, emails: S.emails });
+  // The evaluator, then (only when it found something) one more call: typed questions that can only lower confidence, never raise it (see jevChecks.js).
+  const evaluateWith = (p, q) => async page => verifyResult({ sample: p.sample, page, products: S.products, result: await evaluatePage({ sample: p.sample, question: q, page, products: S.products, emails: S.emails }) });
 
   async function ask() {
     if (busy) return;
@@ -204,6 +208,15 @@ export function createAskCold({ store, platform, getCompose }) {
     if (r.verdict === "none") { host.append(h("div", { class: "card ask-card", dataset: { verdict: "none" } }, h("strong", {}, "No meaningful opportunity found"), h("p", {}, r.summary || "Nothing on this page points to an opportunity for what you sell."), r.dropped ? h("p", { class: "hint" }, "Some suggestions were discarded because the page didn't back them up.") : null, button("Dismiss", { kind: "ghost", class: "askDismiss", onclick: () => clear(host) }))); return; }
     if (r.verdict === "uncertain") host.append(notice("warn", h("strong", {}, "Uncertain."), h("p", {}, "The page only weakly suggests this. Treat it as a lead to check, not a finding.")));
     for (const o of r.opportunities) host.append(card(o, page, r.verdict, key ? opportunityKey(o, page) : null, host));
+    if (r.opportunities.length && r.secondCheck === "unavailable") host.append(h("p", { class: "hint", id: "askNoSecond" }, "The second check couldn't run with this model, so these results haven't been double-checked."));
+  }
+  /** What the second check said, in plain words: signal, fit, role and any caution. Nothing here is a fact about the page; it is a model's second opinion. */
+  function reviewLine(o) {
+    const r = o.review; if (!r || !r.checked) return null;
+    const bits = [r.supported === true ? "the page supports the conclusion" : r.supported === false ? "the page may not support the conclusion" : "", r.signal && r.signal !== "none" ? `the organization ${SIGNAL_LABEL[r.signal]}` : "",
+      r.fit ? `fit with your product: ${r.fit}` : "", r.role && r.role !== "other" ? ROLE_LABEL[r.role] : "", r.current === "dated" ? "the page may be out of date" : ""].filter(Boolean);
+    return h("div", { class: "ask-review", dataset: { checked: "1" } }, h("p", { class: "hint ask-label" }, "Second check (another pass by your model, which can be wrong):"),
+      bits.length ? h("p", {}, bits.join("; ")) : null, ...r.notes.map(n => h("p", { class: "hint" }, n)));
   }
   function card(o, page, verdict, key, host) {
     const el = h("div", { class: "card ask-card", dataset: { verdict, type: o.type } });
@@ -218,6 +231,7 @@ export function createAskCold({ store, platform, getCompose }) {
       h("p", { class: "hint ask-label" }, "Cold's inference (not stated on the page):"),
       h("p", { class: "ask-inference" }, o.inference || "—"),
       o.uncertainty ? h("p", { class: "hint" }, `Not known: ${o.uncertainty}`) : null,
+      reviewLine(o),
       h("p", { class: "hint" }, `Suggested next step: ${NEXT_LABEL[o.nextAction]}. Cold does not contact anyone.`),
       h("div", { class: "actions" },
         button("Save as prospect", { class: "askSave", disabled: !(o.who.name || o.who.company), onclick: async ev => {

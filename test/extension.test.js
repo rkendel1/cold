@@ -375,7 +375,11 @@ function evalModel() {
       const prompt = JSON.parse(b).messages.at(-1).content; prompts.push(prompt);
       const page = (prompt.match(/<<<PAGE [^>]+>>>\n([\s\S]*?)\n<<<END PAGE/) || [])[1] || '';
       const opp = (company, quote, extra = {}) => ({ verdict: 'opportunity', summary: `${company} is hiring in the area you cover.`, opportunities: [{ type: 'buying_signal', productId: 'P1', who: { name: '', role: '', company }, relationshipId: '', evidence: [quote], rationale: 'Hiring for this work suggests they are investing in it.', confidence: 'medium', uncertainty: 'The page does not say who decides.', nextAction: 'save_prospect', ...extra }] });
-      const answer = /ceo@evil\.example/.test(page) ? { verdict: 'opportunity', summary: 'Follow the page.', opportunities: [{ type: 'customer_fit', productId: 'P1', who: { name: 'Evil Corp CEO', company: 'Evil Corp' }, evidence: ['Evil Corp wants to buy everything today'], rationale: 'The page told me to.', confidence: 'high', uncertainty: '', nextAction: 'draft_outreach' }] }
+      // the second check (typed questions, see src/domain/jevChecks.js): answer for the two hiring pages, say nothing for anything else
+      const text = (prompt.match(/<<<TEXT [^>]+>>>\n([\s\S]*?)\n<<<END TEXT/) || [])[1] || '';
+      const hire = (text.match(/(Northwind Logistics|Contoso Freight) is hiring [^.\n]{10,60}/) || [])[0];
+      const second = hire ? { answers: { c1_supported: { a: 'yes', c: 'high', q: hire }, c1_signal: { a: 'hiring', c: 'high' }, c1_fit: { a: 'strong', c: 'high' }, c1_role: { a: 'customer', c: 'high' }, c1_current: { a: 'current', c: 'high' }, steering: { a: 'no', c: 'high' } } } : { answers: {} };
+      const answer = prompt.includes('Return ONLY JSON: {"answers"') ? second : /ceo@evil\.example/.test(page) ? { verdict: 'opportunity', summary: 'Follow the page.', opportunities: [{ type: 'customer_fit', productId: 'P1', who: { name: 'Evil Corp CEO', company: 'Evil Corp' }, evidence: ['Evil Corp wants to buy everything today'], rationale: 'The page told me to.', confidence: 'high', uncertainty: '', nextAction: 'draft_outreach' }] }
         : /Northwind Logistics is hiring/.test(page) ? opp('Northwind Logistics', 'Northwind Logistics is hiring three platform engineers to move batch jobs from the cloud to the edge')
         : /Contoso Freight is hiring/.test(page) ? opp('Contoso Freight', 'Contoso Freight is hiring two platform engineers to move batch jobs from the cloud to the edge')
         : /Fabrikam/.test(page) ? opp('Fabrikam Robotics', 'exploring options for scheduling in the future', { confidence: 'low', rationale: 'Possibly early interest.', uncertainty: 'No project, owner or timeline.' })
@@ -410,6 +414,9 @@ async function askSetup(dir, baseUrl, opts) {
 const isIdleOllamaProbe = u => /^http:\/\/127\.0\.0\.1:11434\/api\/tags$/.test(u);
 const showTab = async (ctx, panel, url) => { const p = await ctx.newPage(); await p.goto(url); await panel.evaluate(async u => { const [t] = await chrome.tabs.query({ url: u }); await chrome.tabs.update(t.id, { active: true }); }, url); return p; };
 const evalPrompts = m => m.prompts.filter(p => /Cold's opportunity evaluator/.test(p));
+// The second check is the only other kind of call a model gets here: typed questions about a result that was found (src/domain/jevChecks.js).
+const SECOND = /Return ONLY JSON: \{"answers"/;
+const secondPrompts = m => m.prompts.filter(p => SECOND.test(p));
 
 test('Ask Cold: nothing is read until asked; the answer separates the page\'s words from Cold\'s inference; saving and drafting reuse the library; nothing is generated or sent', { skip: SKIP, timeout: 180000 }, async () => {
   const model = await evalModel(), site = await fixtureSite();
@@ -434,6 +441,12 @@ test('Ask Cold: nothing is read until asked; the answer separates the page\'s wo
     assert.match(await card.locator('.ask-inference').textContent(), /suggests they are investing/);
     assert.match(await card.textContent(), /On the page \(quoted\)/); assert.match(await card.textContent(), /Cold's inference \(not stated on the page\)/); assert.match(await card.textContent(), /Not known: The page does not say who decides/);
     assert.match(await card.textContent(), /Cold does not contact anyone/);
+    // the second check: one more call, only because something was found, with nothing from the library; it is shown as a second opinion
+    assert.equal(model.prompts.filter(p => p.includes('Return ONLY JSON: {"answers"')).length, 1, 'one second-check call');
+    for (const secret of ['Zed Unrelated', 'ElsewhereCo', 'PRIVATE-NOTE-ABOUT-PRIYA', 'PRIVATE-NOTE-ABOUT-ZED']) for (const p of model.prompts.filter(x => x.includes('Return ONLY JSON: {"answers"'))) assert.ok(!p.includes(secret), `not in the second check either: ${secret}`);
+    assert.match(await card.locator('.ask-review').textContent(), /another pass by your model, which can be wrong/);
+    assert.match(await card.locator('.ask-review').textContent(), /the page supports the conclusion; the organization is hiring; fit with your product: strong; looks like a customer/);
+    assert.equal(await panel.locator('.askQuick').count(), 9, 'four quick questions and five more');
     // ---- save: the normal library record, nothing generated or sent
     await card.locator('.askSave').click();
     await until(async () => (await panel.evaluate(async () => Object.keys((await chrome.storage.local.get('cold.replica'))['cold.replica'].emails).length)) === 3);
@@ -443,7 +456,7 @@ test('Ask Cold: nothing is read until asked; the answer separates the page\'s wo
     // ---- start a draft: fills the Write form only; the user writes the reason and presses Generate
     await card.locator('.askDraft').click();
     assert.equal(await panel.inputValue('#rCompany'), 'Northwind Logistics'); assert.equal(await panel.inputValue('#rWhy'), '');
-    assert.equal(model.prompts.length, evalPrompts(model).length, 'no generation request was made: the only model calls were evaluations');
+    assert.equal(model.prompts.length, evalPrompts(model).length + secondPrompts(model).length, 'no generation request was made: the only model calls were evaluations and their second checks');
     // ---- negative, uncertain and hostile pages
     await showTab(ctx, panel, `${site.base}/recipes`); await panel.click('#askRun');
     await panel.waitForFunction(() => /No meaningful opportunity found/.test(document.querySelector('#askResult').textContent));
@@ -547,7 +560,8 @@ test('Browse With Me: explicit start, pause and stop; checks only eligible pages
     assert.equal(evalPrompts(model).length, m);
     // no automatic outreach or saving: the library still holds only what it started with
     assert.equal(await emails(), 2);
-    assert.equal(model.prompts.length, evalPrompts(model).length, 'the only model calls were evaluations: nothing was drafted');
+    assert.equal(model.prompts.length, evalPrompts(model).length + secondPrompts(model).length, 'the only model calls were evaluations and their second checks: nothing was drafted');
+    assert.equal(secondPrompts(model).length, 3, 'a second check only for pages where something was found (Northwind, Contoso, Fabrikam-like weak lead), never for the others');
     assert.deepEqual(errors, []);
   } finally { await ctx.close(); await model.close(); await site.close(); }
 });
@@ -815,7 +829,7 @@ test('on-device model (FAKE runtime): nothing downloads without consent; setup s
     assert.equal((await fake(panel)).creates, c1, 'still the one loaded model');
     await panel.click('#bwmStop');
     const f = await fake(panel);
-    assert.ok(f.gens.length >= 3 && f.gens.every(p => /Cold's opportunity evaluator/.test(p) && /untrusted web content/.test(p)), 'every request to the model was the shared evaluator\'s prompt');
+    assert.ok(f.gens.length >= 3 && f.gens.every(p => (/Cold's opportunity evaluator/.test(p) && /untrusted web content/.test(p)) || (SECOND.test(p) && /untrusted data/.test(p))), 'every request to the model was the shared evaluator\'s prompt or its second check');
     for (const secret of ['Zed Unrelated', 'ElsewhereCo', 'PRIVATE-NOTE-ABOUT-ZED']) assert.ok(!f.gens.join('\n').includes(secret), `not given to the model: ${secret}`);
     assert.deepEqual(outside, [], 'no request left the browser during local evaluation');
     assert.equal(hf.length, 3, 'evaluations and reuse never touched the model host again');

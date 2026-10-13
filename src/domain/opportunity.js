@@ -16,6 +16,14 @@ export const ASK_QUESTIONS = [
   "Is there a relevant buying or change signal?",
   "Should I follow up with someone I already know?",
 ];
+// More questions that are answerable from a page and useful to a seller. They steer the same evaluator; they are not separate modes.
+export const MORE_QUESTIONS = [
+  "Is this company hiring for something my product helps with?",
+  "Did something change recently, like funding, a launch or a new leader?",
+  "Who here would care about my product, and why them?",
+  "Is this a competitor or a partner rather than a customer?",
+  "Which of my products fits this page best?",
+];
 export const BROWSE_QUESTION = ASK_QUESTIONS[0];
 export const TYPES = ["customer_fit", "buying_signal", "follow_up", "other"];
 export const TYPE_LABEL = { customer_fit: "Possible customer", buying_signal: "Buying or change signal", follow_up: "Follow-up with someone you know", other: "Other" };

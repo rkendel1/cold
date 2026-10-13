@@ -27,8 +27,12 @@ export function createLocalModel({ loadRuntime, loadPins, gpu = () => globalThis
     const g = gpu();
     if (!g) return { ok: false, code: "unsupported_webgpu", message: "This browser doesn't offer WebGPU, which the on-device model needs. Use Chrome 114 or newer on a computer with a supported graphics card, or use a model server on this computer." };
     let adapter = null;
-    try { adapter = await g.requestAdapter(); } catch { adapter = null; }
-    if (!adapter) return { ok: false, code: "no_adapter", message: "WebGPU is present but no graphics adapter is available (a remote session, a blocked driver, or no supported GPU). The on-device model can't run here." };
+    // The browser may only hand one out for a particular power preference, so ask for the default, then each preference, before giving up.
+    for (const opts of [undefined, { powerPreference: "high-performance" }, { powerPreference: "low-power" }]) {
+      try { adapter = await g.requestAdapter(opts); } catch { adapter = null; }
+      if (adapter) break;
+    }
+    if (!adapter) return { ok: false, code: "no_adapter", message: "WebGPU is present but no graphics adapter is available, so the on-device model can't run here. The most common cause is that Chrome turned graphics acceleration off after its graphics process crashed: quit Chrome completely (all windows) and reopen it, then try again. To check, open chrome://gpu: “WebGPU: Hardware accelerated” means it can work; “Disabled”, or “GPU access is disabled due to frequent crashes”, means restart, and if it keeps happening update Chrome and macOS. Remote sessions and some work-managed computers offer no GPU at all. You can also use a model server on this computer instead." };
     return { ok: true, variant: pickVariant(adapter.features), adapter };
   }
   /** The pin for this model and build, and whether it is complete. A model without a complete pin is never downloaded. */

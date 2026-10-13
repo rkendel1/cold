@@ -156,6 +156,15 @@ digest could be obtained and `npm run pin:local-model` could not be run against 
 tested against a stand-in server (tests below), not against Hugging Face. To unblock: allow `huggingface.co` (and the CDN hosts it
 redirects to) under the environment's Network access setting, or run the commands above on any networked machine, and commit the file.
 
+## Troubleshooting: "no graphics adapter is available"
+
+Open `chrome://gpu`. If **WebGPU** says *Hardware accelerated*, the on-device model can run. If it says *Disabled* with "GPU access is disabled
+due to frequent crashes", Chrome switched graphics off for the session after its GPU process crashed (this machine's report showed three
+crashes, exit code 512, on an Apple M4 Max whose Metal WebGPU adapter was otherwise available). Quit Chrome completely and reopen it: the crash
+counter resets. If it crashes again, update Chrome and macOS. Remote sessions, some managed computers and very old hardware have no usable GPU;
+there, use a model server on this computer (Ollama) or choose a hosted model, which Cold only uses after an explicit consent. Cold does not
+fall back to a software/CPU WebGPU adapter: Chrome blocklists them as not conformant.
+
 ## Tests and how to run them
 
 | Command | What it proves | Needs |

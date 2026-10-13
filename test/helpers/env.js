@@ -38,7 +38,8 @@ function startMock(behavior = {}) {
         if (mock.failNext > 0) { mock.failNext--; res.writeHead(529, { "content-type": "application/json" }); return res.end("{}"); }
         const isEditor = prompt.includes("You are the editor");
         const isTweet = prompt.startsWith("Write one");
-        const out = isTweet ? { text: mock.tweet || "Short tweet." }
+        const isDecide = prompt.includes('Return ONLY JSON: {"answers"');
+        const out = isDecide ? (typeof mock.decide === "function" ? mock.decide(prompt) : mock.decide || { answers: {} }) : isTweet ? { text: mock.tweet || "Short tweet." }
           : isEditor ? { draft_failures: [], final: mock.final, checks: Array.from({ length: 20 }, (_, i) => ({ rule: i + 1, pass: true })), proof_id: "P1", claims: mock.claims, could_improve: "" }
           : { relevance: { signal: "wrote about trial stall", rank: 1, category: "Direct shared problem", strength: "strong" }, retrieved: [{ id: "P1", why: "" }], proof_id: "P1", ...mock.final };
         res.writeHead(200, { "content-type": "application/json" });
