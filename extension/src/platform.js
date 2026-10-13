@@ -59,6 +59,7 @@ export async function createExtensionPlatform() {
     /** Email lookup runs only through the paired desktop app, which holds the token; the extension never stores one. */
     people: { available: backend.peopleAvailable, findEmail: backend.findEmail, verifyEmail: backend.verifyEmail },
     tregSettings: null,
+    hostShowsBrand: true,   // Chrome's side-panel header already shows this extension's icon and name, so the panel doesn't repeat them
     settings: { model: "", access: "" }, setAccess() {}, setModel() {}, savedModel: () => "",
     subscribe(fn) { subs.add(fn); return () => subs.delete(fn); },
     snapshot, backend,

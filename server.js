@@ -386,6 +386,10 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && url.pathname === "/app.css") {
       return send(res, 200, fs.readFileSync(path.join(ROOT, "public/app.css")), "text/css; charset=utf-8");
     }
+    if (req.method === "GET" && /^\/brand\/[a-z0-9-]+\.png$/.test(url.pathname)) {   // the logo files only; the pattern allows no other path or type
+      const file = path.join(ROOT, "public", url.pathname);
+      if (fs.existsSync(file)) return send(res, 200, fs.readFileSync(file), "image/png", { "cache-control": "public, max-age=86400" });
+    }
     if (req.method === "GET" && url.pathname === "/favicon.ico") return send(res, 204, "", "image/x-icon");
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
       return send(res, 200, fs.readFileSync(path.join(ROOT, "index.html")), "text/html; charset=utf-8", { "content-security-policy": HTML_CSP });

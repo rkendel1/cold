@@ -37,6 +37,7 @@
   "build": {
     "appId": "com.kendelconsulting.cold",
     "productName": "Cold",
+    "icon": "public/brand/logo-512.png",
     "extraMetadata": {
       "main": "desktop/main.js"
     },

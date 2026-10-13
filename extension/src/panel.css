@@ -20,7 +20,7 @@ body.ext { margin: 0; padding: 14px 16px 28px; background: var(--bg); }
 /* The shared app inside a narrow side panel */
 body.ext { padding: 8px 10px 20px; }
 .ext .app-header { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 0 0 6px; margin: 0 0 6px; border-bottom: 1px solid var(--line); }
-.ext .brand { font-size: 1.05rem; }
+.ext .brand { font-size: 1.05rem; gap: 6px; }
 /* Navigation: one row at every side-panel width. Never wraps, never scrolls. */
 .ext .primary-nav { position: static; flex: 1 1 100%; order: 3; display: flex; flex-wrap: nowrap; gap: 2px; margin: 0; padding: 0; border: 0; background: none; justify-content: space-between; }
 .ext .primary-nav a { flex: 1 1 auto; min-width: 0; min-height: 32px; padding: 4px 2px; justify-content: center; border-radius: 6px; font-size: .8rem; white-space: nowrap; }

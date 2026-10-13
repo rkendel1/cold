@@ -50,7 +50,7 @@ test('side panel: navigation is one row with a clear active state at 320, 360 an
     const { ctx, panel, errors } = await open(width);
     try {
       assert.deepEqual(await panel.$$eval('.primary-nav a', a => a.map(x => x.textContent)), ['Write', 'Knowledge', 'Leads', 'History', 'Settings']);
-      assert.equal(await panel.locator('.brand').count(), 1, 'Cold is named once');
+      assert.equal(await panel.locator('.brand, .brand-mark').count(), 0, "the browser's side-panel header already names Cold; the panel doesn't repeat it");
       for (const v of ['compose', 'knowledge', 'leads', 'history', 'settings']) {
         await go(panel, v);
         const tops = await panel.$$eval('.primary-nav a', a => [...new Set(a.map(x => Math.round(x.getBoundingClientRect().top)))]);

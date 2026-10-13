@@ -45,7 +45,7 @@ function buildMenu() {
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 1100, height: 860, minWidth: 720, minHeight: 600, title: "Cold",
+    width: 1100, height: 860, minWidth: 720, minHeight: 600, title: "Cold", icon: path.join(__dirname, "../public/brand/logo-512.png"),
     webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false, spellcheck: true, preload: path.join(__dirname, "preload.js") },
   });
   win.loadURL(ORIGIN);
@@ -69,6 +69,7 @@ ipcMain.handle("cold:open-mail", async (event, url) => {
 app.on("second-instance", () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
 
 app.whenReady().then(async () => {
+  if (process.platform === "darwin" && app.dock) app.dock.setIcon(path.join(__dirname, "../public/brand/logo-512.png"));   // dev runs; a packaged app gets its icon from the build
   session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
   const server = require("../server.js");
   if (safeStorage.isEncryptionAvailable()) {

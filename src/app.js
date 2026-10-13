@@ -29,7 +29,7 @@ export async function startApp(rootEl = document.getElementById("app"), { store 
   const notices = h("div", { id: "notices", class: "notices" });
   rootEl.append(
     h("a", { class: "skip", href: "#main" }, "Skip to content"),
-    h("header", { class: "app-header" }, h("div", { class: "brand" }, "Cold"), h("nav", { class: "primary-nav", "aria-label": "Primary" }, links)),
+    h("header", { class: "app-header" }, platform.hostShowsBrand ? null : h("div", { class: "brand" }, h("img", { class: "brand-mark", src: "brand/logo-96.png", alt: "", width: 28, height: 32 }), h("span", {}, "Cold")), h("nav", { class: "primary-nav", "aria-label": "Primary" }, links)),
     h("main", { id: "main", tabindex: "-1" }, notices, views.compose, views.knowledge, views.leads, views.history, views.settings),
     footer);
 
