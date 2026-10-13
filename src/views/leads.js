@@ -7,7 +7,7 @@ import { confirmDialog, promptDialog } from "../components/dialog.js";
 import { GOALS, STATUS_COPY } from "../domain/constants.js";
 import { uid } from "../domain/ids.js";
 import { mountFindEmail } from "./findEmail.js";
-import { LEAD_FIELDS, MAX_IMPORT_BYTES, templateCsv, leadsToCsv, planImport, checkLead, leadProgress, filterLeads, canonicalProfile } from "../domain/leads.js";
+import { LEAD_FIELDS, MAX_CUSTOM, MAX_IMPORT_BYTES, cleanCustom, customNames, templateCsv, leadsToCsv, planImport, checkLead, leadProgress, filterLeads, canonicalProfile } from "../domain/leads.js";
 
 const PAGE = 100;
 /** Adds a hook class (for tests and styles) without losing the button's own classes. */
@@ -23,7 +23,7 @@ function download(name, text) {
 
 export function mountLeads(root, { store, navigate, platform }) {
   const S = store.state;
-  let query = "", listFilter = "all", progressFilter = "all", shown = PAGE, plan = null, planName = "", selected = new Set();
+  let mapperOpen = null, mapping = null, query = "", listFilter = "all", progressFilter = "all", shown = PAGE, plan = null, planName = "", selected = new Set();
 
   const fileIn = h("input", { type: "file", id: "leadsFile", accept: ".csv,text/csv,text/plain,.txt", hidden: true, "aria-label": "Choose a CSV file of leads" });
   const search = h("input", { type: "search", id: "leadSearch", "aria-label": "Search leads", placeholder: "Search name, company, email, reason, notes" });
@@ -53,18 +53,21 @@ export function mountLeads(root, { store, navigate, platform }) {
     if (!file) return;
     if (file.size > MAX_IMPORT_BYTES) return showProblem(file.name, `That file is larger than ${MAX_IMPORT_BYTES / 1024 / 1024} MB. Split it into smaller files.`);
     let text; try { text = await file.text(); } catch { return showProblem(file.name, "Couldn't read that file."); }
-    planName = file.name; runPlan(text, { duplicates: "skip", list: file.name.replace(/\.[^.]+$/, "") }, true);
+    planName = file.name; mapping = null; mapperOpen = null; runPlan(text, { duplicates: "skip", list: file.name.replace(/\.[^.]+$/, "") }, true);
   });
   let sourceText = "";
   function showProblem(name, message) { clear(importHost).append(h("h2", {}, `Can't import ${name}`), notice("bad", h("p", {}, message)), h("div", { class: "actions" }, button("Download the template", { onclick: () => download("cold-leads-template.csv", templateCsv()) }), button("Close", { kind: "ghost", onclick: () => { importHost.hidden = true; } }))); importHost.hidden = false; announce(message); }
   function runPlan(text, opts, fresh) {
-    sourceText = text; plan = planImport(text, S.leads, opts);
+    sourceText = text; plan = planImport(text, S.leads, { ...opts, mapping });
+    if (!plan.ok && plan.mapping) { mapping = plan.mapping; if (plan.headers) return showMapper(plan.message); }
     if (!plan.ok) return showProblem(planName, plan.message);
+    if (!mapping) mapping = plan.mapping;
     const dupSel = h("select", {},
       h("option", { value: "skip" }, "Leave people already in my leads as they are"), h("option", { value: "update" }, "Fill in their blank fields from this file"));
     dupSel.value = opts.duplicates;
     const listIn = h("input", { type: "text", value: opts.list, placeholder: "e.g. Q4 founders" });
     const redo = () => runPlan(sourceText, { duplicates: dupSel.value, list: listIn.value }, false);
+    const opts2 = () => ({ duplicates: dupSel.value, list: listIn.value });
     dupSel.addEventListener("change", redo); listIn.addEventListener("change", redo);
     const n = plan.adds.length + plan.updates.length;
     const line = (label, items, fmt) => items.length ? h("details", { class: "panel" }, h("summary", {}, `${label} (${items.length})`), h("ul", { class: "plain" }, items.slice(0, 15).map(fmt), items.length > 15 ? h("li", { class: "hint" }, `…and ${items.length - 15} more`) : null)) : null;
@@ -75,6 +78,7 @@ export function mountLeads(root, { store, navigate, platform }) {
       field({ id: "dupPolicy", label: "If someone is already in your leads", required: null, control: id => { dupSel.id = id; return dupSel; } }),
       field({ id: "importList", label: "List for rows that don't have one", required: null, control: id => { listIn.id = id; return listIn; } }),
       plan.ignored.length ? h("p", { class: "hint" }, `Columns Cold doesn't use were ignored: ${plan.ignored.join(", ")}.`) : null,
+      mapperPanel(opts2),
       line("Rows that can't be imported", plan.invalid, x => h("li", {}, `Line ${x.line}: ${x.name}. ${x.reasons.join(" ")}`)),
       line("Imported, but check these", plan.warnings, x => h("li", {}, `Line ${x.line}: ${x.name}. ${x.messages.join(" ")}`)),
       line("Skipped: already there", plan.duplicates, x => h("li", {}, `Line ${x.line}: ${x.name}. ${x.reason}`)),
@@ -84,6 +88,43 @@ export function mountLeads(root, { store, navigate, platform }) {
         button("Cancel", { kind: "ghost", id: "cancelImport", onclick: () => { importHost.hidden = true; plan = null; } }))]);
     importHost.hidden = false;
     if (fresh) { announce(`${plan.adds.length} new leads ready to review`); importHost.scrollIntoView?.({ block: "nearest" }); }
+  }
+
+  /* ---------- match the file's columns to Cold's fields (or to extra fields of your own) ---------- */
+  const FIELD_CHOICES = [...LEAD_FIELDS.map(f => [f.key, f.label]), ["first", "First name (joined to last)"], ["last", "Last name (joined to first)"]];
+  /** One row per column in the file: what it is called, an example from the file, and what it should become. Changing a row re-plans the import. */
+  function mapperPanel(getOpts, { open = false } = {}) {
+    const names = customNames(S.leads);
+    const rows = plan.headers.map((head, i) => {
+      const target = mapping[i] || "";
+      const sel = h("select", { "aria-label": `What “${head || `column ${i + 1}`}” should become` },
+        h("option", { value: "" }, "Don't import"),
+        h("optgroup", { label: "Cold's fields" }, FIELD_CHOICES.map(([v, l]) => h("option", { value: v }, l))),
+        h("optgroup", { label: "Extra fields" }, names.map(n => h("option", { value: `x:${n}` }, n)), h("option", { value: "x:+" }, "A new extra field…")));
+      const known = target === "" || FIELD_CHOICES.some(([v]) => v === target) || names.includes(target.slice(2));
+      sel.value = known ? target : "x:+";
+      const nameIn = h("input", { type: "text", maxlength: 60, placeholder: "Name of the extra field", "aria-label": `Name for the extra field made from “${head}”`, value: known ? "" : target.slice(2) || head, hidden: sel.value !== "x:+" });
+      const apply = () => { mapping = mapping.slice(); mapping[i] = sel.value === "x:+" ? (nameIn.value.trim() ? `x:${nameIn.value.trim()}` : "") : sel.value; runPlan(sourceText, getOpts(), false); };
+      sel.addEventListener("change", () => { if (sel.value === "x:+" && !nameIn.value.trim()) nameIn.value = head; nameIn.hidden = sel.value !== "x:+"; apply(); });
+      nameIn.addEventListener("change", apply);
+      return h("tr", {}, h("td", {}, h("strong", {}, head || `(column ${i + 1})`)), h("td", { class: "sub" }, plan.samples[i] || "empty"), h("td", {}, sel, nameIn));
+    });
+    const box = h("details", { class: "panel", id: "mapper", open: open || (mapperOpen === null ? plan.ignored.length > 0 || !!plan.repeated.length : mapperOpen) },
+      h("summary", {}, "Match your columns to Cold's fields"),
+      h("p", { class: "hint" }, `Choose what each column in your file should become. Columns you don't need can stay as “Don't import”. Use “A new extra field…” to keep something Cold has no field for (up to ${MAX_CUSTOM} per lead); extra fields are kept with the lead, exported and searchable.`),
+      plan.repeated.length ? notice("warn", h("p", {}, `More than one column was matched to ${plan.repeated.join(", ")}. Only the first is used.`)) : null,
+      h("div", { class: "table-wrap" }, h("table", { class: "leads", id: "mapperTable" }, h("caption", { class: "sr-only" }, "Columns in your file"),
+        h("thead", {}, h("tr", {}, h("th", { scope: "col" }, "Column in your file"), h("th", { scope: "col" }, "Example"), h("th", { scope: "col" }, "Becomes"))), h("tbody", {}, rows))));
+    box.addEventListener("toggle", () => { mapperOpen = box.open; });   // stays as the person left it while they change columns
+    return box;
+  }
+  /** The file has no column Cold can use as a name: show the mapper alone so one can be chosen. */
+  function showMapper(message) {
+    const opts = { duplicates: "skip", list: "" };
+    plan.samples = plan.samples || plan.headers.map(() => "");
+    append(clear(importHost), [h("h2", { id: "import-title" }, `Review ${planName}`), notice("warn", h("p", {}, message)), mapperPanel(() => opts, { open: true }),
+      h("div", { class: "actions" }, button("Cancel", { kind: "ghost", id: "cancelImport", onclick: () => { importHost.hidden = true; plan = null; } }))]);
+    importHost.hidden = false;
   }
   async function commit(n) {
     const btn = importHost.querySelector("#confirmImport"); btn.disabled = true; btn.textContent = "Saving…";
@@ -108,7 +149,21 @@ export function mountLeads(root, { store, navigate, platform }) {
       f[spec.key].input.value = base[spec.key] || "";
     }
     const msg = h("p", { class: "hint", role: "status" });
-    const read = () => ({ ...base, ...Object.fromEntries(LEAD_FIELDS.map(s => [s.key, f[s.key].input.value.trim()])) });
+    // extra fields: the ones this lead has, plus any other lead has (blank, ready to fill), plus a way to add a new one
+    const extras = []; const extraHost = h("div", { class: "form", id: "extraFields" });
+    const addExtra = (name, value) => {
+      const nameIn = h("input", { type: "text", maxlength: 60, "aria-label": "Extra field name", placeholder: "Field name", value: name, class: "extra-name" });
+      const valIn = h("input", { type: "text", maxlength: 2000, "aria-label": name ? `${name}` : "Extra field value", placeholder: "Value", value, class: "extra-value" });
+      nameIn.addEventListener("input", () => valIn.setAttribute("aria-label", nameIn.value || "Extra field value"));
+      const row = h("div", { class: "grid2 extra-row" }, nameIn, valIn);
+      const rec = { nameIn, valIn, row };
+      row.append(button("Remove", { kind: "ghost", "aria-label": `Remove ${name || "this extra field"}`, onclick: () => { extras.splice(extras.indexOf(rec), 1); row.remove(); } }));
+      extras.push(rec); extraHost.append(row); return rec;
+    };
+    const have = cleanCustom(base.custom);
+    for (const n of new Set([...Object.keys(have), ...customNames(S.leads)])) addExtra(n, have[n] || "");
+    const readCustom = () => cleanCustom(Object.fromEntries(extras.map(r => [r.nameIn.value, r.valIn.value])));
+    const read = () => { const r = { ...base, ...Object.fromEntries(LEAD_FIELDS.map(s => [s.key, f[s.key].input.value.trim()])) }; const c = readCustom(); if (Object.keys(c).length || base.custom) r.custom = c; return r; };
     const save = async () => {
       const rec = read(), { errors, warnings } = checkLead(rec);
       f.name.setError(errors.join(" ")); if (errors.length) { f.name.input.focus(); return; }
@@ -118,6 +173,8 @@ export function mountLeads(root, { store, navigate, platform }) {
     };
     clear(editorHost).append(h("h2", { id: "editor-title" }, isNew ? "Add a lead" : `Edit ${base.name || "lead"}`),
       h("div", { class: "form" }, h("div", { class: "grid2" }, f.name, f.company), h("div", { class: "grid2" }, f.role, f.email), f.profileUrl, f.why, h("div", { class: "grid2" }, f.product, f.goal), h("div", { class: "grid2" }, f.list, f.notes),
+        h("h3", {}, "Extra fields"), h("p", { class: "hint" }, `Anything else you want to keep about them that Cold has no field for (up to ${MAX_CUSTOM}). Never used in an email unless you copy it in.`), extraHost,
+        button("Add an extra field", { kind: "ghost", id: "addExtra", onclick: () => { if (extras.length >= MAX_CUSTOM) return toast(`Up to ${MAX_CUSTOM} extra fields.`); addExtra("", "").nameIn.focus(); } }),
         h("div", { class: "actions" }, button("Save lead", { kind: "primary", id: "saveLead", onclick: save }), button("Cancel", { kind: "ghost", onclick: () => { editorHost.hidden = true; } }),
           isNew ? null : button("Delete lead", { kind: "ghost danger", id: "deleteLead", onclick: () => del([base.id]).then(done => { if (done) editorHost.hidden = true; }) })), msg));
     // Only for a saved lead with no address: a found email is offered as a candidate, never saved until accepted. A lead that has one is never replaced from here.
@@ -177,5 +234,5 @@ export function mountLeads(root, { store, navigate, platform }) {
   listSel.addEventListener("change", () => { listFilter = listSel.value; shown = PAGE; render(); });
   progSel.addEventListener("change", () => { progressFilter = progSel.value; shown = PAGE; render(); });
   store.subscribe(t => { if (t === "leads" || t === "emails" || t === "ready" || t === "products") render(); });
-  return { init: render, edit, importText: (text, name = "pasted.csv") => { planName = name; runPlan(text, { duplicates: "skip", list: "" }, true); } };
+  return { init: render, edit, importText: (text, name = "pasted.csv") => { planName = name; mapping = null; mapperOpen = null; runPlan(text, { duplicates: "skip", list: "" }, true); } };
 }

@@ -530,6 +530,30 @@ test("leads: download the template, review a CSV before anything is saved, impor
   assert.deepEqual(t.errors, []); await t.close();
 });
 
+test("leads: map any file layout to Cold's fields, keep extra columns as extra fields, edit them on a lead", { skip: SKIP }, async () => {
+  const t = await open({ seed: SEED }); const { page } = t;
+  await go(page, "leads"); await page.waitForSelector("#importBtn");
+  await page.setInputFiles("#leadsFile", csvFile("Who,Employer,Mail,Lead score\r\nAna Ruiz,Acme,ana@acme.io,87\r\nBo Lee,Beta,bo@beta.io,\r\n", "other.csv")); await page.waitForSelector("#mapper");
+  assert.match(await page.textContent("#importPanel"), /Choose which column holds the name/);
+  const sels = page.locator("#mapperTable select");
+  await sels.nth(0).selectOption("name"); await page.waitForSelector("#importSummary");
+  assert.match(await page.textContent("#importSummary"), /2 rows read\. 2 new/);
+  await page.locator("#mapperTable select").nth(1).selectOption("company"); await page.locator("#mapperTable select").nth(2).selectOption("email");
+  await page.locator("#mapperTable select").nth(3).selectOption("x:+");
+  const nameBox = page.locator("#mapperTable input[aria-label*='Lead score']"); await nameBox.fill("Lead score"); await nameBox.dispatchEvent("change");
+  await page.waitForFunction(() => document.querySelector("#mapperTable select:nth-of-type(1)") && !/ignored/.test(document.getElementById("importPanel").textContent));
+  await page.click("#confirmImport"); await page.waitForSelector("#leadsTable");
+  const leads = await ls(page, "cold.leads");
+  assert.deepEqual(leads.map(l => [l.name, l.company, l.email, l.custom]), [["Ana Ruiz", "Acme", "ana@acme.io", { "Lead score": "87" }], ["Bo Lee", "Beta", "bo@beta.io", undefined]]);
+  // on a lead: the extra field is there; add another and remove it again
+  await page.click("tr:has-text('Ana Ruiz') .leadEdit"); await page.waitForSelector("#extraFields");
+  assert.equal(await page.inputValue("#extraFields .extra-value"), "87");
+  await page.click("#addExtra"); await page.locator("#extraFields .extra-name").last().fill("Region"); await page.locator("#extraFields .extra-value").last().fill("EMEA");
+  await page.click("#saveLead"); await page.waitForFunction(() => document.getElementById("leadEditor").hidden);
+  assert.deepEqual((await ls(page, "cold.leads"))[0].custom, { "Lead score": "87", Region: "EMEA" });
+  assert.deepEqual(t.errors, []); await t.close();
+});
+
 test("leads: manage them: search, filter, edit, add, bulk delete, export; survives a reload", { skip: SKIP }, async () => {
   const seed = { "cold.products": [P1], "cold.leads": [
     { id: "l1", name: "Ada Park", company: "PipeCo", role: "COO", email: "ada@pipeco.io", why: "Posted about onboarding", list: "Q4", product: "Acme Flow", goal: "customer", createdAt: 1 },

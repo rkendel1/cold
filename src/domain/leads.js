@@ -22,6 +22,20 @@ export const LEAD_FIELDS = [
   { key: "list", header: "list", label: "List", aliases: ["group", "campaign", "segment", "tag", "tags", "batch"], hint: "A name to group leads by (for example a campaign or event). Used to filter.", example: ["Q4 founders", "Q4 founders", "Plumbing community"] },
   { key: "notes", header: "notes", label: "Notes", aliases: ["note", "comments", "comment", "remarks"], hint: "Anything for yourself. Never used in an email.", example: ["Met at the infra meetup", "", "Warm intro from Alex"] },
 ];
+export const MAX_CUSTOM = 20, CUSTOM_NAME_MAX = 60, CUSTOM_VALUE_MAX = 2000;   // extra fields people add beyond the ones Cold knows
+/** Extra fields as stored on a lead: { "Field name": "value" }. Anything else is dropped; blanks are kept out. */
+export function cleanCustom(raw) {
+  const out = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [k, v] of Object.entries(raw)) {
+    const name = String(k).replace(/\s+/g, " ").trim().slice(0, CUSTOM_NAME_MAX), val = typeof v === "string" ? v : v == null || typeof v === "object" ? "" : String(v);
+    if (!name || name === "__proto__" || !val.trim() || Object.keys(out).length >= MAX_CUSTOM) continue;
+    out[name] = val.trim().slice(0, CUSTOM_VALUE_MAX);
+  }
+  return out;
+}
+/** The names of every extra field used by these leads, in the order first seen. */
+export const customNames = leads => [...new Set(leads.flatMap(l => Object.keys(cleanCustom(l.custom))))];
 const LIMITS = { name: 200, company: 200, role: 200, email: 254, profileUrl: 500, why: 2000, product: 200, goal: 40, list: 100, notes: 4000 };
 
 // ---- the template -----------------------------------------------------------------------------------------------------------
@@ -40,7 +54,8 @@ export function templateCsv() {
 }
 /** Your leads in the same columns, ready to open in a spreadsheet or import again. */
 export function leadsToCsv(leads) {
-  return `${[TEMPLATE_HEADERS, ...leads.map(l => LEAD_FIELDS.map(f => l[f.key]))].map(csvLine).join("\r\n")}\r\n`;
+  const extra = customNames(leads);
+  return `${[[...TEMPLATE_HEADERS, ...extra], ...leads.map(l => [...LEAD_FIELDS.map(f => l[f.key]), ...extra.map(n => cleanCustom(l.custom)[n] || "")])].map(csvLine).join("\r\n")}\r\n`;
 }
 
 // ---- reading a CSV ----------------------------------------------------------------------------------------------------------
@@ -80,6 +95,37 @@ export function parseCsv(input) {
 const norm = s => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const FIRST = ["firstname", "first", "givenname", "forename"], LAST = ["lastname", "last", "surname", "familyname"];
 
+/**
+ * What each column of the file is, as a list of targets (one per column): "" = don't import, a field key (name, company, email…), "first" / "last"
+ * (joined into the name), or "x:Field name" = keep it as an extra field. Starts from what Cold recognises; a heading that matches an extra field
+ * you already have goes to that field. Columns Cold doesn't recognise are left out until the person chooses.
+ */
+export function suggestMapping(headerCells, knownCustom = []) {
+  const map = mapHeaders(headerCells), targets = headerCells.map(() => "");
+  if (map.ok) {
+    for (const [k, i] of Object.entries(map.columns)) targets[i] = k;
+    if (map.first !== undefined) targets[map.first] = "first";
+    if (map.last !== undefined) targets[map.last] = "last";
+  }
+  headerCells.forEach((h, i) => { if (!targets[i] && h.trim()) { const c = knownCustom.find(n => norm(n) === norm(h)); if (c) targets[i] = `x:${c}`; } });
+  return targets;
+}
+/** The column map planImport reads, from a list of targets. A field chosen twice keeps its first column. */
+export function mapFromTargets(targets) {
+  const columns = {}, custom = [], seen = new Set(), repeated = [];
+  let first, last;
+  targets.forEach((t, i) => {
+    if (!t) return;
+    if (t === "first") { if (first === undefined) first = i; return; }
+    if (t === "last") { if (last === undefined) last = i; return; }
+    if (t.startsWith("x:")) { const name = Object.keys(cleanCustom({ [t.slice(2)]: "x" }))[0]; if (!name) return; if (seen.has(`x:${name}`)) repeated.push(name); else { seen.add(`x:${name}`); custom.push({ name, index: i }); } return; }
+    if (!LEAD_FIELDS.some(f => f.key === t)) return;
+    if (columns[t] !== undefined) repeated.push(t); else columns[t] = i;
+  });
+  if (columns.name !== undefined) { first = undefined; last = undefined; }
+  return { columns, custom, repeated, ...(columns.name === undefined ? { first, last } : {}) };
+}
+
 /** Which column holds which field. @returns {{ ok: true, columns: Record<string, number>, first?: number, last?: number, ignored: string[] } | { ok: false, message: string }} */
 export function mapHeaders(headerCells) {
   const keys = headerCells.map(norm), columns = {}, used = new Set();
@@ -111,7 +157,7 @@ export function normalizeLead(raw, index = 0) {
   if (!id) return null;
   return { ...raw, id, name: str(raw.name), company: str(raw.company), role: str(raw.role), email: str(raw.email), profileUrl: str(raw.profileUrl), why: str(raw.why),
     product: str(raw.product), goal: GOALS[raw.goal] ? raw.goal : "", list: str(raw.list), notes: str(raw.notes), source: str(raw.source) || "manual",
-    createdAt: Number.isFinite(raw.createdAt) ? raw.createdAt : index };
+    createdAt: Number.isFinite(raw.createdAt) ? raw.createdAt : index, ...(raw.custom !== undefined ? { custom: cleanCustom(raw.custom) } : {}) };
 }
 
 /** What identifies "the same person": their email, else their profile link, else name + company. */
@@ -140,6 +186,7 @@ export function rowToLead(cells, map) {
   for (const f of LEAD_FIELDS) lead[f.key] = cell(map.columns[f.key]);
   if (map.columns.name === undefined) lead.name = [cell(map.first), cell(map.last)].filter(Boolean).join(" ");
   const notes = [];
+  if (map.custom && map.custom.length) { const c = cleanCustom(Object.fromEntries(map.custom.map(x => [x.name, cell(x.index)]))); if (Object.keys(c).length) lead.custom = c; }
   const g = lead.goal;
   if (g) { const k = goalKey(g); if (k) lead.goal = k; else { notes.push(`Goal “${g}” isn't one of Cold's goals (advice, investment, introduction, customer, partnership, other), so it was left blank.`); lead.goal = ""; } }
   const url = lead.profileUrl && canonicalProfile(lead.profileUrl); if (url) lead.profileUrl = url;
@@ -158,19 +205,23 @@ export function rowToLead(cells, map) {
  * @returns {{ ok: false, message: string } | { ok: true, total: number, adds: object[], updates: { existing: object, next: object, changed: string[] }[], unchanged: number,
  *   duplicates: object[], examples: object[], invalid: { line: number, name: string, reasons: string[] }[], warnings: { line: number, name: string, messages: string[] }[], ignored: string[], delimiter: string }}
  */
-export function planImport(text, existing = [], { duplicates = "skip", list = "", now = Date.now() } = {}) {
+export function planImport(text, existing = [], { duplicates = "skip", list = "", mapping = null, now = Date.now() } = {}) {
   if (String(text || "").length > MAX_IMPORT_BYTES) return { ok: false, message: `That file is larger than ${MAX_IMPORT_BYTES / 1024 / 1024} MB. Split it into smaller files.` };
   const parsed = parseCsv(text);
   if (!parsed.ok) return parsed;
   if (parsed.rows.length < 2) return { ok: false, message: parsed.rows.length ? "The file has column headings but no rows of leads." : "The file is empty." };
-  const map = mapHeaders(parsed.rows[0].cells);
-  if (!map.ok) return map;
+  const headers = parsed.rows[0].cells.map(c => c.trim());
+  const targets = mapping && mapping.length === headers.length ? mapping : suggestMapping(headers, customNames(existing));
+  const map = mapFromTargets(targets);
+  if (map.columns.name === undefined && map.first === undefined && map.last === undefined) return { ok: false, headers, mapping: targets, ignored: [], repeated: map.repeated, samples: headers.map((_, i) => { const r = parsed.rows.slice(1).find(b => (b.cells[i] || "").trim()); return r ? r.cells[i].trim().slice(0, 60) : ""; }), message: "Couldn't find a name column. Choose which column holds the name (or first and last name), or download the template to see the columns Cold uses." };
+  map.ignored = headers.filter((h, i) => h && !targets[i]);
   const body = parsed.rows.slice(1);
   if (body.length > MAX_IMPORT_ROWS) return { ok: false, message: `That file has ${body.length} rows. Import up to ${MAX_IMPORT_ROWS} at a time; split it and import the parts.` };
 
   const byKey = new Map(existing.map(l => [leadKey(l), l]));
   const seen = new Map();   // people already planned from this file
-  const out = { ok: true, total: body.length, adds: [], updates: [], unchanged: 0, duplicates: [], examples: [], invalid: [], warnings: [], ignored: map.ignored, delimiter: parsed.delimiter };
+  const out = { ok: true, total: body.length, adds: [], updates: [], unchanged: 0, duplicates: [], examples: [], invalid: [], warnings: [], ignored: map.ignored, delimiter: parsed.delimiter, headers, mapping: targets, repeated: map.repeated,
+    samples: headers.map((_, i) => { const r = body.find(b => (b.cells[i] || "").trim()); return r ? r.cells[i].trim().slice(0, 60) : ""; }) };
   for (const { line, cells } of body) {
     const { lead, errors, warnings } = rowToLead(cells, map);
     const name = lead.name || "(no name)";
@@ -186,8 +237,11 @@ export function planImport(text, existing = [], { duplicates = "skip", list = ""
     if (!have) { out.adds.push({ ...lead, id: uid("l"), source: "csv", createdAt: now + out.adds.length, updatedAt: now }); warn(); continue; }
     if (duplicates !== "update") { out.duplicates.push({ line, name, reason: "Already in your leads." }); continue; }
     const changed = LEAD_FIELDS.map(f => f.key).filter(k => lead[k] && lead[k] !== have[k]);
-    if (!changed.length) { out.unchanged++; continue; }
-    out.updates.push({ existing: have, next: { ...have, ...Object.fromEntries(changed.map(k => [k, lead[k]])), updatedAt: now }, changed }); warn();
+    const haveCustom = cleanCustom(have.custom), changedCustom = Object.keys(lead.custom || {}).filter(k => lead.custom[k] !== haveCustom[k]);
+    if (!changed.length && !changedCustom.length) { out.unchanged++; continue; }
+    const next = { ...have, ...Object.fromEntries(changed.map(k => [k, lead[k]])), updatedAt: now };
+    if (changedCustom.length) next.custom = cleanCustom({ ...haveCustom, ...Object.fromEntries(changedCustom.map(k => [k, lead.custom[k]])) });
+    out.updates.push({ existing: have, next, changed: [...changed, ...changedCustom] }); warn();
   }
   return out;
 }
@@ -207,5 +261,5 @@ export function leadProgress(lead, emails) {
 export function filterLeads(leads, { query = "", list = "all", progress = "all", emails = [] } = {}) {
   const q = query.trim().toLowerCase();
   return leads.filter(l => (list === "all" || (list === "" ? !l.list : l.list === list)) && (progress === "all" || leadProgress(l, emails) === progress)
-    && (!q || [l.name, l.company, l.role, l.email, l.why, l.list, l.notes, l.profileUrl].join(" ").toLowerCase().includes(q)));
+    && (!q || [l.name, l.company, l.role, l.email, l.why, l.list, l.notes, l.profileUrl, ...Object.values(cleanCustom(l.custom))].join(" ").toLowerCase().includes(q)));
 }
