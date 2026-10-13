@@ -22,7 +22,7 @@ export function validateDataIntegrity(store) {
   
   // Subscribe to error events and ensure consistent handling
   store.subscribe((type) => {
-    if (type === "error") {
+    if (type === "error" && store.state && store.state.error) {   // emitted with null to clear an error: not a failure
       console.error("Store error detected - ensuring graceful degradation");
       // Ensure we always have a clear error message visible
       const notices = document.getElementById("notices");

@@ -18,8 +18,8 @@ const SUBJECT = F.subject[0].toUpperCase() + F.subject.slice(1);   // generated 
 
 /** What each surface may and may not offer. Anything not listed here must be identical everywhere. */
 const EXPECT = {
-  web:       { settings: ['Model', 'Cold desktop app', 'Email app', 'Email lookup', 'Email sign-off', 'Your data'], keyField: false, pairing: false, hubForm: true,  readPage: false, insertTweet: false },
-  desktop:   { settings: ['Model', 'Browser extension & web apps', 'Email app', 'Email lookup', 'Email sign-off', 'Your data'], keyField: true, pairing: true, hubForm: false, readPage: false, insertTweet: false },
+  web:       { settings: ['Model', 'Cold desktop app', 'Email app', 'Email lookup', 'Email sign-off', 'Follow-ups', 'Google Sheets', 'Your data'], keyField: false, pairing: false, hubForm: true,  readPage: false, insertTweet: false },
+  desktop:   { settings: ['Model', 'Browser extension & web apps', 'Email app', 'Email lookup', 'Email sign-off', 'Follow-ups', 'Google Sheets', 'Your data'], keyField: true, pairing: true, hubForm: false, readPage: false, insertTweet: false },
   extension: { settings: ['Writing', 'Opportunity discovery', 'Integrations', 'Privacy and local models', 'About and diagnostics'], keyField: true, pairing: false, hubForm: true, readPage: true, insertTweet: true },
 };
 

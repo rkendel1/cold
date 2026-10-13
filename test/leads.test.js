@@ -133,6 +133,7 @@ test('a column mapping turns any file layout into Cold\'s fields, and extra colu
   const first = L.planImport(csv, []);
   assert.equal(first.ok, false); assert.deepEqual(first.headers, ['Who', 'Employer', 'Mail', 'Lead score', 'Region']);
   assert.match(first.message, /Choose which column holds the name/);
+  assert.deepEqual(first.mapping, ['', 'company', 'email', '', ''], 'recognised columns (Employer, Mail) are matched even when no name column was found');
   assert.deepEqual(first.samples.slice(0, 2), ['Ana Ruiz', 'Acme']);
   const p = L.planImport(csv, [], { mapping: ['name', 'company', 'email', 'x:Lead score', 'x:Region'] });
   assert.equal(p.ok, true); assert.equal(p.adds.length, 2);

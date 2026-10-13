@@ -101,12 +101,10 @@ const FIRST = ["firstname", "first", "givenname", "forename"], LAST = ["lastname
  * you already have goes to that field. Columns Cold doesn't recognise are left out until the person chooses.
  */
 export function suggestMapping(headerCells, knownCustom = []) {
-  const map = mapHeaders(headerCells), targets = headerCells.map(() => "");
-  if (map.ok) {
-    for (const [k, i] of Object.entries(map.columns)) targets[i] = k;
-    if (map.first !== undefined) targets[map.first] = "first";
-    if (map.last !== undefined) targets[map.last] = "last";
-  }
+  const map = detectColumns(headerCells), targets = headerCells.map(() => "");
+  for (const [k, i] of Object.entries(map.columns)) targets[i] = k;   // recognised columns are matched even when no name column was found, so the person only has to choose the name
+  if (map.first !== undefined) targets[map.first] = "first";
+  if (map.last !== undefined) targets[map.last] = "last";
   headerCells.forEach((h, i) => { if (!targets[i] && h.trim()) { const c = knownCustom.find(n => norm(n) === norm(h)); if (c) targets[i] = `x:${c}`; } });
   return targets;
 }
@@ -128,6 +126,12 @@ export function mapFromTargets(targets) {
 
 /** Which column holds which field. @returns {{ ok: true, columns: Record<string, number>, first?: number, last?: number, ignored: string[] } | { ok: false, message: string }} */
 export function mapHeaders(headerCells) {
+  const d = detectColumns(headerCells);
+  if (d.columns.name === undefined && d.first === undefined && d.last === undefined) return { ok: false, message: "Couldn't find a name column. The first row must be column headings and include “name”. Download the template to see the columns Cold uses." };
+  return { ok: true, columns: d.columns, ...(d.columns.name === undefined ? { first: d.first, last: d.last } : {}), ignored: d.ignored };
+}
+/** Which recognised column is which, whether or not a name column exists. */
+function detectColumns(headerCells) {
   const keys = headerCells.map(norm), columns = {}, used = new Set();
   for (const f of LEAD_FIELDS) {
     const wanted = [norm(f.header), norm(f.label), f.key.toLowerCase(), ...f.aliases];
@@ -135,9 +139,8 @@ export function mapHeaders(headerCells) {
     if (i >= 0) { columns[f.key] = i; used.add(i); }
   }
   const first = keys.findIndex((k, i) => !used.has(i) && FIRST.includes(k)), last = keys.findIndex((k, i) => !used.has(i) && LAST.includes(k));
-  if (columns.name === undefined && first < 0 && last < 0) return { ok: false, message: "Couldn't find a name column. The first row must be column headings and include “name”. Download the template to see the columns Cold uses." };
   if (columns.name === undefined) { if (first >= 0) used.add(first); if (last >= 0) used.add(last); }
-  return { ok: true, columns, ...(columns.name === undefined ? { first: first >= 0 ? first : undefined, last: last >= 0 ? last : undefined } : {}), ignored: headerCells.filter((h, i) => h.trim() && !used.has(i)).map(h => h.trim()) };
+  return { columns, ...(columns.name === undefined ? { first: first >= 0 ? first : undefined, last: last >= 0 ? last : undefined } : {}), ignored: headerCells.filter((h, i) => h.trim() && !used.has(i)).map(h => h.trim()) };
 }
 
 // ---- one lead ---------------------------------------------------------------------------------------------------------------
