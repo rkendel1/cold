@@ -11,18 +11,20 @@ function startSheetsMock({ token = "good-token" } = {}) {
     if (!m) return null;
     return { tab: (m[1] || m[2]).replace(/''/g, "'"), c1: m[3] ? colNum(m[3]) : 1, r1: m[4] ? Number(m[4]) : 1, c2: m[5] ? colNum(m[5]) : null, r2: m[6] ? Number(m[6]) : null };
   };
-  const send = (res, code, body) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(body)); };
+  const CORS = { "access-control-allow-origin": "*", "access-control-allow-headers": "authorization, content-type", "access-control-allow-methods": "GET, POST, PUT, OPTIONS" };   // the real API allows browser calls with a bearer token
+  const send = (res, code, body) => { res.writeHead(code, { "content-type": "application/json", ...CORS }); res.end(JSON.stringify(body)); };
   const err = (res, code, message) => send(res, code, { error: { code, message } });
 
   mock.server = http.createServer((req, res) => {
     let raw = ""; req.on("data", c => raw += c); req.on("end", () => {
+      if (req.method === "OPTIONS") { res.writeHead(204, CORS); return res.end(); }
       const url = new URL(req.url, "http://x"); const path = decodeURIComponent(url.pathname).replace(/^\/v4\/spreadsheets/, "");
       mock.calls.push(`${req.method} ${path}${url.search ? "?…" : ""}`);
       if (req.headers.authorization !== `Bearer ${mock.token}`) return err(res, 401, "Invalid Credentials");
       if (mock.failNext > 0) { mock.failNext--; return err(res, mock.status || 500, "mock failure"); }
       const body = raw ? JSON.parse(raw) : {};
       if (req.method === "POST" && path === "") {
-        const id = `sheet${++mock.n}`; const b = { title: body.properties.title, sheets: [] };
+        const id = `1Mock${String(++mock.n).padStart(3, "0")}_${"x".repeat(32)}`; const b = { title: body.properties.title, sheets: [] };
         (body.sheets || []).forEach((s, i) => { const row = ((s.data || [])[0].rowData || [])[0]; b.sheets.push({ id: i + 1, title: s.properties.title, rows: [row ? row.values.map(v => v.userEnteredValue.stringValue) : []] }); });
         books.set(id, b);
         return send(res, 200, { spreadsheetId: id, spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${id}/edit`, sheets: b.sheets.map(s => ({ properties: { title: s.title, sheetId: s.id } })) });

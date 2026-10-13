@@ -13,6 +13,11 @@ import { chromeHubStore, verifyHub } from "../../src/services/hub.js";
 import { loadModelConfig, saveModelConfig, resolveOwn, directSample, syncOriginRules } from "./model.js";
 import { createSettingsApi } from "./settingsApi.js";
 import { insertIntoBox } from "./page.js";
+import { extensionAuth } from "../../src/services/googleAuth.js";
+import { createSheetsConnector, chromeLinkStore } from "../../src/services/sheetsConnector.js";
+
+// Set when the extension is built (COLD_GOOGLE_CLIENT_ID); empty means this build has no Google Sheets option.
+const GOOGLE_CLIENT_ID = typeof __COLD_GOOGLE_CLIENT_ID__ === "undefined" ? "" : __COLD_GOOGLE_CLIENT_ID__;
 
 export async function createExtensionPlatform() {
   let config = await loadModelConfig();
@@ -38,6 +43,7 @@ export async function createExtensionPlatform() {
   });
   const loadPins = async () => (await fetch(chrome.runtime.getURL("dist/model-pins.json"))).json();   // shipped with the build; see modelPins.js
   const localModel = createLocalModel({ loadRuntime, loadPins, libUrl: p => chrome.runtime.getURL(`dist/${p}`) });   // build output lives in extension/dist
+  const sheets = GOOGLE_CLIENT_ID ? createSheetsConnector({ auth: extensionAuth({ clientId: GOOGLE_CLIENT_ID }), linkStore: chromeLinkStore() }) : null;
   const backend = createBackend({
     link, getConfig: () => config,
     own: { ready: () => { const o = ownCfg(); return !!(o && o.ready); }, sample: ownSample, label: () => { const o = ownCfg(); return `${o.label} · ${o.model}`; },
@@ -84,7 +90,13 @@ export async function createExtensionPlatform() {
         catch { return { ok: false, message: "Couldn't reach the page. Copy the text instead." }; }
       },
     },
-    async detect() { return { db: active.db, user: null, warning: "", ...snapshot() }; },
+    /** The Google Sheets connector, or null when this build has no Google client id. */
+    get sheets() { return sheets; },
+    async detect() {
+      let db = active.db, warning = "";
+      if (sheets) { try { await sheets.init(); if (sheets.link) db = await sheets.open(db); } catch { warning = "Couldn't open your Google Sheet. Open Settings to reconnect."; } }
+      return { db, user: null, warning, ...snapshot() };
+    },
   };
   link.subscribe(notify);
   syncOriginRules(config).catch(() => {});

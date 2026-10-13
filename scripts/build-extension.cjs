@@ -12,7 +12,8 @@ const { pathToFileURL } = require("node:url");
 const esbuild = require("esbuild");
 const root = path.join(__dirname, "..");
 const dist = path.join(root, "extension/dist");
-const common = { bundle: true, format: "iife", target: "chrome114", legalComments: "none", logLevel: "warning", outdir: dist };
+const GOOGLE_CLIENT_ID = process.env.COLD_GOOGLE_CLIENT_ID || "";   // optional: without it this build has no Google Sheets option
+const common = { bundle: true, define: { __COLD_GOOGLE_CLIENT_ID__: JSON.stringify(GOOGLE_CLIENT_ID) }, format: "iife", target: "chrome114", legalComments: "none", logLevel: "warning", outdir: dist };
 
 const sri = buf => `sha256-${crypto.createHash("sha256").update(buf).digest("base64")}`;
 

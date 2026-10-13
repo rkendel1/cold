@@ -244,3 +244,7 @@ Any result Ask Cold or Browse With Me surfaces gets a **second check**: one more
 
 - **Security:** with the app, the extension authenticates with the pairing code and can only read and write products and drafts, generate, and look up public profiles and tweets. It cannot read or change the app's provider keys, the provider choice, the allowed web apps or the code. Creating a new code in the app disconnects every paired surface. The extension reads x.com, twitter.com and linkedin.com pages only when you click *Read this page*, and talks only to `127.0.0.1` / `localhost` for the app.
 
+
+## Google Sheets (optional)
+
+Leads and outreach can live in a Google Sheet in your own Drive instead of this app's storage, with a guided setup in **Settings > Google Sheets** on the web, desktop and extension. Cold asks Google for one narrow permission (files it creates itself). See [docs/google-sheets.md](docs/google-sheets.md) for what users get and how to turn it on.

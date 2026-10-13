@@ -199,3 +199,10 @@ ul.plain { margin: 8px 0 0; padding-left: 18px; }
 .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
 .hfilters select { width: auto; min-width: 170px; }
 table.leads td .chip { margin-left: 6px; }
+ol.steps { display: flex; flex-wrap: wrap; gap: 6px 18px; list-style: none; margin: 0 0 12px; padding: 0; font-size: var(--fs-sm); color: var(--muted, #52606d); }
+ol.steps li.current { font-weight: 600; color: var(--text, inherit); }
+ol.steps li.done::before { content: "✓ "; }
+label.choice { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r); margin-bottom: 8px; cursor: pointer; }
+label.choice input { margin-top: 4px; }
+.hint.block { display: block; }
+.sheets-setup .actions a.btn { text-decoration: none; display: inline-flex; align-items: center; }

@@ -17,6 +17,7 @@ export function createStore({ storage = globalThis.localStorage, platform = null
   const state = {
     ready: false,
     backend: "local",
+    storage: "",             // "sheets" when leads and outreach are kept in a Google Sheet
     products: [], emails: [], leads: [], settings: { signature: "", signoffProduct: true, emailApp: "mailto", gmailAccount: "", followUp: normalizeFollowUpSettings() },
     compose: null,           // last compose form values (persisted)
     current: null,           // draft shown in Compose
@@ -53,7 +54,7 @@ export function createStore({ storage = globalThis.localStorage, platform = null
   let unsubs = [];
   /** Point the store at a database: show what it holds now and follow its changes. */
   function attach(next) {
-    db = next; state.backend = db.kind || "db";
+    db = next; state.backend = db.kind || "db"; state.storage = db.storage || "";
     if (db.initialCompose !== undefined) state.compose = db.initialCompose;   // stores that keep the form (SQLite, web replica)
     if (db.warnings && db.warnings.length) state.warnings = db.warnings;
     const fail = e => { if (e && e.code === "revoked") set({ notice: "Access to saved data ended. Reload to reconnect." }, "notice"); };
@@ -95,11 +96,15 @@ export function createStore({ storage = globalThis.localStorage, platform = null
       emit("ready");
     },
 
+    /** The database underneath (before any Google Sheet is layered on), for the Sheets setup. */
+    database: () => db,
+
     /** Where saved data lives, in the words the UI uses. */
     where: () => (state.backend === "sqlite" ? "on this computer" : state.surface === "extension" ? "in this extension" : "in this browser"),
     whereFrom: () => (state.backend === "sqlite" ? "this computer" : state.surface === "extension" ? "this extension" : "this browser"),
     /** One sentence fragment, "Products and drafts ___", used by every surface so the wording can't drift. */
-    keptNote: () => (state.backend === "sqlite" ? "are stored in the Cold desktop app's database on this computer and are not synced to other devices."
+    keptNote: () => (state.storage === "sheets" ? `are kept in different places: leads and drafts in your Google Sheet (open it from Settings), products and settings ${state.backend === "sqlite" ? "in the Cold desktop app's database on this computer" : `${api.where()} only`}.`
+      : state.backend === "sqlite" ? "are stored in the Cold desktop app's database on this computer and are not synced to other devices."
       : state.library === "shared" ? `are in your Cold Desktop library. ${state.surface === "extension" ? "This extension" : "This browser"} keeps a working copy, so you can keep working while the app is closed and changes sync when it is back.`
       : state.paired ? `are saved ${api.where()} and sync with the Cold desktop app whenever it is running.`
       : `are saved ${api.where()} only and are not backed up or synced to other devices${state.surface === "extension" ? " until you connect the Cold desktop app" : ""}.`),
