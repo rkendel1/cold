@@ -58,7 +58,7 @@ test('an import is planned without saving anything: adds, invalid rows, warnings
     'Cy Diaz,CyCo,Founder,,,,,',                                                                       // duplicate by name + company
     'Dee Evans,DeeCo,,not-an-email,https://example.org/dee,,somewhere,',                               // add with three warnings
     'Dee Evans,DeeCo,,not-an-email,,,,',                                                               // duplicate of the row above (within the file)
-    'Sample Person,Acme,,sample@example.com,,,,',                                                      // the template\'s sample
+    'Sample Person,Acme,,jordan.rivera@example.com,,,,',                                                      // the template\'s sample
   ].join('\n');
   const p = planImport(csv, existing, { list: 'Imported', now: 1000 });
   assert.equal(p.ok, true); assert.equal(p.total, 9);

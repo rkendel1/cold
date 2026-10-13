@@ -25,7 +25,7 @@ export const LEAD_FIELDS = [
 const LIMITS = { name: 200, company: 200, role: 200, email: 254, profileUrl: 500, why: 2000, product: 200, goal: 40, list: 100, notes: 4000 };
 
 // ---- the template -----------------------------------------------------------------------------------------------------------
-const EXAMPLE_DOMAINS = /@example\.(com|org|net)$/i;   // reserved for examples: rows using them are the template's own samples
+const TEMPLATE_EMAILS = new Set(LEAD_FIELDS.find(f => f.key === "email").example.map(e => e.toLowerCase()));   // only the template's own three sample rows are skipped
 /** A cell that a spreadsheet could run as a formula is prefixed with an apostrophe on the way out (and removed on the way in). */
 const defuse = v => (/^[=+\-@\t\r]/.test(v) ? `'${v}` : v);
 const refuse = v => (/^'[=+\-@\t\r]/.test(v) ? v.slice(1) : v);
@@ -175,7 +175,7 @@ export function planImport(text, existing = [], { duplicates = "skip", list = ""
     const { lead, errors, warnings } = rowToLead(cells, map);
     const name = lead.name || "(no name)";
     if (errors.length) { out.invalid.push({ line, name, reasons: errors }); continue; }
-    if (EXAMPLE_DOMAINS.test(lead.email)) { out.examples.push({ line, name }); continue; }       // the template's own sample rows are never imported
+    if (TEMPLATE_EMAILS.has(lead.email.toLowerCase())) { out.examples.push({ line, name }); continue; }       // the template's own sample rows are never imported
     if (!lead.list && list) lead.list = list.trim();
     const key = leadKey(lead);
     if (seen.has(key)) { out.duplicates.push({ line, name, reason: "Appears earlier in this file." }); continue; }

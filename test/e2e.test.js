@@ -486,7 +486,7 @@ const LEADS_CSV = [
   ",Nameless Inc,,nobody@nameless.io,,,,,,,",
   "Sam Okafor,Okafor & Co,COO,not-an-email,,Runs the plumbing community,,somewhere,,,",
   "Priya Nair,Brightside Labs,,PRIYA@brightside.dev,,,,,,,",
-  "Sample Person,Acme,,sample@example.com,,,,,,,",
+  "Sample Person,Acme,,jordan.rivera@example.com,,,,,,,",
 ].join("\r\n");
 
 test("leads: download the template, review a CSV before anything is saved, import it, and see exactly what happened", { skip: SKIP }, async () => {
