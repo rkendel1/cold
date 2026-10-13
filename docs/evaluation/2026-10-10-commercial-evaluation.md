@@ -1,5 +1,7 @@
 # Cold: commercial evaluation (2026-10-10)
 
+> **Historical snapshot (2026-10-10).** A commercial evaluation of the product as it was on that date, before Leads import, follow-ups and Google Sheets. Findings about capability may be out of date; current status is in [docs/audit](../audit/README.md). Its recommendation is not superseded by the audit (the audit does not evaluate the market).
+
 **Scope:** evaluation only. No product code was changed. The only additions are this report and `e2e-mock-check.cjs` (a reproducible check; no new dependencies).
 **Evaluator limits, stated up front:**
 - No customer was contacted. There are **no interviews, no payments and no pilots**. Every claim about demand below is a hypothesis or a secondary-source observation.

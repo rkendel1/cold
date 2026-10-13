@@ -1,5 +1,7 @@
 # Implementation report: UX redesign and modularisation (2026-10-10)
 
+> **Historical snapshot (2026-10-10).** Written before the Leads CSV mapper, follow-ups, Google Sheets and the production-readiness layer existed. Statements about what the product does or lacks may be out of date; the current, source-checked status is in [docs/audit](../audit/README.md). Kept for context; not edited.
+
 ## Outcome
 Compose-first information architecture, a Knowledge page with a product/offering **dropdown**, a clearer History, an honest grounding/outcome vocabulary, and a modular frontend that deploys the same way as before. All automated tests pass locally. **Production was not checked** and the redesign has **not** been tried with founders.
 

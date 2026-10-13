@@ -1,5 +1,7 @@
 # Cross-surface audit and shared-UI boundary
 
+> **Historical snapshot (2026-10-10).** Written before the Leads CSV mapper, follow-ups, Google Sheets and the production-readiness layer existed. Statements about what the product does or lacks may be out of date; the current, source-checked status is in [docs/audit](../audit/README.md). Kept for context; not edited.
+
 Written before the unification work. Surfaces: **web** (the page served by `server.js`, hosted or `npm start`), **desktop** (Electron around the same page, with SQLite and the keychain) and the **browser extension** (Chrome side panel).
 
 ## Decision that shapes this

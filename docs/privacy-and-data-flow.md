@@ -1,7 +1,8 @@
 # Privacy and data flow
 
-**Contract.** Your library (products, drafts, notes, statuses, timestamps, sent text) is stored on *your* device by default and Cold
-needs no account or Cloud database to keep it. Writing a draft is different: it is model processing, and the prompt for that draft
+**Contract.** Your library (products, drafts, leads, notes, statuses, timestamps, sent text) is stored on *your* device by default and Cold
+needs no account or Cloud database to keep it. **Optional exception: if you set up Google Sheets, your leads and outreach drafts are stored in
+a spreadsheet in your own Google Drive instead** (see "Google Sheets" below). Writing a draft is different: it is model processing, and the prompt for that draft
 goes to the model provider you (or the site's operator) chose. These are two separate things and the app says so in Settings → Your data.
 
 | Surface | Library stored in | Cross-surface sharing |
@@ -10,8 +11,9 @@ goes to the model provider you (or the site's operator) chose. These are two sep
 | Desktop app | one SQLite file in the app's data folder | it is the hub others may pair with |
 | Extension | the browser profile's extension storage | only if you pair it with the desktop app |
 
-No Cold cloud backup, account sync or server-side library exists. A hosted server has no database behind it: `/api/data` answers
-404 there. Cold contains no analytics, telemetry, crash reporting or remote logging.
+No Cold-run cloud backup, account sync or server-side library exists. A hosted server has no database behind it: `/api/data` answers
+404 there. Cold contains no analytics, telemetry, crash reporting or remote logging. The only route by which library data can reach a
+third-party store is the optional Google Sheets setting, which is off unless a Google client id is configured and the user turns it on.
 
 ## What leaves the device
 
@@ -29,6 +31,27 @@ No Cold cloud backup, account sync or server-side library exists. A hosted serve
 | Pairing and sync | only to the desktop app address you entered, with its code: products, drafts, statuses, notes, sent copies | in the desktop app's SQLite file. Nothing is sent before you pair, or after you disconnect |
 | Server logs | startup banner only; no request logging; errors return generic messages | none |
 | Rate limiting | in-memory request counts per IP address for one minute | not persisted |
+
+## Google Sheets (optional; off by default)
+
+When (and only when) a Google client id is configured for the build or server **and** the user completes **Settings > Google Sheets**:
+
+* **What goes to Google:** every lead field and extra field (Leads tab), and every outreach record (Outreach tab: readable columns plus a `data`
+  column holding the full record: recipient name/company/role/email, subject and message, notes, statuses and dates, follow-up and handoff
+  records, sent copy, and the model's `claims`/`checks`). Product knowledge, settings, sign-off and the Write form are **not** sent. The first
+  setup can copy what is already in the app into the sheet.
+* **What Cold is allowed to touch:** one permission, `drive.file`: files Cold itself creates (or that the user explicitly opens with it). Not
+  Drive in general, mail or contacts. **Gmail "Open in email" does not use this permission and needs none.**
+* **Where tokens live:** web and extension keep a short-lived access token in memory (plus a "connected" flag in browser storage); the desktop
+  server keeps the refresh token with the provider keys (OS-keychain-encrypted when available) and gives the page only short-lived tokens.
+* **Who else can see it:** the spreadsheet belongs to the user's Google account and follows Google's sharing settings; Cold cannot see or
+  control who it is shared with.
+* **Stopping:** "Stop using Google Sheets" copies the sheet's current contents back into the app, signs out and asks Google to revoke
+  Cold's access; the spreadsheet stays in Drive until the user deletes it. Revoking at myaccount.google.com also works; Cold then shows "sign in again".
+* **Not offline:** with Sheets on, leads and outreach are read from the sheet at start-up; if it can't be reached they are not shown (a banner says so).
+* **Not covered by the tests below.** `test/privacy.test.js` asserts "no other host is contacted" with Sheets **off**. The Sheets paths are tested
+  against a stand-in API (`test/sheets*.test.js`, `test/google-*.test.js`); nothing here claims to have been verified against Google. See
+  [docs/audit/07](audit/07-security-privacy-data-authority.md).
 
 ## Tests that hold these boundaries
 

@@ -100,7 +100,7 @@ export function createPlatform() {
       if (g && g.configured) {
         const auth = g.mode === "server" ? serverAuth({ call: api.googleCall }) : browserAuth({ clientId: g.clientId });
         sheets = createSheetsConnector({ auth, linkStore: webLinkStore(), sheetsBase: g.sheetsBase });
-        try { await sheets.init(); if (sheets.link && db) db = await sheets.open(db); } catch { warning = warning || "Couldn't open your Google Sheet. Open Settings to reconnect."; }
+        try { await sheets.init(); if (sheets.link && db) { db = await sheets.open(db); if (db.sheets && db.sheets.status.state === "error") warning = warning || "Couldn't read your Google Sheet, so your leads and drafts are not shown right now. Nothing is lost. Open Settings > Google Sheets to reconnect."; } } catch { warning = warning || "Couldn't read your Google Sheet, so your leads and drafts are not shown right now. Nothing is lost. Open Settings > Google Sheets to reconnect."; }
       }
       return { db, user: null, ...snapshot(), warning };
     },

@@ -55,7 +55,7 @@ the real replica syncing with that server; the web storage adapter), `test/e2e.t
 * **`localStorage` has no cross-tab lock.** The read-modify-write is synchronous inside one tab, but two tabs can still interleave
   between a read and a write in the same instant. `chrome.storage.local` is likewise read-then-write. Both are narrow windows,
   not transactions. Tabs also do not live-refresh; a stale tab finds out on its next save (which is then merged or refused).
-* **Products, settings and the compose form are not versioned.** Products still sync through the same replica path (so they
+* **Leads, products, settings and the compose form are not versioned** (leads were added after this note; they are saved whole-record, last-writer-wins, on every backend including Google Sheets: audit DATA-004). Products still sync through the same replica path (so they
   get the same conflict handling there), but the in-browser product list and settings are whole-value, last-writer-wins.
 * **Compatibility defaults remain.** A save may add the established defaults for missing optional fields (e.g. `note: ""`,
   `goal: "advice"`, empty `checks`), as before; present valid values are never overwritten. A known field with an unusable type

@@ -1,5 +1,7 @@
 # Cross-Surface User Experience Standards
 
+> **Status: aspirational standards, not a description of the product.** Several statements here are targets (for example about error handling and consistency checks); the audit found that the supporting code (`src/components/production-readiness.js`, `cx-consistency-check.js`) does not deliver all of them and in places masks failures. Use [docs/audit](../audit/README.md) for what is true; treat this as a design brief. See DOCS-004 and QUALITY-005.
+
 This document defines the user experience standards that ensure consistent, production-ready experience across all surfaces of Cold: web app, desktop app, and browser extension.
 
 ## 1. Core Principles

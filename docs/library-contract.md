@@ -1,5 +1,7 @@
 # The library contract: shared in code, shared in data
 
+> **Note (Google Sheets).** When the optional Google Sheets setting is on, leads and outreach drafts are stored in the user's spreadsheet instead of the replica/SQLite and **do not sync through the pairing described here**; products and settings still follow this contract. See [google-sheets.md](google-sheets.md) and [audit/07](audit/07-security-privacy-data-authority.md).
+
 Cold's **library** is the user's products, drafts (with their notes, statuses, timestamps and sent snapshot) and leads (the list of people to write to: `src/domain/leads.js`, a SQLite `leads` table, the same replica and pairing rules as products). Web, desktop and the
 extension each keep it in their own place. What they share is *rules* (code) and, only when paired, *records* (data).
 

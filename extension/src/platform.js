@@ -94,7 +94,7 @@ export async function createExtensionPlatform() {
     get sheets() { return sheets; },
     async detect() {
       let db = active.db, warning = "";
-      if (sheets) { try { await sheets.init(); if (sheets.link) db = await sheets.open(db); } catch { warning = "Couldn't open your Google Sheet. Open Settings to reconnect."; } }
+      if (sheets) { try { await sheets.init(); if (sheets.link) { db = await sheets.open(db); if (db.sheets && db.sheets.status.state === "error") warning = "Couldn't read your Google Sheet, so your leads and drafts are not shown right now. Nothing is lost. Open Settings > Google Sheets to reconnect."; } } catch { warning = "Couldn't read your Google Sheet, so your leads and drafts are not shown right now. Nothing is lost. Open Settings > Google Sheets to reconnect."; } }
       return { db, user: null, warning, ...snapshot() };
     },
   };

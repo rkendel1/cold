@@ -27,7 +27,7 @@ export function mountHistory(root, { store, openRecord }) {
   const listHost = h("ul", { class: "hist", "aria-label": "Outreach" });
   search.addEventListener("input", () => { query = search.value.trim(); render(); });
   const lede = h("p", { class: "lede" });
-  const paintLede = () => { lede.textContent = `Your outreach, as you've recorded it. Cold doesn't send email and can't see your inbox, so “Marked sent” and “Reply recorded” appear only when you set them: open a draft in your email app, send it yourself, then come back and mark it sent. History ${store.keptNote()}`; };
+  const paintLede = () => { lede.textContent = `Your outreach, as you've recorded it. Cold doesn't send email and can't see your inbox, so “Marked sent” and “Reply recorded” appear only when you set them: open a draft in your email app, send it yourself, then come back and mark it sent. Your drafts ${store.keptNote()}`; };
   paintLede();
   root.append(
     h("div", { class: "view-head" },

@@ -49,7 +49,7 @@ export async function startApp(rootEl = document.getElementById("app"), { store 
   const history = mountHistory(views.history, { store, openRecord: rec => { if (rec) compose.open(rec); navigate("compose"); } });
 
   const settings = mountSettings(views.settings, { store, platform });
-  const paintFooter = () => { footer.textContent = `Cold writes drafts; you send them. Products and drafts ${store.keptNote()}`; };
+  const paintFooter = () => { footer.textContent = `Cold writes drafts; you send them. Products, drafts and leads ${store.keptNote()}`; };
   const syncSurface = () => store.set({ surface: platform.hub ? platform.hub.kind : S.backend === "sqlite" ? "desktop" : "web", paired: !!platform.hub && platform.hub.libs.kind === "synced", library: platform.hub ? platform.hub.libs.kind : S.backend === "sqlite" ? "desktop" : "standalone" }, "surface");
 
   const renderNotices = () => {
@@ -66,7 +66,7 @@ export async function startApp(rootEl = document.getElementById("app"), { store 
     if (t === "ready" || t === "server" || t === "surface") paintFooter(); 
     
     // Ensure consistent error handling across all surfaces for production readiness
-    if (t === "error") {
+    if (t === "error" && store.state.error) {   // "error" is also emitted with null to CLEAR an error (every Generate does); that is not a failure
       const errorNotice = notice("bad", h("strong", {}, "System error"), h("p", {}, "There was an error in the application. Please refresh or contact support if the problem persists."));
       notices.appendChild(errorNotice);
     }
@@ -87,6 +87,7 @@ export async function startApp(rootEl = document.getElementById("app"), { store 
   
   // Ensure consistent error handling and crash protection across all surfaces
   window.addEventListener('error', (e) => {
+    if (/^ResizeObserver loop/.test(e.message || "")) return;   // a harmless browser notice (auto-sizing text boxes), not a fault
     console.error('Global error caught:', e.error);
     // All surfaces should gracefully handle uncaught errors to maintain production readiness
     renderNotices(); // This will show error notices if any

@@ -124,3 +124,52 @@ test('split database: leads and outreach go to the sheet, everything else stays 
   assert.deepEqual(calls, [['set', 'products/p1'], ['collection', 'products']]); assert.equal(t.tab('Leads').length, 2);
   await t.close();
 });
+
+// ---- Characterisation tests for the audit (docs/audit): they pin down CURRENT behaviour that is a known limitation, so a change to it is a conscious one.
+test('audit DATA-004 (characterisation): two devices editing the same LEAD in a sheet is last-writer-wins; the same edit to an outreach record is detected', async () => {
+  const t = await setup(); const { createSheetsDb } = await load('src/services/sheetsDb.js');
+  const other = createSheetsDb({ api: t.api, spreadsheetId: t.made.spreadsheetId, poll: false }); await other.load();
+  await t.db.doc('leads/l1').set(lead('l1'));
+  await other.refresh();
+  await t.db.doc('leads/l1').set({ ...lead('l1'), notes: 'edited on device A' });
+  await other.doc('leads/l1').set({ ...lead('l1'), notes: 'edited on device B' });          // B never saw A's edit and does not send a version
+  assert.equal(t.tab('Leads')[1][t.tab('Leads')[0].indexOf('notes')], 'edited on device B', 'A\'s edit was silently replaced: leads carry no version check');
+  // outreach records DO carry one
+  const rec = { createdAt: 1, status: 'draft', mode: 'email', recipient: { name: 'X' }, subject: 's', what: 'w', why: 'y', ask: 'a', note: '' };
+  const r1 = await t.db.doc('emails/e1').set(rec, { expected: null, base: null }); await other.refresh();
+  await t.db.doc('emails/e1').set({ ...rec, id: 'e1', note: 'A' }, { expected: r1.updatedAt, base: { ...rec, id: 'e1', updatedAt: r1.updatedAt } });
+  await assert.rejects(other.doc('emails/e1').set({ ...rec, id: 'e1', note: 'B', updatedAt: r1.updatedAt }, { expected: r1.updatedAt, base: { ...rec, id: 'e1', updatedAt: r1.updatedAt } }), e => e.code === 'conflict');
+  await t.close();
+});
+
+test('audit DATA-005 (characterisation): when the sheet cannot be read at start-up the database opens EMPTY with an error status, rather than failing', async () => {
+  const t = await setup(); const { createSheetsConnector, webLinkStore } = await load('src/services/sheetsConnector.js');
+  const m = new Map(); const ls = { getItem: k => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: k => m.delete(k) };
+  let token = 'good-token'; const auth = { configured: true, connected: () => true, token: async () => { if (token === 'none') throw { message: 'x' }; return token; }, connect: async () => {}, disconnect: async () => {} };
+  const c = createSheetsConnector({ auth, linkStore: webLinkStore(ls), sheetsBase: t.mock.url });
+  await c.useSheet(`https://docs.google.com/spreadsheets/d/${t.made.spreadsheetId}/edit`); await c.save();
+  const seed = await c.open({ kind: 'sqlite', collection: () => ({ onSnapshot() {} }), doc: () => ({}) }, { strict: true, poll: false });
+  await seed.sheets.setMany('leads', [lead('l1')]); seed.sheets.stop();
+  token = 'none';                                                              // the sign-in is gone before the next start
+  const again = createSheetsConnector({ auth, linkStore: webLinkStore(ls), sheetsBase: t.mock.url }); await again.init();
+  const db = await again.open({ kind: 'sqlite', collection: () => ({ onSnapshot() {} }), doc: () => ({}) }, { strict: false, poll: false });
+  let shown = null; db.collection('leads').onSnapshot(s => { shown = s.docs.length; })();
+  assert.equal(shown, 0, 'the leads list is empty (not an error screen) while the sheet is unreachable'); assert.equal(again.status.state, 'error');
+  await t.close();
+});
+
+test('Sheets db: columns a person adds to their own sheet (a note, a deal size, a formula) survive Cold saving that row', async () => {
+  const t = await setup();
+  await t.db.doc('leads/l1').set(lead('l1'));
+  await t.db.doc('emails/e1').set({ createdAt: 1, status: 'draft', mode: 'email', recipient: { name: 'X' }, subject: 's', what: 'w', why: 'y', ask: 'a' }, { expected: null, base: null });
+  t.tab('Outreach')[0].push('My deal size'); t.tab('Outreach')[1].push('$40k'); t.tab('Outreach')[0].push('Calc'); t.tab('Outreach')[1].push('=B2*2');
+  t.tab('Leads')[0].push('Phone'); t.tab('Leads')[1].push('555-0100');
+  await t.db.refresh();
+  const e = t.docs('emails')[0]; await t.db.doc('emails/e1').set({ ...e, note: 'edited in Cold' }, { expected: e.updatedAt, base: e });
+  await t.db.doc('leads/l1').set({ ...t.docs('leads')[0], notes: 'edited in Cold' });
+  const o = t.tab('Outreach'), l = t.tab('Leads');
+  assert.equal(o[1][o[0].indexOf('notes')], 'edited in Cold', 'Cold\'s own change was saved');
+  assert.deepEqual([o[1][o[0].indexOf('My deal size')], o[1][o[0].indexOf('Calc')]], ['$40k', '=B2*2'], 'the person\'s own Outreach columns are untouched');
+  assert.equal(l[1][l[0].indexOf('Phone')], '555-0100', 'an unknown Leads column is kept (as an extra field)');
+  await t.close();
+});

@@ -1,5 +1,7 @@
 # Using Cold on one surface
 
+> **Note (Google Sheets).** Each surface can optionally keep leads and outreach in the user's own Google Sheet (a separate sign-in per surface; off unless a Google client id is configured). It is not part of the "works on its own" guarantee below and is not yet verified against a real Google account. See [google-sheets.md](google-sheets.md).
+
 Cold has three surfaces: the **web app**, the **desktop app** and the **browser extension**. Each one is a complete app. None needs
 another to be installed, running or paired. Pairing them is an optional convenience.
 
