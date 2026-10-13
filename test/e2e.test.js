@@ -478,6 +478,167 @@ test("email app: choose Gmail once in Settings; Open in email then opens a Gmail
   assert.deepEqual(t.errors, []); await t.close();
 });
 
+const csvFile = (text, name = "leads.csv") => ({ name, mimeType: "text/csv", buffer: Buffer.from(text, "utf8") });
+const LEADS_CSV = [
+  "Full Name,Organization,Job Title,Email Address,LinkedIn,Reason,Product,Goal,List,Comments,Extra column",
+  'Jordan Rivera,Northwind Logistics,Head of Platform,jordan@northwind.io,linkedin.com/in/jordan-rivera,"Writes about moving batch workloads, edge-first",Acme Flow,Advice,Q4 founders,"Met at the meetup\nsat at my table",x',
+  "Priya Nair,Brightside Labs,Founder,priya@brightside.dev,https://x.com/priyanair,Posted that trials stall,,customer conversation,Q4 founders,,y",
+  ",Nameless Inc,,nobody@nameless.io,,,,,,,",
+  "Sam Okafor,Okafor & Co,COO,not-an-email,,Runs the plumbing community,,somewhere,,,",
+  "Priya Nair,Brightside Labs,,PRIYA@brightside.dev,,,,,,,",
+  "Sample Person,Acme,,sample@example.com,,,,,,,",
+].join("\r\n");
+
+test("leads: download the template, review a CSV before anything is saved, import it, and see exactly what happened", { skip: SKIP }, async () => {
+  const t = await open({ seed: SEED }); const { page } = t;
+  assert.deepEqual(await page.$$eval(".primary-nav a", a => a.map(x => x.textContent)), ["Write", "Knowledge", "Leads", "History", "Settings"]);
+  await go(page, "leads"); await page.waitForSelector("#importBtn");
+  assert.match(await page.textContent("#view-leads"), /No leads yet/);
+  // the template is the example file in the repo, byte for byte (plus a byte-order mark so spreadsheets read accents correctly)
+  const [dl] = await Promise.all([page.waitForEvent("download"), page.click("#templateBtn")]);
+  assert.equal(dl.suggestedFilename(), "cold-leads-template.csv");
+  const got = require("node:fs").readFileSync(await dl.path(), "utf8");
+  assert.equal(got.replace(/^﻿/, ""), require("node:fs").readFileSync(path.join(__dirname, "../examples/leads-template.csv"), "utf8"));
+  assert.match(got, /^﻿name,company,role,email,profile_url,why,product,goal,list,notes\r\n/);
+  // importing the template as it is adds nothing: its three sample rows are recognised
+  await page.setInputFiles("#leadsFile", csvFile(got.replace(/^﻿/, ""), "template.csv")); await page.waitForSelector("#importSummary");
+  assert.match(await page.textContent("#importSummary"), /3 rows read\. 0 new.*3 sample rows from the template skipped/);
+  assert.equal(await page.locator("#confirmImport").isDisabled(), true); await page.click("#cancelImport");
+  // a real file: nothing is saved until the review is confirmed
+  await page.setInputFiles("#leadsFile", csvFile(LEADS_CSV, "q4-founders.csv")); await page.waitForSelector("#importSummary");
+  assert.equal(await page.inputValue("#importList"), "q4-founders");
+  assert.match(await page.textContent("#importSummary"), /6 rows read\. 3 new, 1 already in your leads or repeated, 1 can't be imported, 1 sample row from the template skipped\./);
+  assert.match(await page.textContent("#importPanel"), /Columns Cold doesn't use were ignored: Extra column/);
+  await page.click("#importPanel summary:has-text('Rows that can\\'t be imported')"); assert.match(await page.textContent("#importPanel"), /Line 5: \(no name\)\. Name is required\./);
+  await page.click("#importPanel summary:has-text('Imported, but check these')"); assert.match(await page.textContent("#importPanel"), /Line 6: Sam Okafor\..*Goal “somewhere”.*email address doesn't look valid/);
+  assert.equal(await ls(page, "cold.leads"), null, "nothing is saved while reviewing");
+  assert.equal(await page.textContent("#confirmImport"), "Add 3 leads");
+  await page.click("#confirmImport"); await page.waitForSelector("#leadsTable");
+  const leads = await ls(page, "cold.leads");
+  assert.deepEqual(leads.map(l => [l.name, l.company, l.role, l.email, l.list, l.goal, l.source]), [
+    ["Jordan Rivera", "Northwind Logistics", "Head of Platform", "jordan@northwind.io", "Q4 founders", "advice", "csv"],
+    ["Priya Nair", "Brightside Labs", "Founder", "priya@brightside.dev", "Q4 founders", "customer", "csv"],
+    ["Sam Okafor", "Okafor & Co", "COO", "not-an-email", "q4-founders", "", "csv"]]);
+  assert.equal(leads[0].why, "Writes about moving batch workloads, edge-first"); assert.equal(leads[0].notes, "Met at the meetup\nsat at my table"); assert.equal(leads[0].profileUrl, "https://www.linkedin.com/in/jordan-rivera");
+  assert.equal(await page.locator("#leadsTable tbody tr").count(), 3);
+  assert.equal(await page.locator("tr", { hasText: "Sam Okafor" }).locator(".chip.warn").count(), 1, "the odd email is flagged in the table");
+  // the same file again: everyone is already there; the policy can fill blanks, never overwrite or blank anything
+  await page.setInputFiles("#leadsFile", csvFile(LEADS_CSV, "q4-founders.csv")); await page.waitForSelector("#importSummary");
+  assert.match(await page.textContent("#importSummary"), /0 new, .*4 already in your leads or repeated/); assert.equal(await page.locator("#confirmImport").isDisabled(), true);
+  await page.selectOption("#dupPolicy", "update"); await page.waitForFunction(() => /to update|0 new/.test(document.getElementById("importSummary").textContent)); await page.click("#cancelImport");
+  assert.deepEqual((await ls(page, "cold.leads")).map(l => l.name), ["Jordan Rivera", "Priya Nair", "Sam Okafor"]);
+  assert.deepEqual(t.errors, []); await t.close();
+});
+
+test("leads: manage them: search, filter, edit, add, bulk delete, export; survives a reload", { skip: SKIP }, async () => {
+  const seed = { "cold.products": [P1], "cold.leads": [
+    { id: "l1", name: "Ada Park", company: "PipeCo", role: "COO", email: "ada@pipeco.io", why: "Posted about onboarding", list: "Q4", product: "Acme Flow", goal: "customer", createdAt: 1 },
+    { id: "l2", name: "Bo Chen", company: "BoCo", email: "", why: "", list: "Q4", createdAt: 2 }, { id: "l3", name: "Cy Diaz", company: "CyCo", list: "", createdAt: 3 }] };
+  const t = await open({ seed }); const { page } = t;
+  await go(page, "leads"); await page.waitForSelector("#leadsTable");
+  assert.equal(await page.textContent("#leadCount"), "3 of 3 leads");
+  await page.fill("#leadSearch", "pipeco"); assert.equal(await page.locator("#leadsTable tbody tr").count(), 1);
+  await page.fill("#leadSearch", ""); await page.selectOption("#leadList", "Q4"); assert.equal(await page.locator("#leadsTable tbody tr").count(), 2);
+  await page.selectOption("#leadList", ""); assert.match(await page.textContent("#leadsTable"), /Cy Diaz/); assert.equal(await page.locator("#leadsTable tbody tr").count(), 1);
+  await page.selectOption("#leadList", "all");
+  // edit
+  await page.locator("tr", { hasText: "Bo Chen" }).locator(".leadEdit").click(); await page.waitForSelector("#saveLead");
+  assert.equal(await page.inputValue("#lf-name"), "Bo Chen");
+  await page.fill("#lf-company", "BoCo Ltd"); await page.fill("#lf-email", "bo@boco.io"); await page.fill("#lf-why", "Runs the founders' forum"); await page.click("#saveLead");
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.leads")).find(l => l.id === "l2").company === "BoCo Ltd");
+  assert.deepEqual((await ls(page, "cold.leads")).find(l => l.id === "l2").why, "Runs the founders' forum");
+  // a name is required; add by hand
+  await page.click("#addLeadBtn"); await page.fill("#lf-company", "Nameless"); await page.click("#saveLead");
+  assert.match(await page.textContent("#leadEditor"), /Name is required/); assert.equal((await ls(page, "cold.leads")).length, 3);
+  await page.fill("#lf-name", "Dee Evans"); await page.fill("#lf-list", "Spring"); await page.click("#saveLead");
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.leads")).length === 4);
+  assert.deepEqual((await ls(page, "cold.leads")).find(l => l.name === "Dee Evans"), { ...(await ls(page, "cold.leads")).find(l => l.name === "Dee Evans"), list: "Spring", source: "manual" });
+  // survives a reload
+  await page.reload(); await page.waitForSelector("#genBtn", { state: "attached" }); await go(page, "leads");
+  assert.equal(await page.locator("#leadsTable tbody tr").count(), 4);
+  // export: the same columns as the template, and re-importable
+  const [dl] = await Promise.all([page.waitForEvent("download"), page.click("#exportBtn")]);
+  assert.equal(dl.suggestedFilename(), "cold-leads.csv");
+  const csv = require("node:fs").readFileSync(await dl.path(), "utf8").replace(/^﻿/, "");
+  assert.match(csv, /^name,company,role,email,profile_url,why,product,goal,list,notes\r\nAda Park,PipeCo,COO,ada@pipeco\.io,,Posted about onboarding,Acme Flow,customer,Q4,\r\n/);
+  // bulk delete asks first, then removes only what was selected
+  await page.locator("tr", { hasText: "Cy Diaz" }).locator("input[type=checkbox]").check(); await page.locator("tr", { hasText: "Dee Evans" }).locator("input[type=checkbox]").check();
+  assert.equal(await page.textContent("#selCount"), "2 selected");
+  await page.click("#bulkDelete"); await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.leads")).length === 2);
+  assert.deepEqual((await ls(page, "cold.leads")).map(l => l.name).sort(), ["Ada Park", "Bo Chen"]);
+  assert.deepEqual(t.errors, []); await t.close();
+});
+
+test("leads: Write on a lead fills the draft from it, and the lead then shows how far outreach has got", { skip: SKIP }, async () => {
+  const seed = { "cold.products": [P1], "cold.leads": [{ id: "l1", name: "Ada Park", company: "PipeCo", role: "COO", email: "ada@pipeco.io", why: "Posted about onboarding", list: "Q4", product: "acme flow", goal: "customer", profileUrl: "https://www.linkedin.com/in/ada-park", createdAt: 1 }, { id: "l2", name: "Bo Chen", company: "BoCo", createdAt: 2 }] };
+  const t = await open({ seed }); const { page } = t;
+  await go(page, "leads");
+  assert.match(await page.locator("tr", { hasText: "Ada Park" }).textContent(), /Not contacted/);
+  await page.locator("tr", { hasText: "Ada Park" }).locator(".leadWrite").click(); await page.waitForSelector("#rName");
+  assert.deepEqual([await page.inputValue("#rName"), await page.inputValue("#rCompany"), await page.inputValue("#rRole"), await page.inputValue("#rEmail"), await page.inputValue("#rWhy"), await page.inputValue("#rProfileUrl"), await page.inputValue("#rProduct"), await page.isChecked("#goal-customer")],
+    ["Ada Park", "PipeCo", "COO", "ada@pipeco.io", "Posted about onboarding", "https://www.linkedin.com/in/ada-park", "p1", true]);
+  assert.match(await page.textContent("#leadNote"), /Writing to Ada Park from your Leads/);
+  assert.equal(mock.prompts.length, 0, "choosing a lead writes nothing by itself");
+  await generate(page);
+  const rec = (await ls(page, "cold.emails"))[0];
+  assert.deepEqual([rec.recipient.leadId, rec.recipient.name, rec.recipient.email], ["l1", "Ada Park", "ada@pipeco.io"]);
+  await go(page, "leads"); assert.match(await page.locator("tr", { hasText: "Ada Park" }).textContent(), /Draft/); assert.match(await page.locator("tr", { hasText: "Bo Chen" }).textContent(), /Not contacted/);
+  await go(page, "history"); await row(page, "Ada Park").locator(".hMarkSent").click(); await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.emails"))[0].status === "sent");
+  await go(page, "leads"); assert.match(await page.locator("tr", { hasText: "Ada Park" }).textContent(), /Marked sent/);
+  await page.selectOption("#leadProgress", "sent"); assert.equal(await page.locator("#leadsTable tbody tr").count(), 1);
+  // "Not this lead" detaches the draft without clearing the form
+  await page.selectOption("#leadProgress", "all"); await page.locator("tr", { hasText: "Bo Chen" }).locator(".leadWrite").click(); await page.waitForSelector("#unlinkLead");
+  await page.click("#unlinkLead"); assert.equal(await page.locator("#leadNote").isHidden(), true); assert.equal(await page.inputValue("#rName"), "Bo Chen");
+  assert.deepEqual(t.errors, []); await t.close();
+});
+
+test("leads: a large file imports quickly, in one save, and is shown a page at a time", { skip: SKIP, timeout: 60000 }, async () => {
+  const t = await open({ seed: SEED }); const { page } = t;
+  const rows = ["name,company,email,why"]; for (let i = 0; i < 1500; i++) rows.push(`Person ${i},Co ${i % 40},p${i}@co${i % 40}.io,Reason ${i}`);
+  await go(page, "leads"); const t0 = Date.now();
+  await page.setInputFiles("#leadsFile", csvFile(rows.join("\n"), "big.csv")); await page.waitForSelector("#importSummary");
+  assert.match(await page.textContent("#importSummary"), /1500 rows read\. 1500 new/);
+  await page.click("#confirmImport"); await page.waitForFunction(() => JSON.parse(localStorage.getItem("cold.leads") || "[]").length === 1500, null, { timeout: 30000 });
+  assert.ok(Date.now() - t0 < 20000, `imported 1500 leads in ${Date.now() - t0} ms`);
+  assert.equal(await page.locator("#leadsTable tbody tr").count(), 100); assert.equal(await page.textContent("#leadCount"), "1500 of 1500 leads");
+  await page.click("#showMore"); assert.equal(await page.locator("#leadsTable tbody tr").count(), 200);
+  await page.fill("#leadSearch", "Person 1499"); assert.equal(await page.locator("#leadsTable tbody tr").count(), 1);
+  await page.setInputFiles("#leadsFile", csvFile(rows.join("\n"), "big.csv")); await page.waitForSelector("#importSummary");
+  assert.match(await page.textContent("#importSummary"), /0 new.*1500 already in your leads/);
+  await t.close();
+});
+
+test("desktop UI: the leads you import, edit and delete are the rows in the SQLite database, and a value fixed in SQLite shows in the app", { skip: SKIP }, async () => {
+  const { DatabaseSync } = require("node:sqlite");
+  const dir = hubDir(), port = await freePort(), hub = await startHub(dir, port), file = path.join(dir, "cold.db");
+  const rows = () => { const d = new DatabaseSync(file, { readOnly: true }); try { return d.prepare("SELECT id, name, company, email, list FROM leads ORDER BY created_at, name").all().map(r => ({ ...r })); } finally { d.close(); } };
+  const t = await open({ server: hub }); const { page } = t;
+  try {
+    await go(page, "leads"); await page.waitForSelector("#importBtn");
+    await page.setInputFiles("#leadsFile", csvFile("name,company,email,why,list\nAda Park,PipeCo,ada@pipeco.io,Posted about onboarding,Q4\nBo Chen,BoCo,bo@boco.io,,Q4\nCy Diaz,CyCo,,,\n", "desk.csv"));
+    await page.waitForSelector("#confirmImport"); await page.click("#confirmImport"); await page.waitForSelector("#leadsTable");
+    // what the screen shows is what the database holds
+    await until(() => rows().length === 3);
+    assert.deepEqual(rows().map(r => [r.name, r.company, r.email, r.list]), [["Ada Park", "PipeCo", "ada@pipeco.io", "Q4"], ["Bo Chen", "BoCo", "bo@boco.io", "Q4"], ["Cy Diaz", "CyCo", "", "desk"]]);   // rows without a list get the file's name, as the review showed
+    // edit in the app -> the SQLite columns change
+    await page.locator("tr", { hasText: "Bo Chen" }).locator(".leadEdit").click(); await page.fill("#lf-company", "BoCo Ltd"); await page.fill("#lf-list", "Spring"); await page.click("#saveLead");
+    await until(() => rows().find(r => r.name === "Bo Chen").company === "BoCo Ltd");
+    assert.equal(rows().find(r => r.name === "Bo Chen").list, "Spring");
+    // fix a value with a SQLite tool -> the app shows it after it next reads the database
+    const w = new DatabaseSync(file); w.exec("UPDATE leads SET company = 'Fixed in SQLite', email = 'cy@cyco.io' WHERE name = 'Cy Diaz'"); w.close();
+    await page.reload(); await page.waitForSelector("#genBtn", { state: "attached" }); await go(page, "leads");
+    const cy = page.locator("tr", { hasText: "Cy Diaz" });
+    assert.match(await cy.textContent(), /Fixed in SQLite/); assert.match(await cy.textContent(), /cy@cyco\.io/);
+    // delete in the app -> the row is gone from SQLite
+    await cy.locator("input[type=checkbox]").check(); await page.click("#bulkDelete"); await page.getByRole("button", { name: "Delete", exact: true }).click();
+    await until(() => rows().length === 2); assert.deepEqual(rows().map(r => r.name), ["Ada Park", "Bo Chen"]);
+    // write to a lead from the desktop UI, and it is linked
+    await page.locator("tr", { hasText: "Ada Park" }).locator(".leadWrite").click(); await page.waitForSelector("#rName"); assert.equal(await page.inputValue("#rName"), "Ada Park");
+    assert.deepEqual(t.errors, []);
+  } finally { await t.close(); hub.stop(); }
+});
+
 test("sign-off: your name is set once; each product adds its own chosen links; Copy, Open in email and the sent copy all use the same block", { skip: SKIP }, async () => {
   const FELT = { id: "pf", name: "FeltDB", order: 0, what: "FeltDB is an application-state database for AI agents.", who: "AI teams", problem: "Agent state is hard to inspect.", website: "https://feltdb.com", xHandle: "@feltdb", socials: ["LinkedIn: https://linkedin.com/company/feltdb", "GitHub: https://github.com/feltdb/feltdb"], signoffSkip: ["GitHub|https://github.com/feltdb/feltdb"], proof: [], techFacts: [], approved: [], dontSay: [] };
   const t = await open({ seed: { "cold.products": [FELT, { ...P2, what: "Beacon watches job queues.", who: "Ops teams", problem: "Queues back up unseen." }] } }); const { page } = t;
@@ -873,7 +1034,7 @@ test("keyboard: skip link, nav, form submit with Enter, visible focus, reduced m
   assert.equal(id, "nav-compose");
   const ring = await page.evaluate(() => { const s = getComputedStyle(document.activeElement); return [s.outlineStyle, parseFloat(s.outlineWidth)]; });
   assert.ok(ring[0] !== "none" && ring[1] >= 2, "focused control must show an outline");
-  await page.keyboard.press("Tab"); await page.keyboard.press("Tab"); await page.keyboard.press("Enter");
+  await page.keyboard.press("Tab"); await page.keyboard.press("Tab"); await page.keyboard.press("Tab"); await page.keyboard.press("Enter");   // Knowledge, Leads, History
   await page.waitForURL(/#\/history$/);
   await go(page, "compose");
   await fillCompose(page); mock.delayMs = 300;

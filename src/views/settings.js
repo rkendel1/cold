@@ -10,6 +10,7 @@ import { confirmDialog } from "../components/dialog.js";
 import { copyText } from "../services/clipboard.js";
 import { signoffBlock } from "../domain/signoff.js";
 import { openInEmail, isEmail, APPS, APP_LABELS } from "../services/handoff.js";
+import { compareLeads } from "../domain/library.js";
 
 const OTHER = "__other__";
 const KEY_NOTE = {
@@ -157,18 +158,20 @@ export function mountSettings(root, { store, platform }) {
     /** Copy the standalone library into the shared one, only after showing exactly what will be copied. Nothing is overwritten or removed. */
     async function importStandalone() {
       const snap = await hub.libs.readStandalone();
-      const haveP = new Set(S.products.map(p => p.id)), haveE = new Set(S.emails.map(e => e.id));
-      const newP = snap.products.filter(p => !haveP.has(p.id)), newE = snap.emails.filter(e => !haveE.has(e.id));
-      const skipped = snap.products.length - newP.length + snap.emails.length - newE.length;
-      if (!newP.length && !newE.length) { toast(skipped ? "Everything in this library is already in the shared library." : `${here[0].toUpperCase()}${here.slice(1)}'s own library is empty.`); return; }
+      const haveP = new Set(S.products.map(p => p.id)), haveE = new Set(S.emails.map(e => e.id)), haveL = new Set(S.leads.map(l => l.id));
+      const newP = snap.products.filter(p => !haveP.has(p.id)), newE = snap.emails.filter(e => !haveE.has(e.id)), newL = (snap.leads || []).filter(l => !haveL.has(l.id)).sort(compareLeads);
+      const skipped = snap.products.length - newP.length + snap.emails.length - newE.length + (snap.leads || []).length - newL.length;
+      if (!newP.length && !newE.length && !newL.length) { toast(skipped ? "Everything in this library is already in the shared library." : `${here[0].toUpperCase()}${here.slice(1)}'s own library is empty.`); return; }
       const names = (list, f) => list.slice(0, 5).map(f).filter(Boolean).join(", ") + (list.length > 5 ? ", …" : "");
-      const body = `${newP.length} product${newP.length === 1 ? "" : "s"}${newP.length ? ` (${names(newP, p => p.name)})` : ""} and ${newE.length} draft${newE.length === 1 ? "" : "s"}${newE.length ? ` (${names(newE, e => (e.recipient && e.recipient.name) || e.subject)})` : ""} will be copied. `
+      const body = `${newP.length} product${newP.length === 1 ? "" : "s"}${newP.length ? ` (${names(newP, p => p.name)})` : ""} and ${newE.length} draft${newE.length === 1 ? "" : "s"}${newE.length ? ` (${names(newE, e => (e.recipient && e.recipient.name) || e.subject)})` : ""}${newL.length ? `, and ${newL.length} lead${newL.length === 1 ? "" : "s"} (${names(newL, l => l.name)})` : ""} will be copied. `
         + `${skipped ? `${skipped} item${skipped === 1 ? " is" : "s are"} already in the shared library and will not be touched. ` : ""}The library in ${here} is not changed or deleted.`;
       if (!(await confirmDialog({ title: "Copy into the shared library?", body, confirmLabel: "Copy" }))) return;
       let failed = 0;
       for (const p of newP) { try { await store.saveProduct(p); } catch { failed++; } }
       for (const e of newE) { try { await store.saveEmail({ ...e }); } catch { failed++; } }
-      toast(failed ? `Copied, but ${failed} item${failed === 1 ? "" : "s"} could not be saved.` : `Copied ${newP.length + newE.length} item${newP.length + newE.length === 1 ? "" : "s"} into the shared library.`);
+      if (newL.length) { try { await store.saveLeads(newL); } catch { failed += newL.length; } }
+      const n = newP.length + newE.length + newL.length;
+      toast(failed ? `Copied, but ${failed} item${failed === 1 ? "" : "s"} could not be saved.` : `Copied ${n} item${n === 1 ? "" : "s"} into the shared library.`);
     }
     async function chooseLibrary(library) {
       const toShared = library === "shared";

@@ -1,6 +1,7 @@
 // localStorage access with validation. Reads never throw; writes report failure instead of swallowing it.
 import { STORAGE_KEYS } from "../domain/constants.js";
 import { normalizeProduct } from "../domain/knowledge.js";
+import { normalizeLead } from "../domain/leads.js";
 
 /** Returns { value, warning } where warning is set when stored data existed but could not be used. */
 export function readJson(key, fallback, storage = globalThis.localStorage) {
@@ -38,7 +39,7 @@ export function normalizeEmail(raw) {
     ...raw, id,
     status: raw.status == null || raw.status === "" ? "draft" : raw.status,   // only a MISSING status gets the legacy default; an unfamiliar one is kept as is
     createdAt: Number.isFinite(raw.createdAt) ? raw.createdAt : 0,
-    recipient: { ...rec, name: str(rec.name), role: str(rec.role), company: str(rec.company), why: str(rec.why), profileUrl: str(rec.profileUrl), profile: str(rec.profile), email: str(rec.email) },
+    recipient: { ...rec, name: str(rec.name), role: str(rec.role), company: str(rec.company), why: str(rec.why), profileUrl: str(rec.profileUrl), profile: str(rec.profile), email: str(rec.email), leadId: str(rec.leadId) },
     productName: str(raw.productName), goal: str(raw.goal) || "advice",
     subject: str(raw.subject), what: str(raw.what), why: str(raw.why), ask: str(raw.ask),
     note: str(raw.note),
@@ -63,14 +64,15 @@ function readList(key, normalize, storage) {
 export function loadAll(storage = globalThis.localStorage, keys = STORAGE_KEYS) {
   const products = readList(keys.products, normalizeProduct, storage);
   const emails = readList(keys.emails, normalizeEmail, storage);
+  const leads = keys.leads ? readList(keys.leads, normalizeLead, storage) : { items: [], warning: null };
   const s = readJson(keys.settings, {}, storage);
   const settings = s.value && typeof s.value === "object" && !Array.isArray(s.value) ? s.value : {};
   const c = readJson(keys.compose, null, storage);
   const compose = c.value && typeof c.value === "object" && !Array.isArray(c.value) ? c.value : null;
   return {
-    products: products.items, emails: emails.items,
+    products: products.items, emails: emails.items, leads: leads.items,
     settings: { signature: str(settings.signature), signoffProduct: settings.signoffProduct !== false, emailApp: emailApp(settings.emailApp), gmailAccount: emailAccount(settings.gmailAccount) },
     compose,
-    warnings: [products.warning, emails.warning, s.warning, c.warning].filter(Boolean),
+    warnings: [products.warning, emails.warning, leads.warning, s.warning, c.warning].filter(Boolean),
   };
 }

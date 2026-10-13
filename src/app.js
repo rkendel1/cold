@@ -7,6 +7,7 @@ import { createRouter } from "./navigation.js";
 import { mountCompose } from "./views/compose.js";
 import { mountKnowledge } from "./views/knowledge.js";
 import { mountHistory } from "./views/history.js";
+import { mountLeads } from "./views/leads.js";
 import { mountSettings } from "./views/settings.js";
 
 /**
@@ -19,16 +20,17 @@ export async function startApp(rootEl = document.getElementById("app"), { store 
   const views = {
     compose: h("section", { id: "view-compose", "aria-labelledby": "compose-title" }),
     knowledge: h("section", { id: "view-knowledge", "aria-labelledby": "knowledge-title", hidden: true }),
+    leads: h("section", { id: "view-leads", "aria-labelledby": "leads-title", hidden: true }),
     history: h("section", { id: "view-history", "aria-labelledby": "history-title", hidden: true }),
     settings: h("section", { id: "view-settings", "aria-labelledby": "settings-title", hidden: true }),
   };
-  const links = [["compose", "Write"], ["knowledge", "Knowledge"], ["history", "History"], ["settings", "Settings"]].map(([r, label]) => h("a", { href: `#/${r}`, dataset: { route: r }, id: `nav-${r}` }, label));
+  const links = [["compose", "Write"], ["knowledge", "Knowledge"], ["leads", "Leads"], ["history", "History"], ["settings", "Settings"]].map(([r, label]) => h("a", { href: `#/${r}`, dataset: { route: r }, id: `nav-${r}` }, label));
   const footer = h("footer", { class: "app-footer" });
   const notices = h("div", { id: "notices", class: "notices" });
   rootEl.append(
     h("a", { class: "skip", href: "#main" }, "Skip to content"),
     h("header", { class: "app-header" }, h("div", { class: "brand" }, "Cold"), h("nav", { class: "primary-nav", "aria-label": "Primary" }, links)),
-    h("main", { id: "main", tabindex: "-1" }, notices, views.compose, views.knowledge, views.history, views.settings),
+    h("main", { id: "main", tabindex: "-1" }, notices, views.compose, views.knowledge, views.leads, views.history, views.settings),
     footer);
 
   const router = createRouter({ views, links });
@@ -36,11 +38,13 @@ export async function startApp(rootEl = document.getElementById("app"), { store 
   const navigate = (route, opts = {}) => {
     router.go(route);
     if (route === "knowledge") knowledge.show(opts);
-    if (route === "compose" && opts.productId) compose.selectProduct(opts.productId);
+    if (route === "compose" && opts.lead) compose.useLead(opts.lead);
+    else if (route === "compose" && opts.productId) compose.selectProduct(opts.productId);
   };
 
   compose = mountCompose(views.compose, { store, platform, navigate });
   knowledge = mountKnowledge(views.knowledge, { store, navigate });
+  const leads = mountLeads(views.leads, { store, navigate });
   const history = mountHistory(views.history, { store, openRecord: rec => { if (rec) compose.open(rec); navigate("compose"); } });
 
   const settings = mountSettings(views.settings, { store, platform });
@@ -54,7 +58,7 @@ export async function startApp(rootEl = document.getElementById("app"), { store 
     const held = platform.hub ? platform.hub.replica.conflicts : [];
     if (held.length) notices.append(notice("warn", h("strong", {}, `${held.length} edit${held.length === 1 ? "" : "s"} made here couldn't be merged with a newer change in the Cold desktop app`), h("p", {}, "The app's newer version was kept and your edit was set aside, not lost. Review it in Settings.")));
   };
-  store.subscribe(t => { if (t === "ready" || t === "notice" || t === "emails" || t === "products") renderNotices(); if (t === "ready" || t === "server" || t === "surface") paintFooter(); });
+  store.subscribe(t => { if (t === "ready" || t === "notice" || t === "emails" || t === "products" || t === "leads") renderNotices(); if (t === "ready" || t === "server" || t === "surface") paintFooter(); });
 
   const boot = await platform.detect();
   store.start({ db: boot.db });
@@ -63,7 +67,7 @@ export async function startApp(rootEl = document.getElementById("app"), { store 
   store.set({ server: boot.server, sample: boot.sample, sampleState: boot.sampleState }, "server");
   // Generation or the desktop app's availability can change while the page is open: keep every screen in step.
   platform.subscribe(() => { const s = platform.snapshot(); store.set({ server: s.server, sample: s.sample, sampleState: s.sampleState }, "server"); syncSurface(); });
-  compose.init(); knowledge.init(); history.init(); settings.init();
+  compose.init(); knowledge.init(); leads.init(); history.init(); settings.init();
   router.start();
-  return { store, platform, router, compose, knowledge, history, views, navigate };
+  return { store, platform, router, compose, knowledge, leads, history, views, navigate };
 }

@@ -9,10 +9,10 @@
 import { mergeRecords, reconcileSave, conflictError } from "./outreach.js";
 import rules from "../../lib/library-rules.cjs";   // the rules the server shares: version, stale test, list order
 
-export const { versionOf, nextVersion, isStale, compareEmails, compareProducts } = rules;
+export const { versionOf, nextVersion, isStale, compareEmails, compareProducts, compareLeads } = rules;
 export { mergeRecords, conflictError };
 
-export const LIBRARY_KINDS = ["products", "emails"];
+export const LIBRARY_KINDS = ["products", "emails", "leads"];
 
 
 /**

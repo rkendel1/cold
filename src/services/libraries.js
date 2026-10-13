@@ -57,5 +57,5 @@ export function createLibraries({ hubStore, link, makeReplica }) {
 /** Everything in a replica as plain records, without changing it. */
 export function readAll(db) {
   const get = name => { let docs = []; const off = db.collection(name).onSnapshot(s => { docs = s.docs.map(d => ({ ...d.data(), id: d.id })); }); off(); return docs; };
-  return { products: get("products"), emails: get("emails") };
+  return { products: get("products"), emails: get("emails"), leads: get("leads") };
 }

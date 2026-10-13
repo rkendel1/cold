@@ -92,7 +92,7 @@ test('extension works with the app closed, then syncs with it when it starts, su
   try {
     assert.match(await panel.textContent('#genHint'), /No provider is set up yet/);
     // ---- the extension's own model, set up in the SAME Settings screen the web and desktop apps have
-    assert.deepEqual(await panel.$$eval('.primary-nav a', a => a.map(x => x.textContent)), ['Write', 'Knowledge', 'History', 'Settings']);
+    assert.deepEqual(await panel.$$eval('.primary-nav a', a => a.map(x => x.textContent)), ['Write', 'Knowledge', 'Leads', 'History', 'Settings']);
     await saveCustomModel(panel, ownModel.port, 'own-model');
     await nav(panel, 'write'); await until(async () => !/No provider is set up yet/.test(await panel.textContent('#genHint')));
     // ---- a product, through the SAME Knowledge editor
@@ -107,6 +107,11 @@ test('extension works with the app closed, then syncs with it when it starts, su
     assert.ok(ownModel.prompts.some(p => /Offline Co/.test(p) && /@offlineco/.test(p)), 'the tweet used the product and its handle');
     assert.equal(model1.prompts.length, 0, "the (closed) app's model was never involved");
     assert.equal(app.db.snapshot().emails.length, 0);
+    // ---- leads: the same Leads screen; import a CSV with the app closed
+    await nav(panel, 'leads');
+    await panel.setInputFiles('#leadsFile', { name: 'leads.csv', mimeType: 'text/csv', buffer: Buffer.from('name,company,email,why,list\nAda Park,PipeCo,ada@pipeco.io,Posted about onboarding,Q4\nBo Chen,BoCo,bo@boco.io,,Q4\n') });
+    await panel.waitForSelector('#confirmImport'); await panel.click('#confirmImport'); await panel.waitForSelector('#leadsTable');
+    assert.equal(await panel.locator('#leadsTable tbody tr').count(), 2); assert.equal(app.db.snapshot().leads.length, 0);
     // ---- History and its status buttons work offline too
     await nav(panel, 'history'); await panel.waitForSelector('.hrow'); await panel.click('.hrow .hMarkSent');
     await panel.waitForFunction(() => /Marked sent/.test(document.querySelector('.hrow .chip').textContent));
@@ -123,13 +128,20 @@ test('extension works with the app closed, then syncs with it when it starts, su
     assert.deepEqual([app.db.snapshot().emails.length, app.db.snapshot().products.length], [0, 0]);
     await nav(panel, 'settings'); assert.match(await panel.textContent('#libraryLine'), /The Cold Desktop library/);
     await panel.click('#importStandalone');
-    assert.match(await panel.textContent('dialog'), /1 product \(Offline Co\) and 1 draft/);
+    assert.match(await panel.textContent('dialog'), /1 product \(Offline Co\) and 1 draft.*, and 2 leads \(Ada Park, Bo Chen\)/);
     await panel.click('dialog button[value="ok"]');
     await until(() => app.db.snapshot().emails.length === 1 && app.db.snapshot().products.length === 1);
     const snap = app.db.snapshot();
     assert.deepEqual([snap.products[0].name, snap.products[0].xHandle, snap.emails[0].what, snap.emails[0].status], ['Offline Co', '@offlineco', 'We just shipped scheduled jobs on edge servers.', 'sent']);
     assert.equal(typeof snap.emails[0].sentAt, 'number'); assert.equal(snap.emails[0].sentCopy.text, 'We just shipped scheduled jobs on edge servers.');
 
+    // ---- the leads made offline are in the app's database; edits go both ways
+    await until(() => app.db.snapshot().leads.length === 2);
+    assert.deepEqual(app.db.snapshot().leads.map(l => [l.name, l.company, l.email, l.list]), [['Ada Park', 'PipeCo', 'ada@pipeco.io', 'Q4'], ['Bo Chen', 'BoCo', 'bo@boco.io', 'Q4']]);
+    await nav(panel, 'leads'); await panel.locator('tr', { hasText: 'Bo Chen' }).locator('.leadEdit').click(); await panel.fill('#lf-company', 'BoCo Ltd'); await panel.click('#saveLead');
+    await until(() => app.db.snapshot().leads.find(l => l.name === 'Bo Chen').company === 'BoCo Ltd');
+    app.db.put('leads', 'from-app', { id: 'from-app', name: 'Cy Diaz', company: 'CyCo', email: '', list: '', createdAt: Date.now(), updatedAt: Date.now() });
+    await panel.waitForSelector('tr:has-text("Cy Diaz")', { timeout: 15000 });
     // ---- the app goes away while the panel is open: nothing breaks
     await app.stop();
     await until(async () => !(await hubOnline(panel)));

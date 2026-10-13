@@ -47,7 +47,7 @@ const go = (page, v) => page.click(`#nav-${v}`);
 async function workflow(name, page, s) {
   const x = EXPECT[name];
   // same words everywhere
-  assert.deepEqual(await page.$$eval('.primary-nav a', a => a.map(e => e.textContent)), ['Write', 'Knowledge', 'History', 'Settings'], `${name}: navigation`);
+  assert.deepEqual(await page.$$eval('.primary-nav a', a => a.map(e => e.textContent)), ['Write', 'Knowledge', 'Leads', 'History', 'Settings'], `${name}: navigation`);
   await go(page, 'history');
   assert.deepEqual(await page.$$eval('.hfilters .btn', b => b.map(e => e.textContent.replace(/\s*\d+$/, '').trim())), ['All', 'Draft', 'Marked sent', 'Reply recorded'], `${name}: status words`);
   assert.match(await page.textContent('#view-history .lede'), /can't see your inbox/);
@@ -60,6 +60,12 @@ async function workflow(name, page, s) {
 
   // your sign-off name is set once, in Settings (the same screen everywhere)
   await page.fill('#signName', 'Sam Founder'); await page.click('#saveSignoff'); await page.waitForFunction(() => /Saved/.test(document.querySelector('#saveSignoff').closest('.form').innerText));
+  // leads: import a small CSV through the same screen; the stored record has the same fields everywhere
+  await go(page, 'leads'); await page.setInputFiles('#leadsFile', { name: 'l.csv', mimeType: 'text/csv', buffer: Buffer.from('name,company,role,email,why,goal,list\nJo Park,Acme,CTO,jo@acme.io,Wrote about trials,Advice,Q4\n') });
+  await page.waitForSelector('#confirmImport'); await page.click('#confirmImport'); await page.waitForSelector('#leadsTable tbody tr');
+  const lead = await until(async () => (await s.readLeads())[0]);
+  assert.deepEqual([lead.name, lead.company, lead.role, lead.email, lead.why, lead.goal, lead.list, lead.source, typeof lead.id, typeof lead.createdAt, typeof lead.updatedAt], ['Jo Park', 'Acme', 'CTO', 'jo@acme.io', 'Wrote about trials', 'advice', 'Q4', 'csv', 'string', 'number', 'number'], `${name}: lead record`);
+  assert.equal(await page.locator('#templateBtn, #exportBtn, #addLeadBtn, #importBtn').count(), 4, `${name}: lead tools`);
   // product, through the same Knowledge editor
   await go(page, 'knowledge'); await page.click('#emptyAdd');
   await page.fill('#kName', 'Acme Flow'); await page.fill('#kWhat', 'Acme Flow turns a signup into a first booked job for plumbers.'); await page.fill('#kWho', 'Plumbing shops'); await page.fill('#kProblem', 'Trials stall before a teammate is invited.');
@@ -114,13 +120,13 @@ test('parity: the same workflow gives the same records, words and gates on web, 
     // ---- web
     { const ctx = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] }), page = await ctx.newPage();
       await page.goto(web.base + '/'); await page.waitForSelector('#genBtn', { state: 'attached' });
-      results.web = await workflow('web', page, { read: async () => (await page.evaluate(() => JSON.parse(localStorage.getItem('cold.emails') || '[]')))[0] || {} });
+      results.web = await workflow('web', page, { read: async () => (await page.evaluate(() => JSON.parse(localStorage.getItem('cold.emails') || '[]')))[0] || {}, readLeads: async () => await page.evaluate(() => JSON.parse(localStorage.getItem('cold.leads') || '[]')) });
       await ctx.close(); }
     // ---- desktop UI (the page the Electron window shows), records in SQLite
     { const db = createDb(path.join(hubDirPath, 'cold.db'));
       const ctx = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] }), page = await ctx.newPage();
       await page.goto(desk.base + '/'); await page.waitForSelector('#genBtn', { state: 'attached' });
-      results.desktop = await workflow('desktop', page, { read: async () => db.snapshot().emails[0] || {} });
+      results.desktop = await workflow('desktop', page, { read: async () => db.snapshot().emails[0] || {}, readLeads: async () => db.snapshot().leads });
       await ctx.close(); db.close(); }
     // ---- extension, on its own model, records in extension storage
     { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-par-ext-'));
@@ -132,7 +138,7 @@ test('parity: the same workflow gives the same records, words and gates on web, 
       await page.selectOption('#setProvider', 'custom'); await page.fill('#setUrl', `http://127.0.0.1:${own.port}/v1`);
       await page.selectOption('#setModel', '__other__'); await page.fill('#setModelText', 'own-model'); await page.click('button:has-text("Save and use this provider")');
       await until(() => page.evaluate(() => !!__cold.platform.backend.describe()));
-      results.extension = await workflow('extension', page, { read: async () => { const d = await page.evaluate(async () => (await chrome.storage.local.get('cold.replica'))['cold.replica']); return Object.values((d && d.emails) || {})[0] || {}; } });
+      results.extension = await workflow('extension', page, { read: async () => { const d = await page.evaluate(async () => (await chrome.storage.local.get('cold.replica'))['cold.replica']); return Object.values((d && d.emails) || {})[0] || {}; }, readLeads: async () => { const d = await page.evaluate(async () => (await chrome.storage.local.get('cold.replica'))['cold.replica']); return Object.values((d && d.leads) || {}); } });
       await ctx.close(); }
     // ---- the three records are the same, field for field, wherever they were made
     assert.deepEqual(results.desktop, results.web, 'desktop record matches web record');

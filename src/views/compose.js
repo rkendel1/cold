@@ -16,6 +16,8 @@ export function mountCompose(root, { store, platform, navigate }) {
   let ctl = null;
 
   /* ---------- form ---------- */
+  let leadId = "";   // the lead this draft is for (set when you press Write on a lead); saved on the draft so Leads can show its progress
+  const leadNote = h("p", { class: "hint", id: "leadNote", hidden: true });
   const f = {
     name: field({ id: "rName", label: "Name", required: true, control: textInput({ placeholder: "e.g. Sarah Chen" }) }),
     company: field({ id: "rCompany", label: "Company", required: true, control: textInput({ placeholder: "e.g. Acme" }) }),
@@ -56,6 +58,7 @@ export function mountCompose(root, { store, platform, navigate }) {
   const socialGroup = tw.el;
   const assist = createRecipientAssist({ f, S, store, platform, readForm: () => readForm(), persist: () => persistForm(), getProduct: () => reasoningProduct(), pName: f.pName, pWhat: f.pWhat });
   const emailGroup = h("div", { class: "form", id: "emailGroup" },
+    leadNote,
     assist.profileBlock,
     h("fieldset", {}, h("legend", {}, "Who are you writing to?"), h("div", { class: "row3" }, f.name, f.company, f.role), f.email),
     f.why, assist.reasonEl,
@@ -103,10 +106,16 @@ export function mountCompose(root, { store, platform, navigate }) {
       ...tw.read(), mode: (checked("format") || "email") === "email" ? "email" : tw.read().mode,
       name: val(f.name), role: val(f.role), company: val(f.company), productId: productSelect.value,
       why: val(f.why), goal: checked("goal") || "advice", goalOther: val(f.goalOther), convey: val(f.convey),
-      profileUrl: val(f.profileUrl), profile: val(f.profile), email: val(f.email),
+      profileUrl: val(f.profileUrl), profile: val(f.profile), email: val(f.email), leadId,
     };
   }
+  function paintLead() {
+    const l = leadId && store.leadById(leadId);
+    leadNote.hidden = !leadId; leadNote.textContent = "";
+    if (leadId) leadNote.append(`Writing to ${l ? l.name : "a lead"} from your Leads. `, h("button", { type: "button", class: "linkbtn", id: "unlinkLead", onclick: () => { leadId = ""; paintLead(); persistForm(); } }, "Not this lead"));
+  }
   function fillForm(d) {
+    leadId = d.leadId || ""; paintLead();
     radio("format", d.mode && d.mode !== "email" ? "tweet" : "email"); tw.fill(d);
     f.name.input.value = d.name || ""; f.role.input.value = d.role || ""; f.company.input.value = d.company || "";
     f.profileUrl.input.value = d.profileUrl || ""; f.profile.input.value = d.profile || ""; f.email.input.value = d.email || ""; assist.reset();
@@ -117,7 +126,7 @@ export function mountCompose(root, { store, platform, navigate }) {
   }
   const formFromRecord = e => e.mode && e.mode !== "email"
     ? { mode: e.mode, tweetUrl: e.tweetUrl, tweetContext: e.tweetContext, tweetAuthor: e.tweetAuthor, tweetPoint: e.tweetPoint, tweetUse: e.tweetUse, productId: e.productId, goal: e.goal, convey: e.convey }
-    : ({ mode: e.mode, tweetUrl: e.tweetUrl, tweetContext: e.tweetContext, name: e.recipient.name, role: e.recipient.role, company: e.recipient.company, why: e.recipient.why, profileUrl: e.recipient.profileUrl, profile: e.recipient.profile, email: e.recipient.email, productId: e.productId, goal: e.goal, goalOther: e.goalOther, convey: e.convey });
+    : ({ mode: e.mode, tweetUrl: e.tweetUrl, tweetContext: e.tweetContext, name: e.recipient.name, role: e.recipient.role, company: e.recipient.company, why: e.recipient.why, profileUrl: e.recipient.profileUrl, profile: e.recipient.profile, email: e.recipient.email, leadId: e.recipient.leadId, productId: e.productId, goal: e.goal, goalOther: e.goalOther, convey: e.convey });
   /** Empties everything in Write: inputs, helper results, the shown draft and any error. Saved drafts stay in History. */
   async function clearAll() {
     const edited = S.current && S.current.edited;
@@ -346,6 +355,12 @@ export function mountCompose(root, { store, platform, navigate }) {
     /** Set some of the form's values (used by the extension's "Read this page"); anything not given is kept. */
     /** The form as it is right now (so a caller can avoid overwriting what the user typed). */
     read: () => readForm(),
+    /** Pre-fill Write from a lead: who they are, why they'd care, their product and goal. Nothing is generated until you press Generate. */
+    useLead(lead) {
+      const product = lead.product ? S.products.find(p => (p.name || "").toLowerCase() === lead.product.toLowerCase()) : null;
+      fillForm({ mode: "email", name: lead.name, role: lead.role, company: lead.company, email: lead.email, why: lead.why, profileUrl: lead.profileUrl, goal: lead.goal || "advice", productId: product ? product.id : productSelect.value, leadId: lead.id });
+      store.set({ current: null, undo: null, error: null }, "current"); persistForm(); pane.invalidate(); renderAll(); f.name.input.focus();
+    },
     fill(patch) { fillForm({ ...readForm(), ...patch }); persistForm(); },
     suggestReasons() { return assist.suggest({ auto: true }); },
     selectProduct(id) { if (id && S.products.some(p => p.id === id)) { productSelect.value = id; renderProduct(); persistForm(); } },

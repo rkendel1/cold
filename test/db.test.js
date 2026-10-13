@@ -43,7 +43,7 @@ test('browser data imports exactly once, even if the database is later emptied',
   const db = createDb(tmp());
   assert.equal(db.snapshot().migrated, false);
   const r = db.importOnce({ products: [{ id: 'p1', name: 'A' }, { name: 'no id' }], emails: [{ id: 'e1', createdAt: 5 }], settings: { signature: 's' } });
-  assert.deepEqual(r, { imported: true, products: 1, emails: 1 });
+  assert.deepEqual(r, { imported: true, products: 1, emails: 1, leads: 0 });
   assert.equal(db.importOnce({ products: [{ id: 'p9', name: 'late' }] }).imported, false);
   db.remove('products', 'p1'); db.remove('emails', 'e1');
   assert.equal(db.importOnce({ products: [{ id: 'p9' }] }).imported, false);   // not resurrected

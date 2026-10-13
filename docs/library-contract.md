@@ -1,6 +1,6 @@
 # The library contract: shared in code, shared in data
 
-Cold's **library** is the user's products and drafts (with their notes, statuses, timestamps and sent snapshot). Web, desktop and the
+Cold's **library** is the user's products, drafts (with their notes, statuses, timestamps and sent snapshot) and leads (the list of people to write to: `src/domain/leads.js`, a SQLite `leads` table, the same replica and pairing rules as products). Web, desktop and the
 extension each keep it in their own place. What they share is *rules* (code) and, only when paired, *records* (data).
 
 ## Shared in code (one implementation)

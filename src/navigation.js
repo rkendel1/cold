@@ -1,6 +1,6 @@
 // Hash-based navigation: works on any static host or serverless entry point because the server never sees the route.
-export const ROUTES = ["compose", "knowledge", "history", "settings"];
-const TITLES = { compose: "Write", knowledge: "Knowledge", history: "History", settings: "Settings" };
+export const ROUTES = ["compose", "knowledge", "leads", "history", "settings"];
+const TITLES = { compose: "Write", knowledge: "Knowledge", leads: "Leads", history: "History", settings: "Settings" };
 
 export function parseRoute(hash) {
   const m = String(hash || "").match(/^#\/?([a-z]+)/);

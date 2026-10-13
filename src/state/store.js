@@ -6,7 +6,8 @@ import { loadAll, writeJson } from "./storage.js";
 import { normalizeProduct } from "../domain/knowledge.js";
 import { signoffBlock } from "../domain/signoff.js";
 import { normalizeEmail, readJson, emailApp, emailAccount } from "./storage.js";
-import { saveIntent, deleteIntent, applySave, compareProducts, compareEmails } from "../domain/library.js";
+import { normalizeLead } from "../domain/leads.js";
+import { saveIntent, deleteIntent, applySave, compareProducts, compareEmails, compareLeads } from "../domain/library.js";
 
 export { uid } from "../domain/ids.js";
 
@@ -15,7 +16,7 @@ export function createStore({ storage = globalThis.localStorage, platform = null
   const state = {
     ready: false,
     backend: "local",
-    products: [], emails: [], settings: { signature: "", signoffProduct: true, emailApp: "mailto", gmailAccount: "" },
+    products: [], emails: [], leads: [], settings: { signature: "", signoffProduct: true, emailApp: "mailto", gmailAccount: "" },
     compose: null,           // last compose form values (persisted)
     current: null,           // draft shown in Compose
     undo: null,              // { id, rec } snapshot taken before an Improve
@@ -41,6 +42,7 @@ export function createStore({ storage = globalThis.localStorage, platform = null
   // product or settings save can't put back a stale copy of the drafts.
   function persistLocal(which) {
     if (which === "products") writeJson(STORAGE_KEYS.products, state.products, storage);
+    else if (which === "leads") writeJson(STORAGE_KEYS.leads, state.leads, storage);
     else if (which === "settings") writeJson(STORAGE_KEYS.settings, state.settings, storage);
   }
   /** The stored drafts exactly as saved (including entries this client can't read), plus a refresh of the in-memory copy. */
@@ -59,6 +61,9 @@ export function createStore({ storage = globalThis.localStorage, platform = null
         const items = snap.docs.map(d => normalizeProduct({ ...d.data(), id: d.id })).filter(Boolean).sort(compareProducts);
         set({ products: items, ready: true }, "products");
       }, fail),
+      db.collection("leads").onSnapshot(snap => {
+        set({ leads: snap.docs.map(d => normalizeLead({ ...d.data(), id: d.id })).filter(Boolean).sort(compareLeads) }, "leads");
+      }, fail),
       db.collection("emails").orderBy("createdAt", "desc").limit(500).onSnapshot(snap => {
         set({ emails: snap.docs.map(d => normalizeEmail({ ...d.data(), id: d.id })).filter(Boolean) }, "emails");
       }, fail),
@@ -75,7 +80,7 @@ export function createStore({ storage = globalThis.localStorage, platform = null
      */
     switchLibrary(next) {
       unsubs.forEach(off => { try { off(); } catch { /* ignore */ } });
-      Object.assign(state, { products: [], emails: [], current: null, undo: null, settings: { signature: "", signoffProduct: true, emailApp: "mailto", gmailAccount: "" } });
+      Object.assign(state, { products: [], emails: [], leads: [], current: null, undo: null, settings: { signature: "", signoffProduct: true, emailApp: "mailto", gmailAccount: "" } });
       attach(next); emit("ready");
     },
 
@@ -84,7 +89,7 @@ export function createStore({ storage = globalThis.localStorage, platform = null
         attach(boot.db);
       } else {
         const d = loadAll(storage);
-        Object.assign(state, { products: d.products, emails: [...d.emails].sort(compareEmails), settings: d.settings, compose: d.compose, warnings: d.warnings, ready: true });
+        Object.assign(state, { products: d.products, emails: [...d.emails].sort(compareEmails), leads: [...d.leads].sort(compareLeads), settings: d.settings, compose: d.compose, warnings: d.warnings, ready: true });
       }
       emit("ready");
     },
@@ -105,6 +110,36 @@ export function createStore({ storage = globalThis.localStorage, platform = null
     },
 
     productById: id => state.products.find(p => p.id === id),
+    leadById: id => state.leads.find(l => l.id === id),
+
+    /** Save one lead (add or edit). Leads are versioned by `updatedAt` like products: the newest save wins. */
+    async saveLead(l) {
+      const body = { ...l, updatedAt: Date.now() };
+      if (db) { const { id, ...rest } = body; return queue("l/" + l.id, () => db.doc("leads/" + l.id).set(rest)); }
+      const prev = state.leads, i = prev.findIndex(x => x.id === l.id);
+      state.leads = (i >= 0 ? prev.map((x, j) => (j === i ? body : x)) : [...prev, body]).sort(compareLeads);
+      try { persistLocal("leads"); } catch (e) { state.leads = prev; throw e; }
+      emit("leads");
+    },
+    /** Save many leads at once (an import). One write however many there are. */
+    async saveLeads(list) {
+      const now = Date.now(), docs = list.map(l => ({ ...l, updatedAt: now }));
+      if (!docs.length) return;
+      if (db) return queue("leads", () => (db.setMany ? db.setMany("leads", docs) : Promise.all(docs.map(d => db.doc("leads/" + d.id).set({ ...d })))));
+      const prev = state.leads, byId = new Map(prev.map(x => [x.id, x]));
+      docs.forEach(d => byId.set(d.id, d));
+      state.leads = [...byId.values()].sort(compareLeads);
+      try { persistLocal("leads"); } catch (e) { state.leads = prev; throw e; }
+      emit("leads");
+    },
+    async deleteLeads(ids) {
+      if (!ids.length) return;
+      if (db) return queue("leads", () => (db.deleteMany ? db.deleteMany("leads", ids) : Promise.all(ids.map(id => db.doc("leads/" + id).delete()))));
+      const prev = state.leads, gone = new Set(ids); state.leads = prev.filter(l => !gone.has(l.id));
+      try { persistLocal("leads"); } catch (e) { state.leads = prev; throw e; }
+      emit("leads");
+    },
+    deleteLead(id) { return api.deleteLeads([id]); },
 
     async saveProduct(p) {
       const body = { ...p, updatedAt: Date.now() };

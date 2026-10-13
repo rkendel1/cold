@@ -11,14 +11,14 @@
 import { versionOf, nextVersion, applySave, saveWithMerge } from "../domain/library.js";
 import { queryCollection } from "./collection.js";
 
-const KINDS = ["products", "emails"];
+const KINDS = ["products", "emails", "leads"];
 const MAX_CONFLICTS = 50;
 
 /** @param {{ storage: { get(): Promise<object|null>, set(data: object): Promise<void> } }} opts */
 export function createReplica({ storage, keepCompose = false, pushLocalFirst = true }) {
-  let data = { products: {}, emails: {}, settings: null, outbox: [], lastSync: 0, conflicts: [] };
+  let data = { products: {}, emails: {}, leads: {}, settings: null, outbox: [], lastSync: 0, conflicts: [] };
   let extra = { warnings: [], compose: undefined };
-  const listeners = { products: new Set(), emails: new Set(), "settings/me": new Set() };
+  const listeners = { products: new Set(), emails: new Set(), leads: new Set(), "settings/me": new Set() };
   let app = null, syncing = null, again = false;
 
   const notify = which => { for (const name of which ? [which] : Object.keys(listeners)) for (const fn of listeners[name]) fn(); };
@@ -27,7 +27,7 @@ export function createReplica({ storage, keepCompose = false, pushLocalFirst = t
   const payload = () => (keepCompose ? { ...data, compose: extra.compose } : data);
 
   const adopt = saved => {
-    data = { products: saved.products || {}, emails: saved.emails || {}, settings: saved.settings || null, outbox: Array.isArray(saved.outbox) ? saved.outbox : [], lastSync: saved.lastSync || 0, appVersion: saved.appVersion, conflicts: Array.isArray(saved.conflicts) ? saved.conflicts : [] };
+    data = { products: saved.products || {}, emails: saved.emails || {}, leads: saved.leads || {}, settings: saved.settings || null, outbox: Array.isArray(saved.outbox) ? saved.outbox : [], lastSync: saved.lastSync || 0, appVersion: saved.appVersion, conflicts: Array.isArray(saved.conflicts) ? saved.conflicts : [] };
   };
   async function load() {
     const saved = await storage.get();
@@ -76,6 +76,9 @@ export function createReplica({ storage, keepCompose = false, pushLocalFirst = t
     enqueue(kind, id, "put", versionOf(prev), prev ? JSON.parse(JSON.stringify(prev)) : undefined);
     return rec;
   }).then(() => ({ updatedAt: data[kind][id] && data[kind][id].updatedAt }));
+  /** Many records in one commit (a CSV import): one storage write instead of one per row. Each is queued for the hub like any save. */
+  const writeMany = (kind, docs) => commit(kind, () => { for (const doc of docs) { const prev = data[kind][doc.id]; data[kind][doc.id] = { ...doc }; enqueue(kind, doc.id, "put", versionOf(prev), prev ? JSON.parse(JSON.stringify(prev)) : undefined); } });
+  const removeMany = (kind, ids) => commit(kind, () => { for (const id of ids) { const prev = data[kind][id]; if (!prev) continue; delete data[kind][id]; enqueue(kind, id, "delete", versionOf(prev), JSON.parse(JSON.stringify(prev))); } });
   const remove = (kind, id) => commit(kind, () => { const prev = data[kind][id]; delete data[kind][id]; enqueue(kind, id, "delete", versionOf(prev), prev ? JSON.parse(JSON.stringify(prev)) : undefined); });
   const writeSettings = s => commit("settings/me", () => { data.settings = { ...s }; enqueue("settings", "me", "put", 0); });
 
@@ -156,6 +159,7 @@ export function createReplica({ storage, keepCompose = false, pushLocalFirst = t
 
   return {
     kind: "replica", load, collection, doc, sync, stop() {},
+    setMany: writeMany, deleteMany: removeMany,
     /** The half-written Write form, kept across reopening the panel. Only for stores that opt in (the extension). */
     ...(keepCompose ? { saveCompose(form) { extra.compose = form; return storage.set(payload()).catch(() => {}); } } : {}),
     get initialCompose() { return extra.compose; },

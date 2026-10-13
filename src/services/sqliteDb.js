@@ -7,8 +7,8 @@ import { queryCollection } from "./collection.js";
 const POLL_MS = 3000;
 
 export function createRemoteDb({ fetchImpl = (...a) => globalThis.fetch(...a), headers = () => ({}), readLocal = () => null, poll = true, migrate = true } = {}) {
-  const cache = { products: new Map(), emails: new Map(), settings: null, compose: null };
-  const listeners = { products: new Set(), emails: new Set(), "settings/me": new Set() };
+  const cache = { products: new Map(), emails: new Map(), leads: new Map(), settings: null, compose: null };
+  const listeners = { products: new Set(), emails: new Set(), leads: new Set(), "settings/me": new Set() };
   let version = -1, timer = null;
   const queue = { tail: Promise.resolve() };
 
@@ -25,6 +25,7 @@ export function createRemoteDb({ fetchImpl = (...a) => globalThis.fetch(...a), h
   function adopt(snap) {
     cache.products = new Map(snap.products.map(p => [p.id, p]));
     cache.emails = new Map(snap.emails.map(e => [e.id, e]));
+    cache.leads = new Map((snap.leads || []).map(l => [l.id, l]));
     cache.settings = snap.settings && Object.keys(snap.settings).length ? snap.settings : null;
     cache.compose = snap.compose || null;
     version = snap.version;
@@ -110,5 +111,21 @@ export function createRemoteDb({ fetchImpl = (...a) => globalThis.fetch(...a), h
     };
   }
 
-  return { kind: "sqlite", load, collection, doc, get initialCompose() { return cache.compose; }, stop() { clearInterval(timer); timer = null; } };
+  /** Save or delete many records (a CSV import) with one screen update, then re-read what the database really holds. */
+  function many(name, apply, undoAll, send) {
+    apply(); notify(name);
+    const job = queue.tail.catch(() => {}).then(async () => {
+      try { await send(); await refresh(); }
+      catch (e) { undoAll(); notify(name); await refresh().catch(() => {}); throw e; }   // whatever was saved before the failure stays; the screen shows the truth
+    });
+    queue.tail = job;
+    return job;
+  }
+  const url = (name, id) => `api/data/${name}/${encodeURIComponent(id)}`;
+  const setMany = (name, docs) => { const prev = docs.map(d => [d.id, cache[name].get(d.id)]);
+    return many(name, () => docs.forEach(d => cache[name].set(d.id, { ...d })), () => prev.forEach(([id, p]) => (p ? cache[name].set(id, p) : cache[name].delete(id))), async () => { for (const d of docs) await call(url(name, d.id), { method: "PUT", body: JSON.stringify(d) }); }); };
+  const deleteMany = (name, ids) => { const prev = ids.map(id => [id, cache[name].get(id)]);
+    return many(name, () => ids.forEach(id => cache[name].delete(id)), () => prev.forEach(([id, p]) => p && cache[name].set(id, p)), async () => { for (const id of ids) await call(url(name, id), { method: "DELETE" }); }); };
+
+  return { kind: "sqlite", load, collection, doc, setMany, deleteMany, get initialCompose() { return cache.compose; }, stop() { clearInterval(timer); timer = null; } };
 }

@@ -1,0 +1,174 @@
+// Leads: the people you might write to. Import a CSV (after a review of exactly what will happen), see and edit every lead, write to one
+// with a click, export the list, and download the template that shows the columns Cold uses. Same screen on web, desktop and the extension;
+// on the desktop app the leads live in the SQLite database.
+import { h, clear, append } from "../components/dom.js";
+import { button, notice, chip, field, textInput, textArea, toast, announce } from "../components/ui.js";
+import { confirmDialog, promptDialog } from "../components/dialog.js";
+import { GOALS, STATUS_COPY } from "../domain/constants.js";
+import { uid } from "../domain/ids.js";
+import { LEAD_FIELDS, MAX_IMPORT_BYTES, templateCsv, leadsToCsv, planImport, checkLead, leadProgress, filterLeads, canonicalProfile } from "../domain/leads.js";
+
+const PAGE = 100;
+/** Adds a hook class (for tests and styles) without losing the button's own classes. */
+const tag = (el, cls) => { el.classList.add(cls); return el; };
+const PROGRESS_CHIP = { none: ["neutral", "Not contacted"], draft: ["neutral", STATUS_COPY.draft.label], sent: ["accent", STATUS_COPY.sent.label], replied: ["good", STATUS_COPY.replied.label] };
+
+/** Hand a text file to the user. A BOM makes Excel read the accents correctly; Cold's own reader strips it again. */
+function download(name, text) {
+  const url = URL.createObjectURL(new Blob(["﻿", text], { type: "text/csv;charset=utf-8" }));
+  const a = h("a", { href: url, download: name, hidden: true });
+  document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+export function mountLeads(root, { store, navigate }) {
+  const S = store.state;
+  let query = "", listFilter = "all", progressFilter = "all", shown = PAGE, plan = null, planName = "", selected = new Set();
+
+  const fileIn = h("input", { type: "file", id: "leadsFile", accept: ".csv,text/csv,text/plain,.txt", hidden: true, "aria-label": "Choose a CSV file of leads" });
+  const search = h("input", { type: "search", id: "leadSearch", "aria-label": "Search leads", placeholder: "Search name, company, email, reason, notes" });
+  const listSel = h("select", { id: "leadList", "aria-label": "Filter by list" });
+  const progSel = h("select", { id: "leadProgress", "aria-label": "Filter by outreach" },
+    [["all", "Everyone"], ["none", "Not contacted"], ["draft", "Draft written"], ["sent", "Marked sent"], ["replied", "Reply recorded"]].map(([v, l]) => h("option", { value: v }, l)));
+  const importHost = h("section", { id: "importPanel", class: "card", "aria-live": "polite", hidden: true });
+  const editorHost = h("section", { id: "leadEditor", class: "card", hidden: true });
+  const tableHost = h("div", { class: "table-wrap" });
+  const bulkHost = h("div", { class: "actions", id: "bulkBar", hidden: true });
+  const count = h("p", { class: "hint", id: "leadCount", role: "status" });
+
+  root.append(
+    h("div", { class: "view-head" }, h("h1", { id: "leads-title", tabindex: "-1" }, "Leads"),
+      h("p", { class: "lede" }, "The people you might write to. Import a spreadsheet saved as CSV, or add them one at a time; then write to any of them in a click. Cold never looks anyone up: it only uses what you put here.")),
+    h("div", { class: "actions" },
+      button("Import CSV", { kind: "primary", id: "importBtn", onclick: () => fileIn.click() }),
+      button("Download template", { id: "templateBtn", onclick: () => { download("cold-leads-template.csv", templateCsv()); announce("Template downloaded"); } }),
+      button("Export CSV", { id: "exportBtn", onclick: () => { if (!S.leads.length) return toast("There are no leads to export yet."); download("cold-leads.csv", leadsToCsv(S.leads)); } }),
+      button("Add lead", { id: "addLeadBtn", onclick: () => edit(null) })),
+    fileIn, importHost, editorHost,
+    h("div", { class: "hfilters" }, search, listSel, progSel), count, bulkHost, tableHost);
+
+  /* ---------- import: review first, then save ---------- */
+  fileIn.addEventListener("change", async () => {
+    const file = fileIn.files && fileIn.files[0]; fileIn.value = "";
+    if (!file) return;
+    if (file.size > MAX_IMPORT_BYTES) return showProblem(file.name, `That file is larger than ${MAX_IMPORT_BYTES / 1024 / 1024} MB. Split it into smaller files.`);
+    let text; try { text = await file.text(); } catch { return showProblem(file.name, "Couldn't read that file."); }
+    planName = file.name; runPlan(text, { duplicates: "skip", list: file.name.replace(/\.[^.]+$/, "") }, true);
+  });
+  let sourceText = "";
+  function showProblem(name, message) { clear(importHost).append(h("h2", {}, `Can't import ${name}`), notice("bad", h("p", {}, message)), h("div", { class: "actions" }, button("Download the template", { onclick: () => download("cold-leads-template.csv", templateCsv()) }), button("Close", { kind: "ghost", onclick: () => { importHost.hidden = true; } }))); importHost.hidden = false; announce(message); }
+  function runPlan(text, opts, fresh) {
+    sourceText = text; plan = planImport(text, S.leads, opts);
+    if (!plan.ok) return showProblem(planName, plan.message);
+    const dupSel = h("select", {},
+      h("option", { value: "skip" }, "Leave people already in my leads as they are"), h("option", { value: "update" }, "Fill in their blank fields from this file"));
+    dupSel.value = opts.duplicates;
+    const listIn = h("input", { type: "text", value: opts.list, placeholder: "e.g. Q4 founders" });
+    const redo = () => runPlan(sourceText, { duplicates: dupSel.value, list: listIn.value }, false);
+    dupSel.addEventListener("change", redo); listIn.addEventListener("change", redo);
+    const n = plan.adds.length + plan.updates.length;
+    const line = (label, items, fmt) => items.length ? h("details", { class: "panel" }, h("summary", {}, `${label} (${items.length})`), h("ul", { class: "plain" }, items.slice(0, 15).map(fmt), items.length > 15 ? h("li", { class: "hint" }, `…and ${items.length - 15} more`) : null)) : null;
+    append(clear(importHost), [
+      h("h2", { id: "import-title" }, `Review ${planName}`),
+      h("p", { id: "importSummary" }, `${plan.total} row${plan.total === 1 ? "" : "s"} read. `, h("strong", {}, `${plan.adds.length} new`), plan.updates.length ? `, ${plan.updates.length} to update` : "", `, ${plan.duplicates.length + plan.unchanged} already in your leads or repeated, ${plan.invalid.length} can't be imported${plan.examples.length ? `, ${plan.examples.length} sample row${plan.examples.length === 1 ? "" : "s"} from the template skipped` : ""}.`),
+      h("p", { class: "hint" }, "Nothing has been saved yet."),
+      field({ id: "dupPolicy", label: "If someone is already in your leads", required: null, control: id => { dupSel.id = id; return dupSel; } }),
+      field({ id: "importList", label: "List for rows that don't have one", required: null, control: id => { listIn.id = id; return listIn; } }),
+      plan.ignored.length ? h("p", { class: "hint" }, `Columns Cold doesn't use were ignored: ${plan.ignored.join(", ")}.`) : null,
+      line("Rows that can't be imported", plan.invalid, x => h("li", {}, `Line ${x.line}: ${x.name}. ${x.reasons.join(" ")}`)),
+      line("Imported, but check these", plan.warnings, x => h("li", {}, `Line ${x.line}: ${x.name}. ${x.messages.join(" ")}`)),
+      line("Skipped: already there", plan.duplicates, x => h("li", {}, `Line ${x.line}: ${x.name}. ${x.reason}`)),
+      line("Will be filled in", plan.updates, x => h("li", {}, `${x.existing.name}: ${x.changed.join(", ")}`)),
+      h("div", { class: "actions" },
+        button(n ? `Add ${plan.adds.length} lead${plan.adds.length === 1 ? "" : "s"}${plan.updates.length ? ` and update ${plan.updates.length}` : ""}` : "Nothing to import", { kind: "primary", id: "confirmImport", disabled: !n, onclick: () => commit(n) }),
+        button("Cancel", { kind: "ghost", id: "cancelImport", onclick: () => { importHost.hidden = true; plan = null; } }))]);
+    importHost.hidden = false;
+    if (fresh) { announce(`${plan.adds.length} new leads ready to review`); importHost.scrollIntoView?.({ block: "nearest" }); }
+  }
+  async function commit(n) {
+    const btn = importHost.querySelector("#confirmImport"); btn.disabled = true; btn.textContent = "Saving…";
+    try {
+      await store.saveLeads([...plan.adds, ...plan.updates.map(u => u.next)]);
+      const added = plan.adds.length, updated = plan.updates.length;
+      importHost.hidden = true; plan = null; shown = Math.max(shown, PAGE);
+      toast(`${added} lead${added === 1 ? "" : "s"} added${updated ? `, ${updated} updated` : ""}`); announce(`${added} leads added`);
+    } catch { btn.disabled = false; btn.textContent = `Add ${n}`; showProblem(planName, "Couldn't save the leads. Nothing was lost: try again."); }
+  }
+
+  /* ---------- add / edit one lead ---------- */
+  function edit(lead) {
+    const isNew = !lead, base = lead || { id: uid("l"), source: "manual", createdAt: Date.now() };
+    const f = {};
+    for (const spec of LEAD_FIELDS) {
+      const common = { id: `lf-${spec.key}`, label: spec.label, hint: spec.hint, required: spec.required ? true : null };
+      if (spec.key === "why" || spec.key === "notes") f[spec.key] = field({ ...common, control: textArea({ rows: spec.key === "why" ? 3 : 2 }) });
+      else if (spec.key === "product") f[spec.key] = field({ ...common, control: (id, d) => h("select", { id, "aria-describedby": d }, h("option", { value: "" }, "Choose when I write"), S.products.map(p => h("option", { value: p.name }, p.name || "Untitled")), base.product && !S.products.some(p => p.name === base.product) ? h("option", { value: base.product }, `${base.product} (not in Knowledge)`) : null) });
+      else if (spec.key === "goal") f[spec.key] = field({ ...common, control: (id, d) => h("select", { id, "aria-describedby": d }, h("option", { value: "" }, "Choose when I write"), Object.entries(GOALS).map(([k, g]) => h("option", { value: k }, g.label))) });
+      else f[spec.key] = field({ ...common, control: textInput(spec.key === "list" ? { list: "leadLists" } : spec.key === "email" ? { type: "email", inputmode: "email" } : {}) });
+      f[spec.key].input.value = base[spec.key] || "";
+    }
+    const msg = h("p", { class: "hint", role: "status" });
+    const read = () => ({ ...base, ...Object.fromEntries(LEAD_FIELDS.map(s => [s.key, f[s.key].input.value.trim()])) });
+    const save = async () => {
+      const rec = read(), { errors, warnings } = checkLead(rec);
+      f.name.setError(errors.join(" ")); if (errors.length) { f.name.input.focus(); return; }
+      if (rec.profileUrl && canonicalProfile(rec.profileUrl)) rec.profileUrl = canonicalProfile(rec.profileUrl);
+      try { await store.saveLead(rec); toast(isNew ? "Lead added" : "Lead saved"); editorHost.hidden = true; if (warnings.length) toast(warnings[0]); }
+      catch { msg.textContent = "Couldn't save. Your changes are still here; try again."; }
+    };
+    clear(editorHost).append(h("h2", { id: "editor-title" }, isNew ? "Add a lead" : `Edit ${base.name || "lead"}`),
+      h("div", { class: "form" }, h("div", { class: "grid2" }, f.name, f.company), h("div", { class: "grid2" }, f.role, f.email), f.profileUrl, f.why, h("div", { class: "grid2" }, f.product, f.goal), h("div", { class: "grid2" }, f.list, f.notes),
+        h("div", { class: "actions" }, button("Save lead", { kind: "primary", id: "saveLead", onclick: save }), button("Cancel", { kind: "ghost", onclick: () => { editorHost.hidden = true; } }),
+          isNew ? null : button("Delete lead", { kind: "ghost danger", id: "deleteLead", onclick: () => del([base.id]).then(done => { if (done) editorHost.hidden = true; }) })), msg));
+    editorHost.hidden = false; f.name.input.focus(); editorHost.scrollIntoView?.({ block: "nearest" });
+  }
+  async function del(ids) {
+    const names = ids.map(id => store.leadById(id)).filter(Boolean);
+    if (!(await confirmDialog({ title: ids.length === 1 ? `Delete ${names[0] ? names[0].name || "this lead" : "this lead"}?` : `Delete ${ids.length} leads?`, body: "This removes them from your leads. Drafts already written to them stay in History.", confirmLabel: "Delete", danger: true }))) return false;
+    try { await store.deleteLeads(ids); ids.forEach(id => selected.delete(id)); toast(ids.length === 1 ? "Lead deleted" : `${ids.length} leads deleted`); return true; }
+    catch { toast("Couldn't delete. Nothing was removed."); return false; }
+  }
+
+  /* ---------- the table ---------- */
+  function render() {
+    const lists = [...new Set(S.leads.map(l => l.list).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    append(clear(listSel), [h("option", { value: "all" }, "All lists"), h("option", { value: "" }, "No list"), ...lists.map(l => h("option", { value: l }, l))]); listSel.value = listFilter;
+    document.getElementById("leadLists") || document.body.append(h("datalist", { id: "leadLists" }));
+    clear(document.getElementById("leadLists")).append(...lists.map(l => h("option", { value: l })));
+    selected = new Set([...selected].filter(id => S.leads.some(l => l.id === id)));
+    const rows = filterLeads(S.leads, { query, list: listFilter, progress: progressFilter, emails: S.emails });
+    count.textContent = S.leads.length ? `${rows.length} of ${S.leads.length} lead${S.leads.length === 1 ? "" : "s"}` : "";
+    clear(tableHost);
+    if (!S.leads.length) { tableHost.append(h("div", { class: "empty" }, h("h2", {}, "No leads yet"), h("p", {}, "Download the template, fill it in a spreadsheet, save it as CSV and import it here. Or add someone by hand."), h("div", { class: "actions" }, button("Download template", { onclick: () => download("cold-leads-template.csv", templateCsv()) }), button("Import CSV", { kind: "primary", onclick: () => fileIn.click() })))); renderBulk(); return; }
+    if (!rows.length) { tableHost.append(h("p", { class: "empty" }, "No leads match.")); renderBulk(); return; }
+    const all = h("input", { type: "checkbox", id: "selectAll", "aria-label": "Select all shown leads", checked: rows.slice(0, shown).every(l => selected.has(l.id)) });
+    all.addEventListener("change", () => { rows.slice(0, shown).forEach(l => (all.checked ? selected.add(l.id) : selected.delete(l.id))); render(); });
+    const th = t => h("th", { scope: "col" }, t);
+    append(tableHost, [h("table", { class: "leads", id: "leadsTable" }, h("caption", { class: "sr-only" }, "Leads"),
+      h("thead", {}, h("tr", {}, h("th", { scope: "col" }, all), th("Name"), th("Company"), th("Email"), th("Why they'd care"), th("List"), th("Outreach"), th("Actions"))),
+      h("tbody", {}, rows.slice(0, shown).map(l => {
+        const [kind, label] = PROGRESS_CHIP[leadProgress(l, S.emails)];
+        const check = h("input", { type: "checkbox", "aria-label": `Select ${l.name}`, checked: selected.has(l.id) }); check.addEventListener("change", () => { check.checked ? selected.add(l.id) : selected.delete(l.id); renderBulk(); });
+        const issues = checkLead(l).warnings;
+        return h("tr", { dataset: { id: l.id } }, h("td", {}, check),
+          h("td", {}, h("strong", {}, l.name || "Unnamed"), l.role ? h("div", { class: "sub" }, l.role) : null),
+          h("td", {}, l.company), h("td", {}, l.email, issues.some(w => /email/.test(w)) ? h("span", { class: "chip warn", title: "This address doesn't look valid" }, "check") : null),
+          h("td", { class: "why" }, l.why), h("td", {}, l.list), h("td", {}, chip(kind, label, { glyph: false })),
+          h("td", { class: "ctl" }, tag(button("Edit", { kind: "ghost", "aria-label": `Edit ${l.name}`, onclick: () => edit(l) }), "leadEdit"), tag(button("Write", { "aria-label": `Write to ${l.name}`, onclick: () => navigate("compose", { lead: l }) }), "leadWrite")));
+      }))),
+      rows.length > shown ? h("div", { class: "actions" }, button(`Show ${Math.min(PAGE, rows.length - shown)} more`, { id: "showMore", onclick: () => { shown += PAGE; render(); } })) : null]);
+    renderBulk();
+  }
+  function renderBulk() {
+    bulkHost.hidden = !selected.size; clear(bulkHost);
+    if (!selected.size) return;
+    bulkHost.append(h("span", { id: "selCount" }, `${selected.size} selected`),
+      button("Set list…", { id: "bulkList", onclick: async () => { const v = await promptDialog({ title: "List for the selected leads", hint: "Type a list name, or leave it empty to remove them from any list.", value: "" }); if (v === null) return; await store.saveLeads(S.leads.filter(l => selected.has(l.id)).map(l => ({ ...l, list: v.trim() }))); toast("List updated"); } }),
+      button("Delete selected", { kind: "ghost danger", id: "bulkDelete", onclick: () => del([...selected]) }),
+      button("Clear selection", { kind: "ghost", onclick: () => { selected.clear(); render(); } }));
+  }
+  search.addEventListener("input", () => { query = search.value; shown = PAGE; render(); });
+  listSel.addEventListener("change", () => { listFilter = listSel.value; shown = PAGE; render(); });
+  progSel.addEventListener("change", () => { progressFilter = progSel.value; shown = PAGE; render(); });
+  store.subscribe(t => { if (t === "leads" || t === "emails" || t === "ready" || t === "products") render(); });
+  return { init: render, edit, importText: (text, name = "pasted.csv") => { planName = name; runPlan(text, { duplicates: "skip", list: "" }, true); } };
+}

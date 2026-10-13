@@ -140,6 +140,28 @@ Details:
 - **Desktop app:** a one-function bridge (`desktop/preload.js`) asks the main process to open the link; the main process accepts only a valid `mailto:` link or the exact Gmail / Outlook compose link (right host and path, known parameters only; never a look-alike host) and reports failure back so the page can point to Copy.
 - **A browser can't tell whether anything opened,** so messages say "if nothing opened" and what to try. Whether an email app (or a tab, if pop-ups are blocked) opens depends on your local setup, which automated tests can't prove; they check the exact link Cold asks for, and in the extension that a real new tab opens on it.
 
+## Leads (a list of people to write to)
+
+**Leads** (in the navigation, on web, desktop and the extension) is your list of potential outreach: import it from a spreadsheet, see and edit every lead, and press **Write** on one to start a draft already filled in.
+
+- **The template:** *Download template* gives you `cold-leads-template.csv` (also in the repo as [examples/leads-template.csv](examples/leads-template.csv)). Fill it in a spreadsheet and save as CSV. The columns are exactly the ones Cold uses:
+
+  | column | what goes in it |
+  |---|---|
+  | `name` | Who you're writing to. **The only required column.** |
+  | `company`, `role` | Where they work and their job title. |
+  | `email` | One address. Used only for Open in email; Cold never looks one up. |
+  | `profile_url` | A LinkedIn (`linkedin.com/in/…`) or X (`x.com/handle`) link. |
+  | `why` | The specific reason you're contacting them: something they wrote, built or said. Cold uses it as the only connection and won't invent one. |
+  | `product`, `goal` | Which saved product to write about (its name in Knowledge), and what you want: advice, investment, introduction, customer, partnership or other. Either can be left blank. |
+  | `list`, `notes` | A group name to filter by, and anything for yourself (never used in an email). |
+
+  Other common headings are recognised too (`Full Name`, `Organization`, `Job Title`, `LinkedIn`, `Reason`, `First Name` + `Last Name`…), in any order, with commas, semicolons or tabs. Columns Cold doesn't use are ignored and listed. The template's three sample rows use reserved `example.com/.org/.net` addresses and are skipped on import, so importing the template unchanged adds nothing.
+- **Import reviews first.** Nothing is saved until you press *Add N leads*. The review shows how many are new, which rows can't be imported and why (no name), which are imported but need a look (an odd email, a profile link that isn't LinkedIn or X, an unknown goal), and which are already there. People are matched by email, else profile link, else name + company. By default someone already in your leads is left alone; or choose to fill in their *blank* fields from the file (it never overwrites or blanks anything). Up to 5,000 rows / 2 MB at a time.
+- **Manage them:** search, filter by list or by how far outreach has got (not contacted, draft, marked sent, reply recorded), edit any lead, add one by hand, select several to delete or move to a list, and *Export CSV* (the same columns, ready to re-import). Spreadsheet formulas are defused on export.
+- **Write to a lead:** *Write* opens Write with their name, company, role, email, profile link and *why* filled in, and their product and goal if you set them. Nothing is generated until you press Generate. The draft remembers who it was for, so the Leads list shows its progress from History's Draft / Marked sent / Reply recorded.
+- **Where they live:** with the desktop app they're rows in the `leads` table of its SQLite database (`sqlite3 cold.db "select name, company, email, list from leads"`). A name, company, email or list fixed with a SQLite tool shows in the app the next time it reads the database (reload); edit in Cold itself and every surface stays in sync. On web and in the extension they're part of the library like products and drafts: kept locally, working with the app closed, synced when it's back. Leads are never sent to a model except what you put in a draft you ask Cold to write.
+
 ## Subjects and your sign-off
 
 - **Subjects** Cold writes start with a capital letter. Anything you type yourself is left exactly as you wrote it.

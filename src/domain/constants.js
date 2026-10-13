@@ -3,6 +3,7 @@
 export const STORAGE_KEYS = {
   products: "cold.products",
   emails: "cold.emails",
+  leads: "cold.leads",
   settings: "cold.settings",
   compose: "cold.compose",
   gatewayModel: "cold.gatewayModel",
@@ -14,7 +15,7 @@ export const STORAGE_KEYS = {
 // The library shared through Cold Desktop is a separate cache from the standalone library above, one per desktop app address, so
 // choosing it never moves, merges or rewrites the standalone library (or another app's). A pairing made before this existed keeps
 // syncing the standalone keys, as it always did.
-export const sharedKeys = origin => { const k = `cold.shared.${encodeURIComponent(origin)}`; return { products: `${k}.products`, emails: `${k}.emails`, settings: `${k}.settings`, compose: `${k}.compose`, sync: `${k}.sync` }; };
+export const sharedKeys = origin => { const k = `cold.shared.${encodeURIComponent(origin)}`; return { products: `${k}.products`, emails: `${k}.emails`, leads: `${k}.leads`, settings: `${k}.settings`, compose: `${k}.compose`, sync: `${k}.sync` }; };
 
 export const GOALS = {
   advice:       { label: "Advice",                tpl: "Could I get your take on X?" },
