@@ -1,5 +1,7 @@
 # Initial UX and architecture audit (2026-10-10)
 
+> **Historical snapshot (2026-10-10).** Written before the Leads CSV mapper, follow-ups, Google Sheets and the production-readiness layer existed. Statements about what the product does or lacks may be out of date; the current, source-checked status is in [docs/audit](../audit/README.md). Kept for context; not edited.
+
 Baseline = commit `922a3da` (before this PR). Method: code reading of `index.html`, `server.js`, `package.json`, tests, `docs/validation/`, plus a local Playwright probe against the original app (script not kept; results below are copied from its output).
 
 ## Baseline

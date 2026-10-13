@@ -890,7 +890,7 @@ test('on-device model (FAKE runtime) and a model server on this computer can bot
   try {
     await showTab(ctx, panel, `${site.base}/northwind/careers`);
     await nav(panel, 'settings');
-    assert.equal(await panel.isVisible('#askEngineField'), true);
+    await panel.waitForSelector('#askEngineField', { state: 'visible' });   // Settings is built asynchronously; isVisible() alone does not wait
     assert.match(await panel.textContent('#askModelLine'), /which this browser reaches on this computer.*can't verify what that server does/);
     await nav(panel, 'write');
     await panel.click('#askRun'); await panel.waitForSelector('#askResult .ask-card');

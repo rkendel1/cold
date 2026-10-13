@@ -157,3 +157,19 @@ test('audit DATA-005 (characterisation): when the sheet cannot be read at start-
   assert.equal(shown, 0, 'the leads list is empty (not an error screen) while the sheet is unreachable'); assert.equal(again.status.state, 'error');
   await t.close();
 });
+
+test('Sheets db: columns a person adds to their own sheet (a note, a deal size, a formula) survive Cold saving that row', async () => {
+  const t = await setup();
+  await t.db.doc('leads/l1').set(lead('l1'));
+  await t.db.doc('emails/e1').set({ createdAt: 1, status: 'draft', mode: 'email', recipient: { name: 'X' }, subject: 's', what: 'w', why: 'y', ask: 'a' }, { expected: null, base: null });
+  t.tab('Outreach')[0].push('My deal size'); t.tab('Outreach')[1].push('$40k'); t.tab('Outreach')[0].push('Calc'); t.tab('Outreach')[1].push('=B2*2');
+  t.tab('Leads')[0].push('Phone'); t.tab('Leads')[1].push('555-0100');
+  await t.db.refresh();
+  const e = t.docs('emails')[0]; await t.db.doc('emails/e1').set({ ...e, note: 'edited in Cold' }, { expected: e.updatedAt, base: e });
+  await t.db.doc('leads/l1').set({ ...t.docs('leads')[0], notes: 'edited in Cold' });
+  const o = t.tab('Outreach'), l = t.tab('Leads');
+  assert.equal(o[1][o[0].indexOf('notes')], 'edited in Cold', 'Cold\'s own change was saved');
+  assert.deepEqual([o[1][o[0].indexOf('My deal size')], o[1][o[0].indexOf('Calc')]], ['$40k', '=B2*2'], 'the person\'s own Outreach columns are untouched');
+  assert.equal(l[1][l[0].indexOf('Phone')], '555-0100', 'an unknown Leads column is kept (as an extra field)');
+  await t.close();
+});

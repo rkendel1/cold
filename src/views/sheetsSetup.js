@@ -109,12 +109,12 @@ export function mountSheetsSetup({ store, platform, reload = () => globalThis.lo
         button("Stop using Google Sheets", { kind: "ghost danger", id: "sheetsStop", onclick: stop }))];
   }
   async function stop() {
-    if (!(await confirmDialog({ title: "Stop using Google Sheets?", body: `Cold copies your leads and drafts from the sheet back into this ${surface}, then goes back to saving them here. The spreadsheet stays in your Google Drive untouched.`, confirmLabel: "Copy back and stop" }))) return;
+    if (!(await confirmDialog({ title: "Stop using Google Sheets?", body: `Cold copies your leads and drafts from the sheet back into this ${surface}, then goes back to saving them here. Cold also signs out of Google here and asks Google to revoke its access. The spreadsheet stays in your Google Drive untouched.`, confirmLabel: "Copy back and stop" }))) return;
     try {
       const sheets = c.db.sheets, primary = c.db.primary, snap = sheets.snapshot();
       const put = (name, list) => (primary.setMany ? primary.setMany(name, list) : Promise.all(list.map(d => { const { id, ...rest } = d; return primary.doc(`${name}/${id}`).set(rest); })));
       await put("leads", snap.leads); await put("emails", snap.emails);
-      await c.unlink(); reload();
+      await c.unlink(); await c.disconnect().catch(() => {}); reload();   // forget the sign-in too: a stopped connection must not leave Google access behind
     } catch (e) { error = `Couldn't copy your data back, so nothing was changed. ${say(e)}`; paint(); }
   }
 

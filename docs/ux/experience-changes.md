@@ -1,5 +1,7 @@
 # Experience changes (2026-10-10)
 
+> **Historical snapshot (2026-10-10).** Written before the Leads CSV mapper, follow-ups, Google Sheets and the production-readiness layer existed. Statements about what the product does or lacks may be out of date; the current, source-checked status is in [docs/audit](../audit/README.md). Kept for context; not edited.
+
 What changed in the UI and architecture, why, and how to see it. The baseline and the defects behind these changes are in [`initial-audit.md`](initial-audit.md). Nothing here claims the redesign has been tried with founders: it has not. The commercial-validation materials in `docs/validation/` are unchanged.
 
 ## Information architecture

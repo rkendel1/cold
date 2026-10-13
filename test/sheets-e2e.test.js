@@ -89,8 +89,19 @@ test('Google Sheets: guided setup, existing data moves in, everyday use is in th
   await Promise.all([page.waitForNavigation({ waitUntil: 'load' }), page.click('dialog button[value="ok"]')]);
   await page.waitForSelector('#genBtn', { state: 'attached' });
   assert.deepEqual((await page.evaluate(() => JSON.parse(localStorage.getItem('cold.leads')).map(l => l.name))).sort(), ['Ana Ruiz', 'Bo Lee', 'Cy Dunn', 'Typed In Sheets']);
+  assert.equal(await page.evaluate(() => localStorage.getItem('cold.google.connected')), null, 'the Google sign-in is forgotten too');
   assert.equal(await page.evaluate(() => localStorage.getItem('cold.sheets')), null); assert.equal(rowsOf(book, 'Leads').length, before);
   await go(page, 'leads'); assert.equal(await page.locator('#leadsTable tbody tr').count(), 4);
   assert.deepEqual(errors.filter(e => !/Failed to load resource/.test(e)), []);
+  await context.close();
+});
+
+test('Google Sheets: a sheet that cannot be read at start-up is said so on screen, not shown as an empty list with no explanation', { skip: SKIP }, async () => {
+  const link = { spreadsheetId: 'A'.repeat(40), url: 'https://docs.google.com/spreadsheets/d/' + 'A'.repeat(40), title: 'Cold: leads and outreach' };
+  const { page, context } = await open(srv, { seed: { 'cold.sheets': link } });
+  await page.evaluate(() => localStorage.setItem('cold.google.connected', '1')); await page.reload(); await page.waitForSelector('#genBtn', { state: 'attached' });
+  await page.waitForFunction(() => /Couldn.t read your Google Sheet/.test(document.getElementById('notices').textContent));
+  await go(page, 'leads'); assert.match(await page.textContent('#view-leads'), /No leads yet/, 'the list is empty while the sheet is unreachable');
+  await go(page, 'settings'); await page.waitForSelector('#sheetsProblem'); assert.match(await page.textContent('#sheetsProblem'), /wasn.t found|sign in again|Couldn.t reach/);
   await context.close();
 });

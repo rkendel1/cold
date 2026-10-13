@@ -4,13 +4,18 @@ A focused cold-email generator. Give it five facts; it gives you an email worth 
 
 **Knowledge base → recipient relevance → one goal → three sentences → explicit ask.**
 
-## What's in the MVP
+> **Status: pre-1.0, not approved for general release.** What works, on which surface, and what must happen before broader adoption is assessed in the [product audit](docs/audit/README.md). New here? Start with [docs/getting-started.md](docs/getting-started.md). All documentation is indexed in [docs/README.md](docs/README.md).
+
+## What it does
 
 - **Knowledge**: products with plain-English description, audience, problem, proof points (claim, evidence, type, strength, use-externally flag), technical facts, approved language, and do-not-say rules.
 - **Compose**: recipient name, role, company, why them, goal (advice, investment, introduction, customer conversation, partnership, other), and anything specific to convey.
 - **Generate**: two stages. A draft (relevance classification, knowledge retrieval, three sentences), then an editor pass that checks the draft against 20 rules and rewrites it. Cold then runs a deterministic **"Check before you send"** that flags numbers and names in the draft that are not in the text you supplied, and any reuse of internal-only proof. It compares words only: it cannot verify that a claim is true. The model's own claim-to-source list is shown separately with a word-overlap status.
 - **Quality**: a 0–100 *style checklist* from the 20 rules (about half are the model's own report, labelled as such; it is not a prediction of replies). Length, read time, sentence count, stock openers, marketing language, do-not-say phrases, explicit ask, meeting requests and subject line are checked locally and update live as you edit. "Improve" reruns the editor on a specific weakness.
 - **History**: every generated email is saved as a draft. Copy it, mark it sent, record a reply, reopen and edit. "Sent" and "reply" are your own records: Cold sends nothing and cannot see replies.
+- **Leads**: import a spreadsheet saved as CSV (with a column mapper and your own extra fields), manage the list, and press Write on a person. See [Leads](#leads-a-list-of-people-to-write-to).
+- **Follow-ups**: copying or opening an email in your mail app records the handoff and sets a configurable reminder (it never marks the email sent). See [Tracking outreach](#tracking-outreach-history).
+- **Also**: tweet and reply drafts, optional email lookup, page-aware writing and Ask Cold in the extension, and optional storage of leads and outreach in Google Sheets.
 
 Cold never sends anything. Generate with AI, send yourself.
 
@@ -26,7 +31,7 @@ What each one needs, how optional pairing works, and the known limits are in [do
 
 ## Privacy in one paragraph
 
-Your products, drafts, notes and outreach history are stored on your own device (browser storage on the web, a local SQLite file on the desktop, extension storage in the extension). Cold has no accounts, no cloud database, no cloud backup and no analytics, and the only way surfaces share data is the optional pairing with the desktop app. Writing a draft is separate: the prompt for that draft (its product facts and recipient details, not your whole library) goes to the model provider you chose, and on a hosted web deployment it passes through that site's server on the way. See [docs/privacy-and-data-flow.md](docs/privacy-and-data-flow.md) for exactly what leaves the device and what is retained.
+Your products, drafts, notes and outreach history are stored on your own device (browser storage on the web, a local SQLite file on the desktop, extension storage in the extension). Cold has no accounts of its own, no Cold-run cloud database or backup, and no analytics. Surfaces share data only through the optional pairing with the desktop app, **or** through the optional Google Sheets setting below, in which case your leads and outreach drafts are kept in a spreadsheet in your own Google Drive (and so are sent to Google) instead of on the device. Writing a draft is separate: the prompt for that draft (its product facts and recipient details, not your whole library) goes to the model provider you chose, and on a hosted web deployment it passes through that site's server on the way. See [docs/privacy-and-data-flow.md](docs/privacy-and-data-flow.md) for exactly what leaves the device and what is retained.
 
 ## Running it
 
@@ -94,7 +99,7 @@ Drafts use X's weighted 280-character limit via `twitter-text`, including URL an
 `index.html` is a small shell. The frontend is vanilla ES modules in `src/` (`domain/` pure logic, `state/`, `services/`, `components/`, `views/`, `styles/`), bundled by esbuild into the committed `public/app.js` and `public/app.css`. See `docs/ux/experience-changes.md`.
 
 ```sh
-npm install            # dev dependencies only: esbuild, playwright-core, axe-core, twitter-text
+npm install            # runtime: @mlc-ai/web-llm, twitter-text; dev: esbuild, electron, electron-builder, playwright-core, axe-core
 npm run build:app      # rebuild public/app.js and public/app.css after editing src/
 npm run check:app      # fail if the committed bundle is stale
 npm test               # unit, server, bundle/deploy-config and browser tests
@@ -196,7 +201,7 @@ If you edit a draft after marking it sent, the status and dates don't change and
 
 ## Where your data lives (SQLite)
 
-In the desktop app, products and drafts are stored in one SQLite file: `~/Library/Application Support/Cold/cold.db` on macOS (the path is also shown in Settings > Browser extension). It uses WAL mode, so you can copy it for a backup or open it with any SQLite tool, e.g. `sqlite3 cold.db "select recipient_name, status, subject from emails"`. Provider keys are *not* in this file; they are encrypted separately in `settings.json`.
+In the desktop app, products, drafts and leads are stored in one SQLite file: `~/Library/Application Support/Cold/cold.db` on macOS (the path is also shown in Settings > Browser extension). It uses WAL mode, so you can copy it for a backup or open it with any SQLite tool, e.g. `sqlite3 cold.db "select recipient_name, status, subject from emails"`. Provider keys are *not* in this file; they are encrypted separately in `settings.json`.
 
 On first launch, anything already saved in the app's browser storage (the old localStorage data) is copied into SQLite once. The original browser data is left in place untouched.
 
@@ -247,4 +252,4 @@ Any result Ask Cold or Browse With Me surfaces gets a **second check**: one more
 
 ## Google Sheets (optional)
 
-Leads and outreach can live in a Google Sheet in your own Drive instead of this app's storage, with a guided setup in **Settings > Google Sheets** on the web, desktop and extension. Cold asks Google for one narrow permission (files it creates itself). See [docs/google-sheets.md](docs/google-sheets.md) for what users get and how to turn it on.
+Leads and outreach can live in a Google Sheet in your own Drive instead of this app's storage, with a guided setup in **Settings > Google Sheets** on the web, desktop and extension. Cold asks Google for one narrow permission (files it creates itself). It is **off unless the build or server has a Google client id configured, and has not yet been verified against a real Google account** (see the [audit](docs/audit/11-remediation-backlog.md), DATA-001). See [docs/google-sheets.md](docs/google-sheets.md) for what users get and how to turn it on.

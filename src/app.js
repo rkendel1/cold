@@ -49,7 +49,7 @@ export async function startApp(rootEl = document.getElementById("app"), { store 
   const history = mountHistory(views.history, { store, openRecord: rec => { if (rec) compose.open(rec); navigate("compose"); } });
 
   const settings = mountSettings(views.settings, { store, platform });
-  const paintFooter = () => { footer.textContent = `Cold writes drafts; you send them. Products and drafts ${store.keptNote()}`; };
+  const paintFooter = () => { footer.textContent = `Cold writes drafts; you send them. Products, drafts and leads ${store.keptNote()}`; };
   const syncSurface = () => store.set({ surface: platform.hub ? platform.hub.kind : S.backend === "sqlite" ? "desktop" : "web", paired: !!platform.hub && platform.hub.libs.kind === "synced", library: platform.hub ? platform.hub.libs.kind : S.backend === "sqlite" ? "desktop" : "standalone" }, "surface");
 
   const renderNotices = () => {

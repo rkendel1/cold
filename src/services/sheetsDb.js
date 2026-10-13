@@ -6,6 +6,7 @@
 // by mistake), a save based on an older version is merged or refused like it is everywhere else, and the sheet is re-read every few seconds
 // so changes made in Google Sheets show up in Cold.
 import { saveWithMerge } from "../domain/library.js";
+import { cleanCustom } from "../domain/leads.js";
 import { queryCollection } from "./collection.js";
 import { TABS, headersFor, parseTable, columnIndex, readRow, makeRow, missingExtras, versionOf } from "../domain/sheetsMap.js";
 
@@ -17,7 +18,7 @@ export const colLetter = n => { let s = ""; for (let x = n; x > 0; x = Math.floo
 
 export function createSheetsDb({ api, spreadsheetId, poll = true, pollMs = POLL_MS, now = () => Date.now() } = {}) {
   const cache = { leads: new Map(), emails: new Map() };
-  const rowOf = { leads: new Map(), emails: new Map() }, header = { leads: headersFor("leads"), emails: headersFor("emails") };
+  const rowOf = { leads: new Map(), emails: new Map() }, raw = { leads: new Map(), emails: new Map() }, header = { leads: headersFor("leads"), emails: headersFor("emails") };
   const listeners = { leads: new Set(), emails: new Set() };
   const statusSubs = new Set();
   let sheetIds = {}, timer = null, signature = "", status = { state: "connecting", message: "" }, queue = Promise.resolve();
@@ -28,7 +29,7 @@ export function createSheetsDb({ api, spreadsheetId, poll = true, pollMs = POLL_
 
   /** Take a tab's rows as they are now. Rows without an id (typed in the sheet) get one; the caller writes those ids back. */
   function adopt(name, values) {
-    const t = parseTable(values), seen = new Set(), records = new Map(), rows = new Map(), idFixes = [];
+    const t = parseTable(values), seen = new Set(), records = new Map(), rows = new Map(), cellsById = new Map(), idFixes = [];
     // A missing or damaged heading row is rebuilt from the fixed columns (the tab's rows are kept as they are).
     const hdr = t.header.some(h => h.trim()) ? t.header : headersFor(name);
     const idCol = columnIndex(hdr).id;
@@ -37,9 +38,9 @@ export function createSheetsDb({ api, spreadsheetId, poll = true, pollMs = POLL_
       if (!rec) continue;
       const had = idCol !== undefined && (cells[idCol] || "").trim();
       if (!had || seen.has(rec.id)) { if (had) rec = { ...rec, id: rec.id + "_" + Math.random().toString(36).slice(2, 6) }; idFixes.push({ row, id: rec.id }); }
-      seen.add(rec.id); records.set(rec.id, rec); rows.set(rec.id, row);
+      seen.add(rec.id); records.set(rec.id, rec); rows.set(rec.id, row); cellsById.set(rec.id, cells);
     }
-    header[name] = hdr; cache[name] = records; rowOf[name] = rows;
+    header[name] = hdr; cache[name] = records; rowOf[name] = rows; raw[name] = cellsById;
     return idFixes;
   }
   async function writeIds(name, fixes) {
@@ -92,11 +93,23 @@ export function createSheetsDb({ api, spreadsheetId, poll = true, pollMs = POLL_
   }
   const lastCol = name => colLetter(header[name].length);
 
+  /**
+   * The cells to write for a record: Cold's own columns (and, on Leads, the lead's extra fields) take the new values; every OTHER column in the row
+   * (one the person added to their own sheet: a note, a formula, a deal size) keeps exactly what the last read saw there.
+   */
+  function rowFor(name, rec) {
+    const cells = makeRow(name, rec, header[name]), before = raw[name].get(rec.id);
+    if (!before) return cells;
+    const owned = new Set(headersFor(name).map(norm));
+    if (name === "leads") for (const n of Object.keys(cleanCustom(rec.custom))) owned.add(norm(n));
+    header[name].forEach((h, i) => { if (!owned.has(norm(h)) && before[i] !== undefined) cells[i] = before[i]; });
+    return cells;
+  }
   /** Save records: rows that exist are rewritten in place, new ones are added at the bottom (one call each). */
   async function store(name, recs) {
     await shape(name, recs);
     const updates = [], adds = [];
-    for (const r of recs) { const row = rowOf[name].get(r.id); const cells = makeRow(name, r, header[name]); (row ? updates.push({ tab: TABS[name], a1: `A${row}:${lastCol(name)}${row}`, values: [cells] }) : adds.push([r, cells])); }
+    for (const r of recs) { const row = rowOf[name].get(r.id); const cells = rowFor(name, r); (row ? updates.push({ tab: TABS[name], a1: `A${row}:${lastCol(name)}${row}`, values: [cells] }) : adds.push([r, cells])); }
     try {
       await api.write(spreadsheetId, updates);
       if (adds.length) { const rows = await api.append(spreadsheetId, TABS[name], adds.map(a => a[1])); adds.forEach(([r], i) => rows[i] && rowOf[name].set(r.id, rows[i])); }

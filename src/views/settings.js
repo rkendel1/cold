@@ -337,7 +337,7 @@ export function mountSettings(root, { store, platform }) {
   /* ---------- Your data ---------- */
   function dataSection() {
     const p = h("p", { class: "hint", id: "dataLine" });
-    const paint = () => { p.textContent = `Products and drafts ${store.keptNote()}`; };   // the same sentence the footer and History use
+    const paint = () => { p.textContent = `Products, drafts and leads ${store.keptNote()}`; };   // the same sentence the footer and History use
     // Storing is local; writing a draft is not necessarily. Say where the prompt for a draft goes, without promising more than is known.
     const flow = h("p", { class: "hint", id: "modelFlowLine" });
     const paintFlow = () => {
