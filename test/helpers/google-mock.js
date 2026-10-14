@@ -61,7 +61,7 @@ async function startGoogle({ clientId = 'test-client.apps.googleusercontent.com'
 /** node:http rather than fetch, because fetch refuses to send a chosen Host header and several tests need one. */
 function raw(url, method, headers, body) {
   return new Promise((resolve, reject) => {
-    const r = http.request(url, { method, headers }, res => {
+    const r = http.request(url, { method, headers, agent: false }, res => {
       const chunks = []; res.on('data', c => chunks.push(c));
       res.on('end', () => { const buf = Buffer.concat(chunks); resolve({ status: res.statusCode, headers: { get: k => { const v = res.headers[k.toLowerCase()]; return Array.isArray(v) ? v.join(', ') : v === undefined ? null : v; }, getSetCookie: () => res.headers['set-cookie'] || [] }, json: async () => JSON.parse(buf.toString('utf8')), text: async () => buf.toString('utf8') }); });
     });

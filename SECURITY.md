@@ -28,6 +28,7 @@ Open a [GitHub issue](https://github.com/rkendel1/cold/issues/new/choose): somet
 
 ## What is in scope
 
+* **Hosted libraries** (`lib/hosted.js`, `lib/hostedDb.js`): any way to read or change another account's records, to act without a valid session, to bypass the CSRF or origin checks, or to reach a bearer token from a page or content script. Design: [docs/hosted-library.md](docs/hosted-library.md).
 * **Hosted Google sign-in, including desktop and extension sign-in** (`lib/auth.js`, `lib/accounts.js`, `lib/accountClient.js`, `extension/src/account.js`): ID-token validation, state/PKCE/nonce handling, session cookies, CSRF on logout, account resolution. Please report session fixation, account takeover or cross-account access, open redirects, and any way to obtain a session without a verified Google identity. Design and limits: [docs/google-sign-in.md](docs/google-sign-in.md).
 
 The Cold source in this repository: the web server, the desktop app, the browser extension, and the shared UI. Out of scope: vulnerabilities in third-party services Cold talks to (model providers, Google, treg), in your browser or operating system, or in a self-hosted deployment's own infrastructure.

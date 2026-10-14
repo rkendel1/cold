@@ -173,7 +173,7 @@ test('without native redirects configured the native routes are off and the web 
     assert.equal((await call(t.base, '/api/account/native/begin', { method: 'POST', body: { client: 'desktop', redirectUri: DESKTOP, proof: hashProof('x'.repeat(32)) } })).status, 404);
     assert.equal((await call(t.base, '/api/account/me', { headers: { authorization: 'Bearer ' + 'a'.repeat(40) } })).status, 404);
     const w = t.web(); await w.signIn(); assert.equal((await w.call('/api/account/me')).status, 200);
-    assert.deepEqual((await (await fetch(`${t.base}/api/config`)).json()).account, { enabled: true, native: false });
+    assert.deepEqual((await (await fetch(`${t.base}/api/config`)).json()).account, { enabled: true, native: false, hosted: false });
   } finally { await t.close(); await g.close(); }
 });
 

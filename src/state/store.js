@@ -112,10 +112,11 @@ export function createStore({ storage = globalThis.localStorage, platform = null
     database: () => db,
 
     /** Where saved data lives, in the words the UI uses. */
-    where: () => (state.backend === "sqlite" ? "on this computer" : state.surface === "extension" ? "in this extension" : "in this browser"),
-    whereFrom: () => (state.backend === "sqlite" ? "this computer" : state.surface === "extension" ? "this extension" : "this browser"),
+    where: () => (state.backend === "hosted" ? "in your hosted library" : state.backend === "sqlite" ? "on this computer" : state.surface === "extension" ? "in this extension" : "in this browser"),
+    whereFrom: () => (state.backend === "hosted" ? "your hosted library" : state.backend === "sqlite" ? "this computer" : state.surface === "extension" ? "this extension" : "this browser"),
     /** One sentence fragment, "Products and drafts ___", used by every surface so the wording can't drift. */
     keptNote: () => (state.storage === "sheets" ? `are kept in different places: leads and drafts in your Google Sheet (open it from Settings), products and settings ${state.backend === "sqlite" ? "in the Cold desktop app's database on this computer" : `${api.where()} only`}.`
+      : state.backend === "hosted" ? "are in your hosted Cold library on the Cold server, tied to your Google account. The library on this device is separate: it was not uploaded and is not changed by this one."
       : state.backend === "sqlite" ? "are stored in the Cold desktop app's database on this computer and are not synced to other devices."
       : state.library === "shared" ? `are in your Cold Desktop library. ${state.surface === "extension" ? "This extension" : "This browser"} keeps a working copy, so you can keep working while the app is closed and changes sync when it is back.`
       : state.paired ? `are saved ${api.where()} and sync with the Cold desktop app whenever it is running.`
@@ -253,6 +254,7 @@ export function createStore({ storage = globalThis.localStorage, platform = null
      * Sheet (Cold's local erase doesn't touch the user's spreadsheet). The reason is said in words, so the screen never offers a half-working erase.
      */
     canErase() {
+      if (state.backend === "hosted") return { ok: false, reason: "hosted", message: "This is your hosted library. Erasing or replacing it isn't available yet: delete records one by one, or switch to your local library in Settings > Cold account." };
       if (state.storage === "sheets") return { ok: false, reason: "sheets", message: "Your leads and drafts are kept in your Google Sheet, which Cold's erase doesn't touch. To remove them, stop using Google Sheets in Settings (this copies them back here), then erase; and delete the spreadsheet in Google Drive yourself." };
       if (state.library === "shared" || state.library === "synced" || state.paired) return { ok: false, reason: "paired", message: "This is connected to the Cold desktop app, so erasing here would be copied there as a delete. Erase in the desktop app, or disconnect it in Settings first." };
       return { ok: true };

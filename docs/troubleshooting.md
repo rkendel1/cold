@@ -51,6 +51,20 @@ Background: [google-sign-in.md](google-sign-in.md). No account section in Settin
 * **Desktop or extension: signed out after restarting.** By design: the session is kept in memory only. Sign in again; your local data was never involved.
 * **Signed in on one host, signed out on another** (for example 127.0.0.1 vs localhost): cookies are per host; use the host in the redirect URI.
 
+## Hosted library
+
+Background: [hosted-library.md](hosted-library.md). The library section appears under Settings > Cold account once you are signed in on a server that offers it.
+
+* **Header badge says "Hosted library: unavailable".** You chose the hosted library on this device, but it can't be used right now (the reason is under Settings > Cold account > Library). It shows nothing and saves nothing; your local library is untouched. *Try again* when you're signed in and the server is reachable, or *Use my local library*.
+* **"You're signed out" / "Your sign-in ended, so changes since then were NOT saved to your hosted library".** The session ended. Nothing was saved there and nothing was saved on this device instead. Copy any draft you want to keep, sign in again (Settings > Cold account), then reopen the library.
+* **"Your hosted library can't be reached right now."** Network or server trouble. Edits made meanwhile were refused, not queued; try again or switch to the local library to keep working.
+* **"You haven't created a hosted library yet."** Create it in Settings > Cold account (it starts empty; your local data is not copied).
+* **"This Cold server doesn't offer hosted libraries."** The server has no `COLD_DATA_DB_FILE`.
+* **"Records can't hold credentials" / "can't name an owner".** A record had a field named like a key, token, password or owner. Rename the field (for example a lead's extra field called "Password") and save again.
+* **Google Sheets is in use, so the hosted library isn't available.** Stop using Sheets first (Settings > Google Sheets).
+* **My local data doesn't show.** The hosted library is open, and the two are never combined. Use my local library switches back; nothing was deleted.
+* **Operators: server won't start, "Couldn't open the hosted data file".** `COLD_DATA_DB_FILE` is unwritable, on a temporary path in production, the same as the accounts file, or from a newer Cold.
+
 ## Export, restore and erase
 
 Background: [data-portability.md](data-portability.md).

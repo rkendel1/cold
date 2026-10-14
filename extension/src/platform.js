@@ -16,6 +16,7 @@ import { insertIntoBox } from "./page.js";
 import { extensionAuth } from "../../src/services/googleAuth.js";
 import { createSheetsConnector, chromeLinkStore } from "../../src/services/sheetsConnector.js";
 import { extensionDriver } from "../../src/services/accountDrivers.js";
+import { workerTransport } from "../../src/services/hostedLibrary.js";
 
 // Set when the extension is built (COLD_GOOGLE_CLIENT_ID); empty means this build has no Google Sheets option.
 const GOOGLE_CLIENT_ID = typeof __COLD_GOOGLE_CLIENT_ID__ === "undefined" ? "" : __COLD_GOOGLE_CLIENT_ID__;
@@ -59,7 +60,7 @@ export async function createExtensionPlatform() {
     const c = link.state.config, o = ownCfg();
     const app = d && d.kind === "app";
     return { app: "cold", ready: !!d, settingsEnabled: true, dbEnabled: false,
-      provider: app ? c.provider : o && o.id, providerLabel: app ? "Cold desktop app" : o && o.label, model: app ? c.model : o && o.model, keySetting: "a model in Settings" };
+      provider: app ? c.provider : o && o.id, providerLabel: app ? "Cold desktop app" : o && o.label, model: app ? c.model : o && o.model, keySetting: "a model in Settings", account: accountDriver ? { enabled: true, mode: "native" } : { enabled: false } };
   }
   const snapshot = () => { const sample = backend.describe() ? backend.sample : null; return { server: server(), sample, sampleState: sample ? "ready" : "noconfig" }; };
 
@@ -97,6 +98,9 @@ export async function createExtensionPlatform() {
     get sheets() { return sheets; },
     /** Optional Cold account sign-in, offered only when this build has an account service configured; the worker holds the session (extension/src/account.js). */
     get accountDriver() { return accountDriver; },
+    /** Hosted-library requests go through the background worker, which holds the bearer token; where the person's library choice is remembered is this extension's storage. */
+    hostedTransport: workerTransport(),
+    libraryChoice: { get: async () => ((await chrome.storage.local.get("cold.library.choice"))["cold.library.choice"] === "hosted"), set: async on => (on ? chrome.storage.local.set({ "cold.library.choice": "hosted" }) : chrome.storage.local.remove("cold.library.choice")) },
     async detect() {
       let db = active.db, warning = "";
       if (sheets) { try { await sheets.init(); if (sheets.link) { db = await sheets.open(db); if (db.sheets && db.sheets.status.state === "error") warning = "Couldn't read your Google Sheet, so your leads and drafts are not shown right now. Nothing is lost. Open Settings > Google Sheets to reconnect."; } } catch { warning = "Couldn't read your Google Sheet, so your leads and drafts are not shown right now. Nothing is lost. Open Settings > Google Sheets to reconnect."; } }

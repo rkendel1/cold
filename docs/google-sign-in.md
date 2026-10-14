@@ -1,6 +1,6 @@
 # Google sign-in and Cold accounts (foundation)
 
-**Status: implemented for the hosted web app, the desktop app and the Chrome extension, tested against a stand-in for Google. Not verified against real Google, not verified in a packaged desktop app or a Chrome Web Store build, and not deployed anywhere by this change.** This is an identity foundation only. Nothing is stored in an account yet.
+**Status: implemented for the hosted web app, the desktop app and the Chrome extension, tested against a stand-in for Google. Not verified against real Google, not verified in a packaged desktop app or a Chrome Web Store build, and not deployed anywhere by this change.** Signing in identifies you and nothing more: it does **not** switch libraries, upload or sync anything, or make a hosted library active. Account-owned hosted data is a separate, explicit choice described in [hosted-library.md](hosted-library.md).
 
 ## What it is and what it isn't
 
@@ -61,7 +61,7 @@ Authorization Code flow with PKCE, run by the server.
 
 If `COLD_AUTH_GOOGLE_CLIENT_ID` is set but anything required is missing or invalid (including a non-https redirect URI in production), **the server refuses to start** and the message names the settings, never their values. Production means `NODE_ENV=production` or `VERCEL_ENV=production`. Secrets belong in the environment, never in the repository ([.env.example](../.env.example) has placeholders only).
 
-**Why a new persistence mechanism.** The hosted server deliberately has no database (it is serverless-friendly), and sessions and accounts must outlive a request. A small SQLite file (the engine `lib/db.js` already uses) is the minimum that gives atomic account creation and revocable sessions without a new dependency. **It therefore cannot run on a platform with no persistent disk** (for example plain Vercel serverless functions): there, leave sign-in unconfigured, or put the accounts file on a mounted volume. No other service or framework was added.
+**Why a SQLite file.** The hosted server deliberately has no database (it is serverless-friendly), and sessions and accounts must outlive a request. A small SQLite file (the engine `lib/db.js` already uses) is the minimum that gives atomic account creation and revocable sessions without a new dependency. **It therefore cannot run on a platform with no persistent disk** (for example plain Vercel serverless functions): there, leave sign-in unconfigured, or put the accounts file on a mounted volume. No other service or framework was added.
 
 **Deployment topology.** Cookies are same-origin: the page, the API and the callback must be served from one host (`COLD_AUTH_REDIRECT_URI`'s host). Requests to account routes with a different `Host`, `Origin` or `Sec-Fetch-Site` are refused. A reverse proxy must pass `Host` through unchanged and terminate https; running several instances works because all state is in the one file, but they must share that file.
 

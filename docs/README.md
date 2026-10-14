@@ -10,6 +10,7 @@ One authoritative home per topic. If two documents seem to disagree, the one mar
 | User | [troubleshooting.md](troubleshooting.md) | Verified failure modes and fixes | Current |
 | Operator / developer | [configuration.md](configuration.md) | Every environment variable, file and build flag | Current |
 | User, reviewer | [privacy-and-data-flow.md](privacy-and-data-flow.md) | What data goes where | Current (Google Sheets added) |
+| User, operator | [hosted-library.md](hosted-library.md) | Account-owned hosted library: local vs hosted, what is stored where, API, deployment, backups, limits | Current; **not verified against real Google or production** |
 | Operator, user | [google-sign-in.md](google-sign-in.md) | Optional Google sign-in and Cold account foundation (hosted web): flow, sessions, configuration, limits | Current; **not verified against real Google** |
 | User | [data-portability.md](data-portability.md) | Export, restore and erase: what each includes, excludes and limits | Current |
 | User, operator | [standalone-surfaces.md](standalone-surfaces.md) | What each surface needs and can do alone | Current |

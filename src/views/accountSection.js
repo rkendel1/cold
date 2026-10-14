@@ -3,13 +3,14 @@
 // session ended, account service unreachable. The surface-specific part (cookie, local app, extension worker) is the driver in services/accountDrivers.js.
 import { h, clear, append } from "../components/dom.js";
 import { button, notice, announce } from "../components/ui.js";
+import { mountHostedSection } from "./hostedSection.js";
 
 const FAILED = { failed: "Google sign-in didn't complete, so you're not signed in. Nothing was changed. Try again.", cancelled: "You chose not to sign in with Google. You're not signed in, and Cold works as before.", expired: "That sign-in link expired or was already used. Start again." };
 const LOCAL = { web: "You don't need an account. Your products, drafts and leads stay in this browser (see Your data below); signing in doesn't move or upload them. Cross-device sync isn't available yet.",
   desktop: "You don't need an account. Your products, drafts and leads stay in this app's database on this computer; signing in doesn't move, upload or change them. Cross-device sync isn't available yet.",
   extension: "You don't need an account. Your products, drafts and leads stay in this extension's storage; signing in doesn't move, upload or change them. Cross-device sync isn't available yet." };
 
-export function mountAccountSection({ driver, location = globalThis.location, history = globalThis.history, pollMs = 2000, maxWaitMs = 5 * 60 * 1000 }) {
+export function mountAccountSection({ driver, hosted = null, location = globalThis.location, history = globalThis.history, pollMs = 2000, maxWaitMs = 5 * 60 * 1000 }) {
   const host = h("div", { id: "accountSection", "aria-live": "polite" });
   let wasSignedIn = false, message = null, waiting = null;
   const local = h("p", { class: "hint", id: "accountLocal" }, LOCAL[driver.kind] || LOCAL.web);
@@ -20,14 +21,17 @@ export function mountAccountSection({ driver, location = globalThis.location, hi
     if (r) { if (FAILED[r]) message = { kind: "bad", text: FAILED[r] }; sp.delete("signin"); const q = sp.toString(); history.replaceState(null, "", `${location.pathname}${q ? `?${q}` : ""}${location.hash}`); }
   } catch { /* the address bar is cosmetic */ }
 
-  const draw = (...kids) => append(clear(host), [message ? notice(message.kind, h("p", { id: "accountMessage" }, message.text)) : null, ...kids, local]);
+  const hostedEl = hosted ? mountHostedSection(hosted) : null;                // the library choice (hosted or local); it learns from this section whether anyone is signed in
+  const draw = (...kids) => append(clear(host), [message ? notice(message.kind, h("p", { id: "accountMessage" }, message.text)) : null, ...kids, hostedEl, local]);
+  const tell = (signedIn, o) => { if (hostedEl) hostedEl.update(signedIn, o); };
   const where = driver.kind === "web" ? "this browser's session" : "this app";
-  function signedOut() {
+  function signedOut(o) {
+    tell(false, o);
     draw(h("p", {}, "Sign in with Google to identify yourself to Cold. Cold asks Google only for your name and email address, not for Gmail or Google Sheets, and not for Drive."),
       h("div", { class: "actions" }, button("Sign in with Google", { kind: "primary", id: "signInBtn", onclick: signIn })));
   }
   function signedIn(a) {
-    wasSignedIn = true;
+    wasSignedIn = true; tell(true);
     draw(h("p", { id: "accountWho" }, "Signed in as ", h("strong", {}, a.account.name || a.account.email || "your Google account"), a.account.name && a.account.email ? ` (${a.account.email})` : ""),
       h("p", { class: "hint" }, `Signing out ends ${where === "this app" ? "this app's" : "this browser's"} Cold session. It doesn't sign you out of Google, doesn't change any permission you gave Google, and doesn't touch your local data.`),
       h("div", { class: "actions" }, button("Sign out", { id: "signOutBtn", onclick: signOut })));
@@ -57,7 +61,7 @@ export function mountAccountSection({ driver, location = globalThis.location, hi
       const r = await driver.signOut(); if (!r.ok) throw new Error("logout");
       wasSignedIn = false;
       message = { kind: r.serverConfirmed ? "good" : "warn", text: r.serverConfirmed ? "You're signed out. Cold is still available without an account, and your local data is unchanged." : "You're signed out here, but Cold couldn't reach the account service to end the session there. Your local data is unchanged." };
-      signedOut(); announce("Signed out");
+      signedOut({ signedOut: true }); announce("Signed out");
     } catch { message = { kind: "bad", text: "Couldn't confirm that you signed out, so assume you're still signed in. Try again." }; await refresh(); }
   }
   async function refresh() {
