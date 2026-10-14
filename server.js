@@ -78,6 +78,10 @@ function send(res, status, body, type = "application/json; charset=utf-8", extra
   res.end(typeof body === "string" || Buffer.isBuffer(body) ? body : JSON.stringify(body));
 }
 
+// Optional Google sign-in for the HOSTED web app (identity only; see lib/auth.js). Off unless COLD_AUTH_GOOGLE_CLIENT_ID is set, and never on a desktop or local install.
+// A partly configured deployment throws here: the server refuses to start rather than run with weaker sign-in than was asked for.
+const auth = require("./lib/auth").createAuth({ send: (res, status, body, type, extra) => send(res, status, body, type || "application/json; charset=utf-8", extra || {}) });
+
 function readBody(req, limit = 512 * 1024) {
   return new Promise((resolve, reject) => {
     let size = 0, tooBig = false;
@@ -401,10 +405,11 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === "/api/settings" || url.pathname.startsWith("/api/settings/")) return settingsRoute(req, res, url);
     if (url.pathname === "/oauth/google/callback" || url.pathname.startsWith("/api/google/")) return googleRoute(req, res, url);
+    if (await auth.handle(req, res, url)) return;
     if (url.pathname === "/api/data" || url.pathname.startsWith("/api/data/")) return dataRoute(req, res, url);
     if (req.method === "GET" && url.pathname === "/api/config") {
       const cfg = resolve();
-      return send(res, 200, { app: "cold", ready: cfg.ready, experimental: !!cfg.hf, model: cfg.model, provider: cfg.id, providerLabel: cfg.label, dbEnabled: !!appDb, accessRequired: !!accessToken(), keySetting: cfg.keySetting, settingsEnabled: !!settings, peopleSearch: !!tregToken(), google: googleConfig() });
+      return send(res, 200, { app: "cold", ready: cfg.ready, experimental: !!cfg.hf, model: cfg.model, provider: cfg.id, providerLabel: cfg.label, dbEnabled: !!appDb, accessRequired: !!accessToken(), keySetting: cfg.keySetting, settingsEnabled: !!settings, peopleSearch: !!tregToken(), google: googleConfig(), account: auth.publicConfig() });
     }
     if (req.method === "GET" && url.pathname === "/api/models") {
       if (resolve().id !== "ai-gateway" || settings) return send(res, 200, { models: [] });
@@ -446,5 +451,5 @@ if (require.main === module) server.listen(PORT, HOST, () => {
   if (!accessToken() && HOST !== "127.0.0.1") console.warn("WARNING: COLD_ACCESS_TOKEN is not set and the server is reachable beyond localhost: anyone who can reach it can spend your AI credits.");
 });
 
-server.settings = settings; server.db = appDb;   // the desktop shell attaches an encryption codec before listening
+server.settings = settings; server.db = appDb; server.auth = auth;   // the desktop shell attaches an encryption codec before listening
 module.exports = server;

@@ -13,6 +13,8 @@ Cold helps you write short, specific outreach drafts from facts you've saved. **
 | To write from the page you're on (tweets, LinkedIn/X profiles) | **Browser extension** | `npm run build:extension`; Chrome → `chrome://extensions` → Developer mode → Load unpacked → the `extension/` folder |
 | To share one library between them | **Pairing** | Desktop app: Settings > Browser extension & web apps. Web/extension: Settings > Cold desktop app |
 
+**Optional sign-in.** A hosted deployment may show **Settings > Cold account**: *Sign in with Google* identifies you to Cold (name and email only; no Gmail or Sheets access) and nothing else changes: you never need it, your library isn't moved, and cross-device sync isn't available yet. The desktop app and extension don't offer it. See [Google sign-in](google-sign-in.md).
+
 If you only see a disabled **Generate draft** with "This site has no model yet", the server has no provider key: see [troubleshooting](troubleshooting.md#generate-draft-is-disabled).
 
 ## 2. Set up a model

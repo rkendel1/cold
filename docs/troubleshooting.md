@@ -24,6 +24,18 @@ Automated repair is not built.
 
 Your inputs are kept and a retry is offered. Provider outages, rate limits and bad keys show the provider's own message. Nothing partial is saved to History.
 
+## Google sign-in (hosted web)
+
+Background: [google-sign-in.md](google-sign-in.md). No account section in Settings means the operator hasn't configured sign-in (Cold works the same without it).
+
+* **"Google sign-in didn't complete, so you're not signed in."** Any check failed (expired or reused link, a different browser finishing it, an ID token that didn't verify, Google refusing the code). No session was created. Start again from Settings > Cold account. Operators: the page deliberately doesn't say which check failed; confirm the client id/secret, that the redirect URI matches Google Cloud exactly, the server clock, and that you opened the site at the same host as `COLD_AUTH_REDIRECT_URI`.
+* **"You chose not to sign in with Google."** Consent was declined; nothing changed. A *Testing* consent screen only allows listed test users.
+* **"That sign-in link expired or was already used."** Sign-in must finish within 10 minutes in the same browser, and a link works once. Don't use the back button on Google's page.
+* **"Your session ended."** It expired (default 7 days) or you signed out elsewhere. Sign in again; local data is unaffected.
+* **"Couldn't confirm that you signed out, so assume you're still signed in."** The sign-out request failed. Try again; closing the browser doesn't end a server session.
+* **Server won't start: "Cold sign-in is configured incompletely".** The message names each missing or invalid variable. Fix or unset `COLD_AUTH_GOOGLE_CLIENT_ID` to turn sign-in off.
+* **Signed in on one host, signed out on another** (for example 127.0.0.1 vs localhost): cookies are per host; use the host in the redirect URI.
+
 ## Export, restore and erase
 
 Background: [data-portability.md](data-portability.md).

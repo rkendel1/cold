@@ -15,6 +15,7 @@ import { compareLeads } from "../domain/library.js";
 import { followUpSection } from "./followUpSettings.js";
 import { mountSheetsSetup } from "./sheetsSetup.js";
 import { mountDataPortability } from "./dataPortability.js";
+import { mountAccountSection } from "./accountSection.js";
 
 const OTHER = "__other__";
 const KEY_NOTE = {
@@ -386,6 +387,7 @@ export function mountSettings(root, { store, platform }) {
     body.append(section("followup", "Follow-ups", followUpSection({ store, field })));
     body.append(section("sheets", "Google Sheets", mountSheetsSetup({ store, platform })));
     body.append(section("data", "Your data", dataSection()));
+    if (S.server.account && S.server.account.enabled && S.surface === "web") body.append(section("account", "Cold account (optional)", mountAccountSection()));
   }
 
   store.subscribe(t => { if (t === "server" && !root.hidden && !body.firstChild) load(); });
