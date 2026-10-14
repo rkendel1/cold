@@ -20,7 +20,9 @@ Every setting below was checked against the code that reads it (`server.js`, `li
 | `COLD_GOOGLE_CLIENT_ID` | unset | **Turns on the optional Google Sheets setting.** Web: a "Web application" OAuth client id (the page signs in with Google's script). With `COLD_SETTINGS_FILE` set (desktop/local), a "Desktop app" client id: the server runs the sign-in |
 | `COLD_GOOGLE_CLIENT_SECRET` | unset | Desktop/local only: the Desktop client's secret (Google does not treat installed-app secrets as confidential) |
 | `COLD_GOOGLE_AUTH_URL`, `COLD_GOOGLE_TOKEN_URL`, `COLD_GOOGLE_SHEETS_BASE` | Google's | Overrides for tests/stand-ins. Do not set in production |
-| `NODE_ENV` | | Read by the test helpers only |
+| `COLD_AUTH_GOOGLE_CLIENT_ID`, `COLD_AUTH_GOOGLE_CLIENT_SECRET`, `COLD_AUTH_REDIRECT_URI`, `COLD_SESSION_SECRET`, `COLD_ACCOUNTS_DB_FILE`, `COLD_SESSION_TTL_HOURS`, `COLD_AUTH_RETURN_PATHS` | unset | **Optional Google sign-in for the hosted web app** (identity only; not the Sheets setting above). Unset = off. If the client id is set and anything required is missing or invalid, the server refuses to start. Never enabled on desktop or local installs. Full table, Google Cloud setup and limits: [google-sign-in.md](google-sign-in.md) |
+| `COLD_AUTH_GOOGLE_AUTH_URL`, `COLD_AUTH_GOOGLE_TOKEN_URL`, `COLD_AUTH_GOOGLE_JWKS_URL` | Google's | Test stand-ins only; refused in production |
+| `NODE_ENV` / `VERCEL_ENV` | | `production` makes sign-in require https and forbids the test overrides; also read by the test helpers |
 
 ### Provider environment variables
 

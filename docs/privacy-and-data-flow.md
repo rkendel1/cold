@@ -11,7 +11,9 @@ goes to the model provider you (or the site's operator) chose. These are two sep
 | Desktop app | one SQLite file in the app's data folder | it is the hub others may pair with |
 | Extension | the browser profile's extension storage | only if you pair it with the desktop app |
 
-No Cold-run cloud backup, account sync or server-side library exists. A hosted server has no database behind it: `/api/data` answers
+**Optional Google sign-in (hosted web only).** If an operator configures it, signing in sends you to Google and the server receives an ID token once. It keeps Google's `sub`, your display name, your email if Google marks it verified, a random Cold account id, timestamps, and a hashed session id, in a SQLite file on that server. Scopes are `openid email profile`; no Google token is kept and no Gmail or Sheets access is requested. The session cookie is HttpOnly and expires (default 7 days); sign-out deletes the session on the server but not the account record, and does not change anything at Google. Your library is not uploaded or linked to the account. Desktop and extension never use it. Details: [google-sign-in.md](google-sign-in.md).
+
+No Cold-run cloud backup, library sync or server-side library exists. A hosted server has no database behind it: `/api/data` answers
 404 there. Cold contains no analytics, telemetry, crash reporting or remote logging. The only route by which library data can reach a
 third-party store is the optional Google Sheets setting, which is off unless a Google client id is configured and the user turns it on.
 
