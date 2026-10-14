@@ -45,6 +45,10 @@ Background: [google-sign-in.md](google-sign-in.md). No account section in Settin
 * **"Your session ended."** It expired (default 7 days) or you signed out elsewhere. Sign in again; local data is unaffected.
 * **"Couldn't confirm that you signed out, so assume you're still signed in."** The sign-out request failed. Try again; closing the browser doesn't end a server session.
 * **Server won't start: "Cold sign-in is configured incompletely".** The message names each missing or invalid variable. Fix or unset `COLD_AUTH_GOOGLE_CLIENT_ID` to turn sign-in off.
+* **Desktop or extension: "Couldn't reach the Cold account service".** The server named in `COLD_ACCOUNT_URL` is down or unreachable. Everything local keeps working; sign-in is retried when you press Sign in or return to the window.
+* **Desktop: "Finish signing in in your web browser" never finishes.** The browser must be able to reach `http://127.0.0.1:<port>/oauth/account/callback` on this computer, and that exact address must be registered with Google and listed by the server in `COLD_AUTH_NATIVE_REDIRECTS`. Cancel and try again; a link works once and expires in 10 minutes. If another program holds the app's port the app won't start at all.
+* **Extension: "Sign-in was closed before it finished" / the response "didn't match".** The Chrome auth window was closed, or the redirect wasn't this request's. Try again. If it never works, the extension's id (`chrome://extensions`) probably isn't the one registered with Google and listed in `COLD_AUTH_NATIVE_REDIRECTS` (unpacked ids change with the folder path unless pinned).
+* **Desktop or extension: signed out after restarting.** By design: the session is kept in memory only. Sign in again; your local data was never involved.
 * **Signed in on one host, signed out on another** (for example 127.0.0.1 vs localhost): cookies are per host; use the host in the redirect URI.
 
 ## Export, restore and erase

@@ -37,6 +37,10 @@ async function fetchLibraries() {
 
 (async () => {
   await esbuild.build({ ...common, entryPoints: [path.join(root, "extension/src/panel.js")], minify: false, entryNames: "panel" });
+  await esbuild.build({ ...common, entryPoints: { "account-worker": path.join(root, "extension/src/accountWorker.js") }, minify: false });   // background worker: the only code that holds an account session
+  // Optional: the hosted Cold server that provides account sign-in (COLD_ACCOUNT_URL). A build without it offers no sign-in. No secret goes in this file.
+  if (process.env.COLD_ACCOUNT_URL) fs.writeFileSync(path.join(dist, "account.json"), JSON.stringify({ url: process.env.COLD_ACCOUNT_URL }));
+  else fs.rmSync(path.join(dist, "account.json"), { force: true });
   await esbuild.build({ ...common, entryPoints: { "llm-client": path.join(root, "extension/src/llmClient.js"), "llm-worker": path.join(root, "extension/src/llmWorker.js") }, minify: true, define: { "process.env.NODE_ENV": '"production"' } });
   fs.copyFileSync(path.join(root, "extension/src/modelPins.json"), path.join(dist, "model-pins.json"));   // read at run time by the on-device model; tests can swap it in a copy
   const missing = await fetchLibraries();

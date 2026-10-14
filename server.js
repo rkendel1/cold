@@ -81,6 +81,9 @@ function send(res, status, body, type = "application/json; charset=utf-8", extra
 // Optional Google sign-in for the HOSTED web app (identity only; see lib/auth.js). Off unless COLD_AUTH_GOOGLE_CLIENT_ID is set, and never on a desktop or local install.
 // A partly configured deployment throws here: the server refuses to start rather than run with weaker sign-in than was asked for.
 const auth = require("./lib/auth").createAuth({ send: (res, status, body, type, extra) => send(res, status, body, type || "application/json; charset=utf-8", extra || {}) });
+// Desktop and local installs can sign in to a Cold account hosted elsewhere (lib/accountClient.js). Identity only: the token stays in this process and local data is never touched.
+const accountClient = settings && process.env.COLD_ACCOUNT_URL ? require("./lib/accountClient").createAccountClient({ authority: process.env.COLD_ACCOUNT_URL }) : null;
+if (settings && process.env.COLD_ACCOUNT_URL && !accountClient.configured) console.warn("COLD_ACCOUNT_URL must be an https address (or http://localhost for development): account sign-in is off.");
 
 function readBody(req, limit = 512 * 1024) {
   return new Promise((resolve, reject) => {
@@ -313,6 +316,29 @@ async function dataRoute(req, res, url) {
   return send(res, 404, { error: { message: "Not found" } });
 }
 
+/** Desktop account sign-in routes (local server only; see lib/accountClient.js). Same shape as the hosted web app's /api/account/* so the page's account section is shared. */
+async function accountRoute(req, res, url) {
+  if (url.pathname === "/oauth/account/callback") {
+    // Google's redirect lands here, in the person's browser. Only a short page comes back, never data or a token.
+    if (req.method !== "GET" || !LOCAL_HOST.test(String(req.headers.host || ""))) return send(res, 404, { error: { message: "Not found" } });
+    const r = await accountClient.complete({ code: url.searchParams.get("code") || "", state: url.searchParams.get("state") || "", error: url.searchParams.get("error") || "" });
+    return send(res, r.ok ? 200 : 400, CALLBACK_PAGE(r.ok, r.message).replace(r.ok ? "Connected to Google" : "Couldn't connect", r.ok ? "Signed in to Cold" : "Couldn't sign in"), "text/html; charset=utf-8", { "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'" });
+  }
+  const denied = guardSettings(req);
+  if (denied) return send(res, denied.status, { error: { code: denied.code, message: denied.message } });
+  try {
+    if (req.method === "GET" && url.pathname === "/api/account/me") {
+      const st = await accountClient.status();
+      if (st.state === "signedIn") return send(res, 200, { signedIn: true, account: st.account });
+      if (st.state === "unavailable") return send(res, 503, { error: { code: "account_unavailable", message: "Couldn't reach the Cold account service. Cold still works without it." }, account: st.account || null });
+      return send(res, 401, { error: { code: st.state === "expired" ? "session_expired" : "not_signed_in", message: st.state === "expired" ? "Your sign-in ended." : "You're not signed in." } });
+    }
+    if (req.method === "POST" && url.pathname === "/api/account/login") return send(res, 200, await accountClient.begin({ redirectUri: `http://${req.headers.host}/oauth/account/callback` }));
+    if (req.method === "POST" && url.pathname === "/api/account/logout") return send(res, 200, { signedOut: true, ...(await accountClient.signOut()) });
+  } catch (e) { return send(res, e.status || 500, { error: { code: e.code || "account_error", message: e.status ? e.message : "Couldn't reach the Cold account service." } }); }
+  return send(res, 404, { error: { message: "Not found" } });
+}
+
 /** What a page needs to know to offer Google Sheets: whether it is set up here, and who does the sign-in (this server, or the page itself). */
 const googleConfig = () => (GOOGLE_CLIENT_ID ? { configured: true, mode: settings ? "server" : "browser", ...(settings ? {} : { clientId: GOOGLE_CLIENT_ID }), ...(SHEETS_BASE ? { sheetsBase: SHEETS_BASE } : {}) } : { configured: false });
 const CALLBACK_PAGE = (ok, message) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Cold</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font:16px system-ui,sans-serif;margin:15vh auto;max-width:28rem;padding:0 1rem;color:#1b2b34}h1{font-size:1.25rem}</style></head><body><h1>${ok ? "Connected to Google" : "Couldn't connect"}</h1><p>${message.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))}</p></body></html>`;
@@ -405,11 +431,12 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === "/api/settings" || url.pathname.startsWith("/api/settings/")) return settingsRoute(req, res, url);
     if (url.pathname === "/oauth/google/callback" || url.pathname.startsWith("/api/google/")) return googleRoute(req, res, url);
+    if (accountClient && accountClient.configured && (url.pathname === "/oauth/account/callback" || url.pathname.startsWith("/api/account/"))) return accountRoute(req, res, url);
     if (await auth.handle(req, res, url)) return;
     if (url.pathname === "/api/data" || url.pathname.startsWith("/api/data/")) return dataRoute(req, res, url);
     if (req.method === "GET" && url.pathname === "/api/config") {
       const cfg = resolve();
-      return send(res, 200, { app: "cold", ready: cfg.ready, experimental: !!cfg.hf, model: cfg.model, provider: cfg.id, providerLabel: cfg.label, dbEnabled: !!appDb, accessRequired: !!accessToken(), keySetting: cfg.keySetting, settingsEnabled: !!settings, peopleSearch: !!tregToken(), google: googleConfig(), account: auth.publicConfig() });
+      return send(res, 200, { app: "cold", ready: cfg.ready, experimental: !!cfg.hf, model: cfg.model, provider: cfg.id, providerLabel: cfg.label, dbEnabled: !!appDb, accessRequired: !!accessToken(), keySetting: cfg.keySetting, settingsEnabled: !!settings, peopleSearch: !!tregToken(), google: googleConfig(), account: accountClient && accountClient.configured ? { enabled: true, mode: "native" } : auth.publicConfig() });
     }
     if (req.method === "GET" && url.pathname === "/api/models") {
       if (resolve().id !== "ai-gateway" || settings) return send(res, 200, { models: [] });

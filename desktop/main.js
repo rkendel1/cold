@@ -19,6 +19,9 @@ process.env.HOST = "127.0.0.1";
 // Optional Google Sheets sign-in for this build: desktop/google.json = { "clientId": "...", "clientSecret": "..." } (see docs/google-sheets.md). Without it the option is simply off.
 try { const g = require("./google.json"); process.env.COLD_GOOGLE_CLIENT_ID ||= String(g.clientId || ""); process.env.COLD_GOOGLE_CLIENT_SECRET ||= String(g.clientSecret || ""); } catch { /* not configured */ }
 
+// Optional Cold account sign-in for this build: desktop/account.json = { "url": "https://your-cold-host" } (the hosted Cold server that provides sign-in; see docs/google-sign-in.md). No secret goes here. Without it the option is simply off.
+try { const a = require("./account.json"); process.env.COLD_ACCOUNT_URL ||= String(a.url || ""); } catch { /* not configured */ }
+
 let win = null;
 let httpServer = null, closed = false;   // the Cold server (and its SQLite library) once started; see will-quit below
 
