@@ -10,7 +10,7 @@ import { leadKey } from "../domain/leads.js";
 const clone = v => JSON.parse(JSON.stringify(v));
 /** What the library holds right now, as plain data. */
 export const currentLibrary = store => ({ products: clone(store.state.products), emails: clone(store.state.emails), leads: clone(store.state.leads), settings: clone(store.state.settings) });
-const surfaceOf = store => (store.state.surface === "extension" ? "extension" : store.state.backend === "sqlite" ? "desktop" : "web");
+const surfaceOf = store => (store.state.surface === "extension" ? "extension" : store.state.backend === "hosted" ? "hosted" : store.state.backend === "sqlite" ? "desktop" : "web");
 
 /** The export for what Cold holds now: { file, text, filename, counts }. Throws (code "export_invalid") rather than hand back a file that fails its own check. */
 export function makeExport(store, now = new Date()) {

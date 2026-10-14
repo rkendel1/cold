@@ -10,6 +10,7 @@ import { mountHistory } from "./views/history.js";
 import { mountLeads } from "./views/leads.js";
 import { mountSettings } from "./views/settings.js";
 import { installGlobalErrorLogging } from "./components/global-errors.js";
+import { createHostedLibrary, hostedOffered, hostedReason, localChoice, webTransport, unavailableDb } from "./services/hostedLibrary.js";
 
 /**
  * Builds the shell and every screen. The extension runs this same function with its own storage and platform, so Write, Knowledge,
@@ -27,10 +28,11 @@ export async function startApp(rootEl = document.getElementById("app"), { store 
   };
   const links = [["compose", "Write"], ["knowledge", "Knowledge"], ["leads", "Leads"], ["history", "History"], ["settings", "Settings"]].map(([r, label]) => h("a", { href: `#/${r}`, dataset: { route: r }, id: `nav-${r}` }, label));
   const footer = h("footer", { class: "app-footer" });
+  const badge = h("span", { id: "libraryBadge", class: "chip", hidden: true });   // which library is active; only shown where a hosted library is possible
   const notices = h("div", { id: "notices", class: "notices", role: "status", "aria-live": "polite" });   // announced politely when a notice appears (e.g. unreadable saved items)
   rootEl.append(
     h("a", { class: "skip", href: "#main" }, "Skip to content"),
-    h("header", { class: "app-header" }, platform.hostShowsBrand ? null : h("div", { class: "brand" }, h("img", { class: "brand-mark", src: "brand/logo-96.png", alt: "", width: 28, height: 32 }), h("span", {}, "Cold")), h("nav", { class: "primary-nav", "aria-label": "Primary" }, links)),
+    h("header", { class: "app-header" }, platform.hostShowsBrand ? null : h("div", { class: "brand" }, h("img", { class: "brand-mark", src: "brand/logo-96.png", alt: "", width: 28, height: 32 }), h("span", {}, "Cold")), h("nav", { class: "primary-nav", "aria-label": "Primary" }, links), badge),
     h("main", { id: "main", tabindex: "-1" }, notices, views.compose, views.knowledge, views.leads, views.history, views.settings),
     footer);
 
@@ -49,8 +51,16 @@ export async function startApp(rootEl = document.getElementById("app"), { store 
   const history = mountHistory(views.history, { store, openRecord: rec => { if (rec) compose.open(rec); navigate("compose"); } });
 
   const settings = mountSettings(views.settings, { store, platform });
+  const paintBadge = () => {
+    const on = hostedOffered(S.server) || S.backend === "hosted";
+    badge.hidden = !on; if (!on) return;
+    const db = store.database(), hosted = S.backend === "hosted";
+    badge.textContent = hosted ? (db && db.unavailable ? "Hosted library: unavailable" : "Hosted library") : "Local library";
+    badge.dataset.library = hosted ? (db && db.unavailable ? "unavailable" : "hosted") : "local";
+    badge.title = hosted ? "You are working with your hosted library on the Cold server, not the data on this device." : "You are working with the library on this device.";
+  };
   const paintFooter = () => { footer.textContent = `Cold writes drafts; you send them. Products, drafts and leads ${store.keptNote()}`; };
-  const syncSurface = () => store.set({ surface: platform.hub ? platform.hub.kind : S.backend === "sqlite" ? "desktop" : "web", paired: !!platform.hub && platform.hub.libs.kind === "synced", library: platform.hub ? platform.hub.libs.kind : S.backend === "sqlite" ? "desktop" : "standalone" }, "surface");
+  const syncSurface = () => store.set({ surface: platform.hub ? platform.hub.kind : S.backend === "sqlite" ? "desktop" : "web", paired: S.backend !== "hosted" && !!platform.hub && platform.hub.libs.kind === "synced", library: S.backend === "hosted" ? "hosted" : platform.hub ? platform.hub.libs.kind : S.backend === "sqlite" ? "desktop" : "standalone" }, "surface");
 
   const renderNotices = () => {
     while (notices.firstChild) notices.removeChild(notices.firstChild);
@@ -62,13 +72,25 @@ export async function startApp(rootEl = document.getElementById("app"), { store 
   
   store.subscribe(t => {
     if (t === "ready" || t === "notice" || t === "emails" || t === "products" || t === "leads") renderNotices();
-    if (t === "ready" || t === "server" || t === "surface") paintFooter();
+    if (t === "ready" || t === "server" || t === "surface") { paintFooter(); paintBadge(); }
   });
 
   const boot = await platform.detect();
-  store.start({ db: boot.db });
+  // The hosted library (one per Cold account) opens ONLY if this person chose it on this device before. Signing in never switches libraries. If it was chosen but can't be used (signed out,
+  // unreachable, not created) it stays selected and EMPTY with the reason (never the local library's data, never a write to local storage); the person can switch back in Settings.
+  const choice = platform.libraryChoice || localChoice();
+  const hostedLib = createHostedLibrary({ transport: platform.hostedTransport || webTransport(), onSessionEnded: () => store.set({ notice: "Your sign-in ended, so changes since then were NOT saved to your hosted library (and nothing was saved on this device instead). Sign in again in Settings > Cold account; copy any draft you want to keep first." }, "notice") });
+  Object.assign(platform, { hosted: hostedLib, libraryChoice: choice, localDb: boot.db });
+  let openDb = boot.db, hostedNote = "";
+  const chose = await choice.get();
+  if (chose && hostedOffered(boot.server) && boot.db && boot.db.storage === "sheets") hostedNote = "Google Sheets is in use, so your local library opened instead of your hosted one. Stop using Google Sheets in Settings to open the hosted library.";
+  else if (chose && hostedOffered(boot.server)) {
+    try { openDb = await hostedLib.open(); }
+    catch (e) { openDb = unavailableDb({ code: e && e.code, message: hostedReason(e && e.code) }); hostedNote = `Hosted library unavailable. ${hostedReason(e && e.code)}`; }
+  } else if (chose && boot.server) await choice.set(false);
+  store.start({ db: openDb });
   syncSurface();
-  if (boot.warning) store.set({ notice: boot.warning }, "notice");
+  if (boot.warning || hostedNote) store.set({ notice: [boot.warning, hostedNote].filter(Boolean).join(" ") }, "notice");
   store.set({ server: boot.server, sample: boot.sample, sampleState: boot.sampleState }, "server");
   // Generation or the desktop app's availability can change while the page is open: keep every screen in step.
   platform.subscribe(() => { const s = platform.snapshot(); store.set({ server: s.server, sample: s.sample, sampleState: s.sampleState }, "server"); syncSurface(); });

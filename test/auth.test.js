@@ -77,7 +77,7 @@ test('sign-in: identity scopes only, PKCE and state, a hardened session cookie; 
   const logs = []; const orig = { log: console.log, warn: console.warn, error: console.error }; for (const k of Object.keys(orig)) console[k] = (...a) => logs.push(a.join(' '));
   try {
     assert.equal((await me(c)).status, 401, 'signed out');
-    const cfg = await (await fetch(`${t.base}/api/config`)).json(); assert.deepEqual(cfg.account, { enabled: true, native: false });
+    const cfg = await (await fetch(`${t.base}/api/config`)).json(); assert.deepEqual(cfg.account, { enabled: true, native: false, hosted: false });
     const login = await c.call('/api/account/login', { method: 'POST', body: {} }); assert.equal(login.status, 200);
     const { url } = await login.json(), q = new URL(url).searchParams;
     assert.equal(q.get('scope'), 'openid email profile'); assert.doesNotMatch(url, /gmail|spreadsheets|drive|offline/i);

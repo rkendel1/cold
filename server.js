@@ -81,6 +81,13 @@ function send(res, status, body, type = "application/json; charset=utf-8", extra
 // Optional Google sign-in for the HOSTED web app (identity only; see lib/auth.js). Off unless COLD_AUTH_GOOGLE_CLIENT_ID is set, and never on a desktop or local install.
 // A partly configured deployment throws here: the server refuses to start rather than run with weaker sign-in than was asked for.
 const auth = require("./lib/auth").createAuth({ send: (res, status, body, type, extra) => send(res, status, body, type || "application/json; charset=utf-8", extra || {}) });
+// Optional account-owned hosted libraries (lib/hosted.js): on only when sign-in is on AND COLD_DATA_DB_FILE names a file. Opening it can fail (permissions, a newer schema);
+// that stops the server with a clear message rather than quietly falling back to storage that would not last.
+if (process.env.COLD_DATA_DB_FILE && !auth.enabled) throw new Error("COLD_DATA_DB_FILE is set but Google sign-in is not enabled for this server (see docs/google-sign-in.md). Hosted libraries need sign-in.");
+const hosted = (() => {
+  try { return require("./lib/hosted").createHosted({ auth, send: (res, status, body, type, extra) => send(res, status, body, type || "application/json; charset=utf-8", extra || {}), readBody, file: process.env.COLD_DATA_DB_FILE || "" }); }
+  catch (e) { throw new Error(`Couldn't open the hosted data file (COLD_DATA_DB_FILE): ${e.message}`); }
+})();
 // Desktop and local installs can sign in to a Cold account hosted elsewhere (lib/accountClient.js). Identity only: the token stays in this process and local data is never touched.
 const accountClient = settings && process.env.COLD_ACCOUNT_URL ? require("./lib/accountClient").createAccountClient({ authority: process.env.COLD_ACCOUNT_URL }) : null;
 if (settings && process.env.COLD_ACCOUNT_URL && !accountClient.configured) console.warn("COLD_ACCOUNT_URL must be an https address (or http://localhost for development): account sign-in is off.");
@@ -339,6 +346,18 @@ async function accountRoute(req, res, url) {
   return send(res, 404, { error: { message: "Not found" } });
 }
 
+/** Desktop: the page's hosted-library requests, forwarded with the app's own session (lib/accountClient.js). Local server only; the token is never given to the page. */
+async function hostedProxyRoute(req, res, url) {
+  const denied = guardSettings(req);
+  if (denied) return send(res, denied.status, { error: { code: denied.code, message: denied.message } });
+  if (!/^\/api\/hosted\/(library|data(\/[A-Za-z0-9_.:%-]+){0,2})$/.test(url.pathname) || !["GET", "PUT", "POST", "DELETE"].includes(req.method)) return send(res, 404, { error: { message: "Not found" } });
+  try {
+    const body = req.method === "PUT" || req.method === "POST" ? JSON.parse((await readBody(req, 600 * 1024)) || "{}") : undefined;
+    const r = await accountClient.hosted({ method: req.method, path: `${url.pathname}${url.search}`, body });
+    return send(res, r.status, r.data);
+  } catch (e) { return send(res, e.status || (e instanceof SyntaxError ? 400 : 500), { error: { code: "bad_request", message: e.status ? e.message : "Bad request." } }); }
+}
+
 /** What a page needs to know to offer Google Sheets: whether it is set up here, and who does the sign-in (this server, or the page itself). */
 const googleConfig = () => (GOOGLE_CLIENT_ID ? { configured: true, mode: settings ? "server" : "browser", ...(settings ? {} : { clientId: GOOGLE_CLIENT_ID }), ...(SHEETS_BASE ? { sheetsBase: SHEETS_BASE } : {}) } : { configured: false });
 const CALLBACK_PAGE = (ok, message) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Cold</title><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font:16px system-ui,sans-serif;margin:15vh auto;max-width:28rem;padding:0 1rem;color:#1b2b34}h1{font-size:1.25rem}</style></head><body><h1>${ok ? "Connected to Google" : "Couldn't connect"}</h1><p>${message.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]))}</p></body></html>`;
@@ -431,8 +450,10 @@ const server = http.createServer(async (req, res) => {
     }
     if (url.pathname === "/api/settings" || url.pathname.startsWith("/api/settings/")) return settingsRoute(req, res, url);
     if (url.pathname === "/oauth/google/callback" || url.pathname.startsWith("/api/google/")) return googleRoute(req, res, url);
+    if (accountClient && accountClient.configured && url.pathname.startsWith("/api/hosted")) return hostedProxyRoute(req, res, url);
     if (accountClient && accountClient.configured && (url.pathname === "/oauth/account/callback" || url.pathname.startsWith("/api/account/"))) return accountRoute(req, res, url);
     if (await auth.handle(req, res, url)) return;
+    if (await hosted.handle(req, res, url)) return;
     if (url.pathname === "/api/data" || url.pathname.startsWith("/api/data/")) return dataRoute(req, res, url);
     if (req.method === "GET" && url.pathname === "/api/config") {
       const cfg = resolve();
@@ -478,5 +499,5 @@ if (require.main === module) server.listen(PORT, HOST, () => {
   if (!accessToken() && HOST !== "127.0.0.1") console.warn("WARNING: COLD_ACCESS_TOKEN is not set and the server is reachable beyond localhost: anyone who can reach it can spend your AI credits.");
 });
 
-server.settings = settings; server.db = appDb; server.auth = auth;   // the desktop shell attaches an encryption codec before listening
+server.settings = settings; server.db = appDb; server.auth = auth; server.hosted = hosted;   // the desktop shell attaches an encryption codec before listening
 module.exports = server;

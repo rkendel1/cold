@@ -24,6 +24,7 @@ Every setting below was checked against the code that reads it (`server.js`, `li
 | `COLD_AUTH_GOOGLE_AUTH_URL`, `COLD_AUTH_GOOGLE_TOKEN_URL`, `COLD_AUTH_GOOGLE_JWKS_URL` | Google's | Test stand-ins only; refused in production |
 | `COLD_AUTH_NATIVE_REDIRECTS`, `COLD_NATIVE_SESSION_HOURS`, `COLD_AUTH_RATE_LIMIT_PER_MIN` | unset / 168 / 30 | Desktop and extension sign-in on the same server: exact allowed redirect URIs, bearer-session lifetime, per-address limit. See [google-sign-in.md](google-sign-in.md) |
 | `COLD_ACCOUNT_URL` | unset | **Desktop and extension clients** (not the account server): the https address of the Cold server that provides sign-in. Desktop reads it from the environment or `desktop/account.json`; the extension build writes it to `extension/dist/account.json`. No secret |
+| `COLD_DATA_DB_FILE` | unset | **Turns on hosted libraries** on the account server: the SQLite file for hosted records (separate from `COLD_ACCOUNTS_DB_FILE`; persistent disk; in production an absolute, non-temporary path; needs sign-in or the server won't start; not for desktop builds). See [hosted-library.md](hosted-library.md) |
 | `NODE_ENV` / `VERCEL_ENV` | | `production` makes sign-in require https and forbids the test overrides; also read by the test helpers |
 
 ### Provider environment variables

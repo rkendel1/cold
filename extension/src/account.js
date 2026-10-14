@@ -71,6 +71,21 @@ export function createAccountWorker({ chrome, fetchImpl = (...a) => fetch(...a),
       await setSession({ token: done.data.token, expiresAt: Number(done.data.expiresAt) || 0, account: shown(done.data.account) });
       return { state: "signedIn", account: shown(done.data.account) };
     },
+    /**
+     * One hosted-library request for the panel, made here with the bearer token (which the panel never holds). Only /api/hosted/library and /api/hosted/data[/kind[/id]] and
+     * only GET, PUT, POST, DELETE: this is not a general authenticated proxy. { status, data }; a 401 forgets the session; an unreachable service is a 503.
+     */
+    async hosted({ method, path, body }) {
+      const base = await config(), s = await getSession();
+      if (!base || !s) return { status: 401, data: { error: { code: "not_signed_in", message: "You're signed out, so nothing was saved to your hosted library. Sign in again." } } };
+      if (s.expiresAt && s.expiresAt <= now()) { await clearSession(); return { status: 401, data: { error: { code: "not_signed_in", message: "Your sign-in ended, so nothing was saved to your hosted library. Sign in again." } } }; }
+      if (typeof path !== "string" || !/^\/api\/hosted\/(library|data(\/[A-Za-z0-9_.:%-]+){0,2})(\?base=(new|\d{1,16}))?$/.test(path) || !["GET", "PUT", "POST", "DELETE"].includes(method)) return { status: 400, data: { error: { code: "bad_request", message: "Bad request." } } };
+      try {
+        const r = await call(base, path, { method, body: body && typeof body === "object" ? body : undefined, bearer: s.token });
+        if (r.status === 401) await clearSession();
+        return { status: r.status, data: r.data };
+      } catch { return { status: 503, data: { error: { code: "storage_unavailable", message: "Couldn't reach your hosted library. Nothing was saved there." } } }; }
+    },
     async signout() {
       const s = await getSession(), base = await config(); await clearSession();      // forgotten here whatever happens next
       if (!s || !base) return { ok: true, serverConfirmed: true };
@@ -83,7 +98,7 @@ export function createAccountWorker({ chrome, fetchImpl = (...a) => fetch(...a),
   function onMessage(msg, sender, respond) {
     if (!msg || msg.cold !== "account") return false;
     if (!fromOwnPage(sender) || typeof msg.op !== "string" || !Object.hasOwn(ops, msg.op)) { respond({ error: "refused" }); return false; }
-    ops[msg.op]().then(respond, () => respond({ state: "unavailable" }));
+    ops[msg.op](msg).then(respond, () => respond({ state: "unavailable" }));
     return true;
   }
   return { ops, onMessage };

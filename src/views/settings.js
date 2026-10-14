@@ -16,6 +16,7 @@ import { followUpSection } from "./followUpSettings.js";
 import { mountSheetsSetup } from "./sheetsSetup.js";
 import { mountDataPortability } from "./dataPortability.js";
 import { mountAccountSection } from "./accountSection.js";
+import { hostedOffered } from "../services/hostedLibrary.js";
 
 const OTHER = "__other__";
 const KEY_NOTE = {
@@ -336,6 +337,7 @@ export function mountSettings(root, { store, platform }) {
       h("div", { class: "actions" }, save), msg);
   }
 
+  const hostedProps = () => (hostedOffered(S.server) && platform.hosted ? { store, platform, lib: platform.hosted, choice: platform.libraryChoice } : null);
   /* ---------- Your data ---------- */
   function dataSection() {
     const p = h("p", { class: "hint", id: "dataLine" });
@@ -361,7 +363,7 @@ export function mountSettings(root, { store, platform }) {
     const integ = [];
     if (platform.hub) integ.push(h("h3", {}, "Cold desktop app"), hubSection());
     if (S.server.dbEnabled && platform.api.getExtension) integ.push(h("h3", {}, "Browser extension & web apps"), await pairingSection());
-    if (platform.accountDriver) integ.push(h("h3", {}, "Cold account (optional)"), mountAccountSection({ driver: platform.accountDriver }));
+    if (platform.accountDriver) integ.push(h("h3", {}, "Cold account (optional)"), mountAccountSection({ driver: platform.accountDriver, hosted: hostedProps() }));
     integ.push(h("h3", {}, "Google Sheets"), mountSheetsSetup({ store, platform }), h("h3", {}, "Email app"), emailAppSection(), h("h3", {}, "Email lookup (treg)"), lookupSection({ platform, field }));
     const about = h("div", { class: "form" }, h("p", { class: "hint", id: "aboutLine" }, `Cold extension ${(platform.about && platform.about.version) || ""}`.trim()));
     append(body, [
@@ -388,7 +390,7 @@ export function mountSettings(root, { store, platform }) {
     body.append(section("followup", "Follow-ups", followUpSection({ store, field })));
     body.append(section("sheets", "Google Sheets", mountSheetsSetup({ store, platform })));
     body.append(section("data", "Your data", dataSection()));
-    if (platform.accountDriver) body.append(section("account", "Cold account (optional)", mountAccountSection({ driver: platform.accountDriver })));
+    if (platform.accountDriver) body.append(section("account", "Cold account (optional)", mountAccountSection({ driver: platform.accountDriver, hosted: hostedProps() })));
   }
 
   store.subscribe(t => { if (t === "server" && !root.hidden && !body.firstChild) load(); });
