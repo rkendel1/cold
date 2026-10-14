@@ -14,6 +14,7 @@ import { lookupSection } from "./lookupSettings.js";
 import { compareLeads } from "../domain/library.js";
 import { followUpSection } from "./followUpSettings.js";
 import { mountSheetsSetup } from "./sheetsSetup.js";
+import { mountDataPortability } from "./dataPortability.js";
 
 const OTHER = "__other__";
 const KEY_NOTE = {
@@ -349,7 +350,7 @@ export function mountSettings(root, { store, platform }) {
     };
 
     paint(); paintFlow(); store.subscribe(t => { if (t === "server" || t === "ready" || t === "surface") { paint(); paintFlow(); } });
-    return h("div", {}, p, flow);
+    return h("div", {}, p, flow, mountDataPortability({ store }));
   }
 
   /* ---------- Extension: the same controls, grouped into single-level collapsible sections ---------- */

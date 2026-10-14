@@ -283,6 +283,13 @@ async function dataRoute(req, res, url) {
     if (req.method === "GET" && parts.length === 0) return send(res, 200, appDb.snapshot());
     if (req.method === "GET" && parts[0] === "version") return send(res, 200, { version: appDb.version });
     if (req.method === "GET" && parts[0] === "ping") return send(res, 200, { ok: true, version: appDb.version });
+    if (req.method === "POST" && parts[0] === "erase") {
+      // Erasing is for the person at this computer, in the app's own page: never for the extension's pairing code, and only with an explicit confirmation in the body.
+      if (req.headers.authorization) return send(res, 403, { error: { code: "bad_origin", message: "Erasing data isn't available to the extension." } });
+      let body = {}; try { body = JSON.parse(await readBody(req, 4 * 1024)); } catch { /* fall through to the refusal below */ }
+      if (!body || body.confirm !== "erase-my-cold-data") return send(res, 400, { error: { code: "not_confirmed", message: "Nothing was erased: the request didn't carry the confirmation." } });
+      return send(res, 200, { ok: true, ...appDb.eraseAll() });
+    }
     if (req.method === "POST" && parts[0] === "import") {
       return send(res, 200, appDb.importOnce(JSON.parse(await readBody(req, 16 * 1024 * 1024))));
     }

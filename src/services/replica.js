@@ -51,6 +51,7 @@ export function createReplica({ storage, keepCompose = false, pushLocalFirst = t
   let chain = Promise.resolve();
   function commit(which, mutate) {
     const run = chain.catch(() => {}).then(async () => {
+      if (erased) throw { code: "erased", message: "Your data was erased on this device. Reload Cold to continue." };
       const saved = await storage.get();
       if (saved && typeof saved === "object") adopt(saved);
       const before = snapshot();
@@ -146,6 +147,25 @@ export function createReplica({ storage, keepCompose = false, pushLocalFirst = t
     return syncing;
   }
 
+  /**
+   * Erase this local library: every record, the settings, the Write form, and everything waiting to sync. Nothing is queued for the app (an erase here must never
+   * become a delete there), and afterwards no save is accepted until the page is reloaded, so a stale in-memory copy can't write anything back.
+   * Resolves with what the storage still holds (all zeros when it worked).
+   */
+  let erased = false;
+  async function erase() {
+    await chain.catch(() => {});
+    const before = snapshot(), beforeExtra = extra;
+    erased = true;
+    data = { products: {}, emails: {}, leads: {}, settings: null, outbox: [], lastSync: 0, conflicts: [] }; extra = { warnings: [], compose: undefined };
+    try { await storage.clear(); }
+    catch (e) { erased = false; data = before; extra = beforeExtra; notify(); throw e; }                  // it failed: show what is really still here, accept saves again
+    const left = await storage.get();
+    const n = k => (left && left[k] ? Object.keys(left[k]).length : 0), remaining = { products: n("products"), emails: n("emails"), leads: n("leads") };
+    if (remaining.products + remaining.emails + remaining.leads > 0) { erased = false; await load(); }     // something is still stored: show it, don't pretend
+    notify();
+    return remaining;
+  }
   const collection = name => queryCollection(listeners[name], () => docs(name));
   function doc(path) {
     const [name, id] = path.split("/");
@@ -158,7 +178,7 @@ export function createReplica({ storage, keepCompose = false, pushLocalFirst = t
   }
 
   return {
-    kind: "replica", load, collection, doc, sync, stop() {},
+    kind: "replica", load, collection, doc, sync, erase, stop() {},
     setMany: writeMany, deleteMany: removeMany,
     /** The half-written Write form, kept across reopening the panel. Only for stores that opt in (the extension). */
     ...(keepCompose ? { saveCompose(form) { extra.compose = form; return storage.set(payload()).catch(() => {}); } } : {}),

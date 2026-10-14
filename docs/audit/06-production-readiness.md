@@ -25,7 +25,7 @@
 | Outreach status and sent copy | **P3** | functional ✔ · data integrity ✔ (19 integrity tests) · security n/a | none |
 | Copy and email handoff | **P3** web/extension · **P2** desktop | functional ✔ · honesty of outcome ✔ · compatibility ◐ (desktop OS handoff test cannot run here) · security ✔ (allow-list in main process, tested where runnable) | QUALITY-003 |
 | Follow-ups | **P2** | functional ✔ · data integrity ✔ · workflow ◐ (no alert; unsent-draft case unexplained) · **verified on web only** (PARITY-003) | PARITY-003, CX-004, OPP-003 |
-| SQLite persistence (desktop) | **P2** | functional ✔ · data integrity ◐ (silent omission of unreadable rows; non-transactional import) · upgrade safety ✔ (v1→v2 in-place migration tested) · recovery ✖ (no in-app backup/restore/export) | DATA-008, -009, -010 |
+| SQLite persistence (desktop) | **P2** | functional ✔ · data integrity ◐ (silent omission of unreadable rows; non-transactional import) · upgrade safety ✔ (v1→v2 in-place migration tested) · recovery ◐ (in-app export/restore/erase, tested; not verified in a packaged build) | DATA-010; DATA-009 now fixed |
 | Hub sync (web/extension ↔ desktop) | **P2** | functional ✔ · reliability ◐ (queues offline; one load-sensitive test) · security ✔ (pairing code; extension can't read keys) · consistency ◐ (Sheets bypasses it) | QUALITY-004, PARITY-002 |
 | Grounded drafting | **P2** | plumbing ✔ · reliability ✔ (failure keeps inputs) · **functional correctness against a real model ✖: no evidence** · security ✔ (only this draft's facts leave) | QUALITY-008 |
 | Provider and model selection | **P2** | functional ✔ (mock endpoints) · security ◐ (extension keys unencrypted, labelled) · real provider ✖ | SEC-001, QUALITY-008 |
@@ -63,7 +63,7 @@ A launch of a given scope requires every row in its scope to pass the gate. Evid
 |---|---|---|
 | G1 CI | **Partly met:** workflow, prerequisite enforcement and skip audit exist and were each demonstrated locally; **not yet run on GitHub**, and branch protection is a repository setting | `.github/workflows/ci.yml`, `test/00-ci-prerequisites.test.js`, `scripts/ci-check-skips.cjs` |
 | G3 First-run path | **Not met:** the checklist exists; the measured ≤10-minute unassisted-user result does not | human validation required |
-| G6 Silent data loss/hiding | **Met for a pilot:** unreadable rows are surfaced and preserved; backup/restore documented and tested at the database layer | export/import/erase still open |
+| G6 Silent data loss/hiding | **Met:** unreadable rows are surfaced and preserved; in-app export, validated restore and erase exist and are tested ([data-portability](../data-portability.md)) | not verified in a packaged build or by manual screen-reader use; Sheets and paired libraries are excluded from Replace/Erase |
 | G8 Support/security route | **Partly met:** `SECURITY.md` written without claiming a disabled feature; **owner must enable private reporting or confirm the mailbox** | repository setting |
 | G2, G4, G5, G7 | unchanged | |
 

@@ -9,6 +9,7 @@ One authoritative home per topic. If two documents seem to disagree, the one mar
 | User | [troubleshooting.md](troubleshooting.md) | Verified failure modes and fixes | Current |
 | Operator / developer | [configuration.md](configuration.md) | Every environment variable, file and build flag | Current |
 | User, reviewer | [privacy-and-data-flow.md](privacy-and-data-flow.md) | What data goes where | Current (Google Sheets added) |
+| User | [data-portability.md](data-portability.md) | Export, restore and erase: what each includes, excludes and limits | Current |
 | User, operator | [standalone-surfaces.md](standalone-surfaces.md) | What each surface needs and can do alone | Current |
 | User | [shared-library.md](shared-library.md) | Pairing web/extension with the desktop app | Current |
 | Developer | [library-contract.md](library-contract.md) | What is shared in code and data across surfaces | Current |

@@ -9,6 +9,8 @@ import { compareEmails, compareProducts, compareLeads } from "../domain/library.
 export const chromeReplicaStorage = (key = "cold.replica") => ({
   get: async () => (await chrome.storage.local.get(key))[key] || null,
   set: data => chrome.storage.local.set({ [key]: data }),
+  /** Remove this library's one key (nothing else in the extension's storage: not the pairing, not the model settings). */
+  clear: () => chrome.storage.local.remove(key),
 });
 
 /**
@@ -19,6 +21,8 @@ export const chromeReplicaStorage = (key = "cold.replica") => ({
 export function localReplicaStorage(storage = globalThis.localStorage, keys = STORAGE_KEYS) {
   const byId = list => Object.fromEntries(list.map(x => [x.id, x]));
   return {
+    /** Remove every key this library owns, including entries Cold couldn't read (a save keeps those; an erase must not). Nothing else in this browser's storage is touched. */
+    async clear() { for (const k of [keys.products, keys.emails, keys.leads, keys.settings, keys.compose, keys.sync]) if (k) storage.removeItem(k); },
     async get() {
       const d = loadAll(storage, keys);
       const sync = readJson(keys.sync, {}, storage).value || {};

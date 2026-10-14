@@ -75,6 +75,7 @@ out of it. Related: `standalone.test.js`, `server-security.test.js`, `data-api.t
 * **"Local" depends on the model you pick.** Ollama and OpenAI-compatible URLs may point at a remote machine; Cold cannot tell.
   Nothing here claims data never leaves the device while a hosted model is selected.
 * **Extension storage is not encrypted**, and neither is `localStorage`; anyone with access to the browser profile can read the library.
+* **Export, restore and erase.** Export writes a file to your device only; it holds products, drafts and leads but never keys or tokens, and is not encrypted. Erase deletes Cold's records and saved settings from this device, not Google sign-in, Drive/Sheets, provider keys, exported files or any copy of the database or browser profile ([details](data-portability.md)).
 * **Browser/OS backup and sync** (for example a browser profile that syncs, or OS file backups of the SQLite file) can copy local data off
   the device outside Cold's control.
 * **Network-level proof is test-scope.** The tests prove behaviour of Cold's own code paths in Chromium against a mock provider. They
