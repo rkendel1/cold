@@ -217,7 +217,7 @@ test('extension: export, restore and erase work on the extension\'s own storage;
 
 test('extension also talks to a local Ollama directly (which refuses extension origins unless the header is removed)', { skip: SKIP, timeout: 200000 }, async () => {
   let tags; try { tags = await (await fetch('http://127.0.0.1:11434/api/tags', { signal: AbortSignal.timeout(1500) })).json(); } catch { return; }   // no Ollama here: nothing to check
-  const small = (tags.models || []).map(m => m.name).find(n => /1\.5b|0\.5b|3b|llama3\.2|qwen2\.5/.test(n)) || (tags.models || [])[0]?.name;
+  const small = [...(tags.models || [])].filter(m => !/embed|cloud/.test(m.name)).sort((a, b) => a.size - b.size)[0]?.name;   // the smallest installed chat model: loads fastest, least memory pressure
   if (!small) return;
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cold-oll-'));
   const { ctx, panel } = await launch(dir);
@@ -231,7 +231,7 @@ test('extension also talks to a local Ollama directly (which refuses extension o
     await nav(panel, 'write'); await panel.check('#fmt-tweet'); await panel.check('#tk-original');
     await panel.fill('#tweetContext', 'Say hello to the world in one short sentence.');
     await panel.click('#genBtn');
-    await panel.waitForSelector('#tweetDraft', { timeout: 150000 });   // a real local model may need to load into memory first (this test is slower when other tests run alongside)
+    await panel.waitForSelector('#tweetDraft', { timeout: 150000 }).catch(async e => { throw new Error(`no draft from ${small}: ${(await panel.evaluate(() => document.body.innerText)).slice(0, 600)}`); });   // a real local model may need to load into memory first (this test is slower when other tests run alongside)
     assert.ok((await panel.inputValue('#tweetDraft')).length > 3);
   } finally { await ctx.close(); }
 });
