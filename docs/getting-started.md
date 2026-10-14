@@ -2,13 +2,13 @@
 
 Cold helps you write short, specific outreach drafts from facts you've saved. **It never sends anything**: you copy a draft or open it in your own email app and send it yourself, then record what happened. Each surface is complete on its own; use the one that suits you.
 
-> **Honest status.** Cold is pre-1.0 and has not been approved for general release ([audit](audit/README.md)). There are no packaged installers or store listings yet: the desktop app and extension are built from source.
+> **Honest status.** Cold is pre-1.0 and has not been approved for general release ([audit](audit/README.md)). There are no store listings. The desktop app and extension are built from source; an **Ubuntu `.deb`** can be built with `npm run desktop:deb` (see [ubuntu.md](ubuntu.md); built and tested in CI and in an Ubuntu container, **not yet on a pilot's own machine**).
 
 ## 1. Pick a surface
 
 | You want… | Use | How |
 |---|---|---|
-| Everything on your computer, your own model key, nothing hosted | **Desktop app** | `npm install` then `npm run desktop` (package an installer with `npm run desktop:build`; unsigned). |
+| Everything on your computer, your own model key, nothing hosted | **Desktop app** | `npm install` then `npm run desktop` (package an installer with `npm run desktop:build`; unsigned). On Ubuntu: [ubuntu.md](ubuntu.md) (`npm run desktop:deb`, then `sudo apt install ./dist/cold_*_amd64.deb`). |
 | To try it in a browser you control | **Web (self-hosted)** | `cp .env.example .env`, add a provider key, `npm start`, open `http://127.0.0.1:3000` |
 | To write from the page you're on (tweets, LinkedIn/X profiles) | **Browser extension** | `npm run build:extension`; Chrome → `chrome://extensions` → Developer mode → Load unpacked → the `extension/` folder |
 | To share one library between them | **Pairing** | Desktop app: Settings > Browser extension & web apps. Web/extension: Settings > Cold desktop app |
@@ -50,10 +50,10 @@ The footer and **Settings > Your data** say where your library lives: this brows
 
 ### Backing up the desktop library (do this before anything risky)
 
-The desktop library is the SQLite database in the app's data folder. It runs in write-ahead-log (WAL) mode, so **recent changes live in a separate `cold.db-wal` file until SQLite merges them**, and Cold does not close the database explicitly when you quit, so those extra files are normally still there afterwards. **Copying `cold.db` by itself can silently leave out your latest records** (a test copied just that file after 5 saves and got 0 of the 5 back).
+The desktop library is the SQLite database in the app's data folder. It runs in write-ahead-log (WAL) mode, so **recent changes live in a separate `cold.db-wal` file until SQLite merges them**. On a normal quit Cold now closes the database, which merges them and removes the extra files; after a crash, a power loss or a killed process they are still there and still hold your latest records. **Copying `cold.db` by itself can silently leave out your latest records** (a test copied just that file after 5 saves and got 0 of the 5 back).
 
 1. **Quit Cold completely** (menu **Cold > Quit**, or ⌘Q; on Windows and Linux close every Cold window and check no Cold process remains). Do not copy files while the app is running.
-2. **Find the data folder.** The exact path is shown in **Settings > Browser extension & web apps**. By Electron's convention for an app named Cold it is `~/Library/Application Support/Cold` on macOS, `%APPDATA%\Cold` on Windows and `~/.config/Cold` on Linux (the path in Settings is authoritative; these defaults were not checked on each OS).
+2. **Find the data folder.** The exact path is shown in **Settings > Browser extension & web apps**. By Electron's convention for an app named Cold it is `~/Library/Application Support/Cold` on macOS, `%APPDATA%\Cold` on Windows and `~/.config/Cold` on Linux (the path in Settings is authoritative; the Linux path was checked on Ubuntu 24.04, the macOS and Windows ones were not re-checked). Ubuntu commands: [ubuntu.md](ubuntu.md#backing-up-and-restoring).
 3. **Copy every file whose name starts with `cold.db`** (`cold.db`, plus `cold.db-wal` and `cold.db-shm` if they exist) into a new folder, in one go, for example `cold-backup-2026-10-14`.
 4. Keep `settings.json` separately only if you want to keep your provider keys and Google sign-in; it contains secrets, so store it as carefully as you would a password file. It is not part of the library backup.
 

@@ -17,7 +17,9 @@
     "build:extension": "node scripts/build-extension.cjs",
     "pin:local-model": "node scripts/pin-local-model.cjs",
     "verify:local-model": "node scripts/pin-local-model.cjs --verify",
-    "smoke:model": "COLD_REAL_MODEL=1 node --test test/model-smoke.test.js"
+    "smoke:model": "COLD_REAL_MODEL=1 node --test test/model-smoke.test.js",
+    "desktop:deb": "npm run build:app && node scripts/build-deb.cjs",
+    "verify:deb": "node scripts/verify-deb.cjs"
   },
   "engines": {
     "node": ">=18"
@@ -66,7 +68,17 @@
     },
     "linux": {
       "target": "AppImage",
-      "category": "Office"
+      "category": "Office",
+      "maintainer": "Kendel Consulting <randy@kendelconsulting.com>",
+      "synopsis": "Cold-email generator",
+      "description": "Cold turns five facts about a prospect into a cold email worth sending. Your products, drafts and leads stay on this computer in a local SQLite database.",
+      "syncDesktopName": true
+    },
+    "deb": {
+      "packageCategory": "utils",
+      "priority": "optional",
+      "synopsis": "Cold-email generator"
     }
-  }
+  },
+  "desktopName": "cold.desktop"
 }
