@@ -45,7 +45,7 @@ Defaults come from `lib/providers.js`. On the desktop app and in the extension, 
 | Setting | Where | What it does |
 |---|---|---|
 | `COLD_PORT` | environment | Local port for the app's own server (default `47821`). Saved data is tied to the page origin, so keep it stable |
-| Data folder | Electron `userData` | `cold.db` (SQLite, WAL) and `settings.json` (provider keys, Google refresh token; encrypted with the OS keychain when available, else a private 0600 file) |
+| Data folder | Electron `userData` (`~/.config/Cold` on Linux, `~/Library/Application Support/Cold` on macOS) | `cold.db` (SQLite, WAL) and `settings.json` (provider keys, Google refresh token; encrypted with the OS keychain (on Linux GNOME Keyring or KWallet) when available, else a private 0600 file). A folder Cold creates is 0700 and a library it creates is 0600; existing ones are left as they are |
 | `desktop/google.json` | file, git-ignored | `{ "clientId": "…", "clientSecret": "…" }` for the Desktop OAuth client; read at launch and exported as the two variables above. Copy `desktop/google.example.json`. **If present when packaging, it is included in the app** |
 
 ## Browser extension

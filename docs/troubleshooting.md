@@ -8,6 +8,17 @@ Only failure modes that were observed in the code and tests are listed, with the
 * **"The Cold desktop app isn't running and no other model is set up here yet."** (extension/web paired to the app). Open the desktop app, or choose a provider in Settings > Model.
 * **The server asks for an access code.** `COLD_ACCESS_TOKEN` is set on that server; enter it in the field the page shows.
 
+## "Cold can't open its library" (desktop start-up)
+
+The desktop app shows this box and does not start when it cannot open `cold.db`: it names the folder and the reason (permission denied, disk full, or a file that does not look like a Cold library). **Nothing is changed, moved or deleted, and no new library is started elsewhere.** Fix the cause (for example `ls -ld ~/.config/Cold` and `chmod u+rwx ~/.config/Cold` if you own it; free disk space), or [restore a backup](ubuntu.md#backing-up-and-restoring); then start Cold again. Do not delete `cold.db`, `cold.db-wal` or `cold.db-shm` to make the message go away.
+
+## Ubuntu: the package or the app won't start
+
+* `sudo apt install ./cold_*_amd64.deb` reports missing dependencies: run `sudo apt update` and install again with `apt` (not `dpkg -i`).
+* "Port 47821 is already in use": another copy of Cold or another program has it. Quit it; Cold does not start on another port because saved drafts are tied to the port.
+* The window never appears when started from a terminal as `root`: run Cold as your normal user.
+* Anything else: [ubuntu.md](ubuntu.md#logs-and-reporting-a-problem) says what to collect and where to report it.
+
 ## "Some saved data couldn't be read" (desktop)
 
 A notice such as **"2 saved items were unreadable and left out of this view (1 draft, 1 lead)"** means the SQLite database holds rows whose contents Cold can't parse (for example a damaged write or a hand edit). **Cold has not deleted or changed them**; it only leaves them out of what you see, so everything else keeps working. The notice shows counts only, never the content.

@@ -125,6 +125,7 @@ No API key needed. Set `OLLAMA_MODEL` to use a different model. Note `provider-c
 npm install
 npm run desktop         # run the app
 npm run desktop:build   # package a .dmg / installer into dist/
+npm run desktop:deb     # Ubuntu/Debian package dist/cold_<version>_amd64.deb (guide: docs/ubuntu.md); npm run verify:deb checks it
 ```
 
 Cold runs its own server inside the app on `127.0.0.1:47821` (override with `COLD_PORT`; saved drafts are tied to the port, so keep it stable).
@@ -203,7 +204,7 @@ If you edit a draft after marking it sent, the status and dates don't change and
 
 ## Where your data lives (SQLite)
 
-In the desktop app, products, drafts and leads are stored in one SQLite file: `~/Library/Application Support/Cold/cold.db` on macOS (the path is also shown in Settings > Browser extension). It uses WAL mode, so you can copy it for a backup or open it with any SQLite tool, e.g. `sqlite3 cold.db "select recipient_name, status, subject from emails"`. Provider keys are *not* in this file; they are encrypted separately in `settings.json`.
+In the desktop app, products, drafts and leads are stored in one SQLite file: `~/Library/Application Support/Cold/cold.db` on macOS and `~/.config/Cold/cold.db` on Linux (the path is also shown in Settings > Browser extension). It uses WAL mode, so you can copy it for a backup or open it with any SQLite tool, e.g. `sqlite3 cold.db "select recipient_name, status, subject from emails"`. Provider keys are *not* in this file; they are encrypted separately in `settings.json`.
 
 On first launch, anything already saved in the app's browser storage (the old localStorage data) is copied into SQLite once. The original browser data is left in place untouched.
 

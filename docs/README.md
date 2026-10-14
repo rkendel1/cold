@@ -6,6 +6,7 @@ One authoritative home per topic. If two documents seem to disagree, the one mar
 |---|---|---|---|
 | Everyone | [../README.md](../README.md) | What Cold is, how to run it, the feature reference | Current (reconciled by the audit) |
 | New user | [getting-started.md](getting-started.md) | First draft, first import, what to do next | Current |
+| User (Ubuntu) | [ubuntu.md](ubuntu.md) | Installing, running, backing up and removing the desktop app on Ubuntu; the pilot checklist; what is and isn't verified there | Current; **tested in CI and an Ubuntu container, not yet on a pilot's machine** |
 | User | [troubleshooting.md](troubleshooting.md) | Verified failure modes and fixes | Current |
 | Operator / developer | [configuration.md](configuration.md) | Every environment variable, file and build flag | Current |
 | User, reviewer | [privacy-and-data-flow.md](privacy-and-data-flow.md) | What data goes where | Current (Google Sheets added) |

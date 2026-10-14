@@ -1,6 +1,6 @@
 name: CI
 
-# One gate for all three surfaces. It must not be possible for this to be green while coverage was skipped:
+# One gate for all three surfaces, plus the Ubuntu package (job `linux-deb`: build, verify, install, run the installed app, uninstall). It must not be possible for this to be green while coverage was skipped:
 #  - test/00-ci-prerequisites.test.js fails when Chromium, extension/dist, Electron, node:sqlite or a display is missing (CI=true);
 #  - scripts/ci-check-skips.cjs fails on any skipped test that is not on its allow-list (only the real-model smoke test, which needs a
 #    separately provisioned model, is allowed).
@@ -70,3 +70,61 @@ jobs:
           name: test-results
           path: test-results/
           if-no-files-found: warn
+
+  # The Ubuntu desktop package. A green build is not enough: the .deb is verified, installed with apt, and the INSTALLED application is run
+  # (as the unprivileged runner user, under a virtual display) through launch -> save -> quit -> relaunch. Nothing here is skippable: every
+  # step is a plain command whose failure fails the job.
+  linux-deb:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies (lockfile, reproducible)
+        run: npm ci
+
+      - name: Build the application bundle
+        run: npm run build:app
+
+      - name: Verify the committed bundle is current
+        run: npm run check:app
+
+      - name: Build the .deb (npm run desktop:deb)
+        run: npm run desktop:deb
+
+      - name: Verify the package (name, version, amd64, files, no credentials or user data, maintainer scripts)
+        run: npm run verify:deb
+
+      - name: Install the package with apt, as a user would
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb ./dist/cold_*_amd64.deb
+          dpkg -s cold | grep -E '^(Package|Version|Architecture|Status):'
+          test -x /usr/bin/cold && test -x /opt/Cold/cold
+
+      - name: Run the installed application (virtual display, unprivileged user)
+        run: xvfb-run -a --server-args="-screen 0 1280x1024x24" node scripts/smoke-deb.cjs --exe /opt/Cold/cold
+
+      - name: Uninstall keeps the person's data
+        run: |
+          mkdir -p "$HOME/.config/Cold"
+          printf 'marker' > "$HOME/.config/Cold/cold.db"
+          sudo apt-get remove -y cold
+          test ! -e /opt/Cold/cold && test ! -e /usr/bin/cold
+          test "$(cat "$HOME/.config/Cold/cold.db")" = marker
+          sudo apt-get install -y ./dist/cold_*_amd64.deb
+          sudo apt-get purge -y cold
+          test "$(cat "$HOME/.config/Cold/cold.db")" = marker
+
+      - name: Keep the package for installation testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: cold-deb-amd64
+          path: dist/cold_*_amd64.deb
+          if-no-files-found: error
+          retention-days: 14
