@@ -22,6 +22,8 @@ Every setting below was checked against the code that reads it (`server.js`, `li
 | `COLD_GOOGLE_AUTH_URL`, `COLD_GOOGLE_TOKEN_URL`, `COLD_GOOGLE_SHEETS_BASE` | Google's | Overrides for tests/stand-ins. Do not set in production |
 | `COLD_AUTH_GOOGLE_CLIENT_ID`, `COLD_AUTH_GOOGLE_CLIENT_SECRET`, `COLD_AUTH_REDIRECT_URI`, `COLD_SESSION_SECRET`, `COLD_ACCOUNTS_DB_FILE`, `COLD_SESSION_TTL_HOURS`, `COLD_AUTH_RETURN_PATHS` | unset | **Optional Google sign-in for the hosted web app** (identity only; not the Sheets setting above). Unset = off. If the client id is set and anything required is missing or invalid, the server refuses to start. Never enabled on desktop or local installs. Full table, Google Cloud setup and limits: [google-sign-in.md](google-sign-in.md) |
 | `COLD_AUTH_GOOGLE_AUTH_URL`, `COLD_AUTH_GOOGLE_TOKEN_URL`, `COLD_AUTH_GOOGLE_JWKS_URL` | Google's | Test stand-ins only; refused in production |
+| `COLD_AUTH_NATIVE_REDIRECTS`, `COLD_NATIVE_SESSION_HOURS`, `COLD_AUTH_RATE_LIMIT_PER_MIN` | unset / 168 / 30 | Desktop and extension sign-in on the same server: exact allowed redirect URIs, bearer-session lifetime, per-address limit. See [google-sign-in.md](google-sign-in.md) |
+| `COLD_ACCOUNT_URL` | unset | **Desktop and extension clients** (not the account server): the https address of the Cold server that provides sign-in. Desktop reads it from the environment or `desktop/account.json`; the extension build writes it to `extension/dist/account.json`. No secret |
 | `NODE_ENV` / `VERCEL_ENV` | | `production` makes sign-in require https and forbids the test overrides; also read by the test helpers |
 
 ### Provider environment variables

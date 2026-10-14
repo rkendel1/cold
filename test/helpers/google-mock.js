@@ -26,11 +26,12 @@ async function startGoogle({ clientId = 'test-client.apps.googleusercontent.com'
     if (url.pathname === '/auth') {
       const q = Object.fromEntries(url.searchParams); g.authRequests.push(q);
       const back = new URL(q.redirect_uri);
-      if (g.deny) { back.searchParams.set('error', 'access_denied'); back.searchParams.set('state', q.state); res.writeHead(302, { location: back.href }); return res.end(); }
+      const reply = loc => { if (q._mock === 'json') { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ location: loc })); } else { res.writeHead(302, { location: loc }); res.end(); } };   // _mock=json: for a test that can't follow the redirect itself
+      if (g.deny) { back.searchParams.set('error', 'access_denied'); back.searchParams.set('state', q.state); return reply(back.href); }
       const code = `code-${crypto.randomBytes(8).toString('hex')}`;
       g.codes.set(code, { nonce: q.nonce, challenge: q.code_challenge, redirect: q.redirect_uri, person: { ...g.person } });
       back.searchParams.set('code', code); back.searchParams.set('state', q.state);
-      res.writeHead(302, { location: back.href }); return res.end();
+      return reply(back.href);
     }
     if (url.pathname === '/jwks') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ keys: [g.key.jwk] })); }
     if (url.pathname === '/token' && req.method === 'POST') {

@@ -361,6 +361,7 @@ export function mountSettings(root, { store, platform }) {
     const integ = [];
     if (platform.hub) integ.push(h("h3", {}, "Cold desktop app"), hubSection());
     if (S.server.dbEnabled && platform.api.getExtension) integ.push(h("h3", {}, "Browser extension & web apps"), await pairingSection());
+    if (platform.accountDriver) integ.push(h("h3", {}, "Cold account (optional)"), mountAccountSection({ driver: platform.accountDriver }));
     integ.push(h("h3", {}, "Google Sheets"), mountSheetsSetup({ store, platform }), h("h3", {}, "Email app"), emailAppSection(), h("h3", {}, "Email lookup (treg)"), lookupSection({ platform, field }));
     const about = h("div", { class: "form" }, h("p", { class: "hint", id: "aboutLine" }, `Cold extension ${(platform.about && platform.about.version) || ""}`.trim()));
     append(body, [
@@ -387,7 +388,7 @@ export function mountSettings(root, { store, platform }) {
     body.append(section("followup", "Follow-ups", followUpSection({ store, field })));
     body.append(section("sheets", "Google Sheets", mountSheetsSetup({ store, platform })));
     body.append(section("data", "Your data", dataSection()));
-    if (S.server.account && S.server.account.enabled && S.surface === "web") body.append(section("account", "Cold account (optional)", mountAccountSection()));
+    if (platform.accountDriver) body.append(section("account", "Cold account (optional)", mountAccountSection({ driver: platform.accountDriver })));
   }
 
   store.subscribe(t => { if (t === "server" && !root.hidden && !body.firstChild) load(); });

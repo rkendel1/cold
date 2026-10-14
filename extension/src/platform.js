@@ -15,6 +15,7 @@ import { createSettingsApi } from "./settingsApi.js";
 import { insertIntoBox } from "./page.js";
 import { extensionAuth } from "../../src/services/googleAuth.js";
 import { createSheetsConnector, chromeLinkStore } from "../../src/services/sheetsConnector.js";
+import { extensionDriver } from "../../src/services/accountDrivers.js";
 
 // Set when the extension is built (COLD_GOOGLE_CLIENT_ID); empty means this build has no Google Sheets option.
 const GOOGLE_CLIENT_ID = typeof __COLD_GOOGLE_CLIENT_ID__ === "undefined" ? "" : __COLD_GOOGLE_CLIENT_ID__;
@@ -28,6 +29,8 @@ export async function createExtensionPlatform() {
     ? createReplica({ storage: chromeReplicaStorage(`cold.shared@${origin}`), keepCompose: true, pushLocalFirst: false })
     : createReplica({ storage: chromeReplicaStorage(), keepCompose: true })) });
   const active = await libs.init();
+  let accountDriver = null;
+  try { const c = await chrome.runtime.sendMessage({ cold: "account", op: "config" }); if (c && c.enabled) accountDriver = extensionDriver(); } catch { /* no account support in this build */ }
   const subs = new Set();
   const notify = () => subs.forEach(fn => fn());
   const ownCfg = () => resolveOwn(config);
@@ -92,6 +95,8 @@ export async function createExtensionPlatform() {
     },
     /** The Google Sheets connector, or null when this build has no Google client id. */
     get sheets() { return sheets; },
+    /** Optional Cold account sign-in, offered only when this build has an account service configured; the worker holds the session (extension/src/account.js). */
+    get accountDriver() { return accountDriver; },
     async detect() {
       let db = active.db, warning = "";
       if (sheets) { try { await sheets.init(); if (sheets.link) { db = await sheets.open(db); if (db.sheets && db.sheets.status.state === "error") warning = "Couldn't read your Google Sheet, so your leads and drafts are not shown right now. Nothing is lost. Open Settings > Google Sheets to reconnect."; } } catch { warning = "Couldn't read your Google Sheet, so your leads and drafts are not shown right now. Nothing is lost. Open Settings > Google Sheets to reconnect."; } }

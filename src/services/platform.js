@@ -11,6 +11,7 @@ import { createBackend } from "./backend.js";
 import { localHubStore, verifyHub } from "./hub.js";
 import { browserAuth, serverAuth } from "./googleAuth.js";
 import { createSheetsConnector, webLinkStore } from "./sheetsConnector.js";
+import { cookieDriver } from "./accountDrivers.js";
 
 const safeGet = (area, key) => { try { return area.getItem(key) || ""; } catch { return ""; } };
 const safeSet = (area, key, v) => { try { v ? area.setItem(key, v) : area.removeItem(key); } catch {} };
@@ -20,7 +21,7 @@ const PREFER_KEY = "cold.prefer";
 export function createPlatform() {
   const settings = { model: "", access: safeGet(globalThis.sessionStorage || {}, STORAGE_KEYS.access) };
   const api = createApi({ getAccess: () => settings.access, getModel: () => settings.model });
-  let server = null, backend = null, hub = null, sheets = null;
+  let server = null, backend = null, hub = null, sheets = null, accountDriver = null;
   const subs = new Set();
   const notify = () => subs.forEach(fn => fn());
   /** What the rest of the app needs to know right now: the server's config, whether anything can generate, and the sync state. */
@@ -34,6 +35,13 @@ export function createPlatform() {
     subscribe(fn) { subs.add(fn); return () => subs.delete(fn); },
     snapshot,
     get hub() { return hub; },
+    /** The Cold account (optional sign-in) as this surface offers it: the hosted web session, or the desktop app's own sign-in. null when not offered here. */
+    get accountDriver() {
+      const a = server && server.account;
+      if (!a || !a.enabled) return null;
+      if (!accountDriver) accountDriver = cookieDriver(a.mode === "native" ? { kind: "desktop", external: true } : { kind: "web" });
+      return accountDriver;
+    },
     /** The Google Sheets connector, or null when this build has no Google sign-in set up. */
     get sheets() { return sheets; },
     get backend() { return backend; },
