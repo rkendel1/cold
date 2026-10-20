@@ -6,9 +6,12 @@ import { PROOF_TYPES, PROOF_STRENGTHS } from "../domain/constants.js";
 import { readiness, externalProof, normalizeHandle, productLinks } from "../domain/knowledge.js";
 import { linkKey, orderLinks, signoffBlock } from "../domain/signoff.js";
 import { uid } from "../domain/ids.js";
+import { sourceOf, norm } from "../domain/importKnowledge.js";
+import { importDialog, mountReview } from "./importKnowledge.js";
 
-export function mountKnowledge(root, { store, navigate }) {
+export function mountKnowledge(root, { store, navigate, platform = null }) {
   const S = store.state;
+  const canImport = () => !!(platform && platform.api && platform.api.importRepo && S.surface !== "extension");
   let sel = null;           // { id, isNew, dirty, el, read, focusers }
   let draftProduct = null;  // unsaved new product
 
@@ -71,7 +74,9 @@ export function mountKnowledge(root, { store, navigate }) {
 
   const emptyState = () => h("div", { class: "empty" }, h("h2", {}, "Add what you're selling"),
     h("p", {}, "Start with two things: the product's name and what it does in one plain sentence. That's enough for a first draft. Add proof, audience and wording rules whenever you like."),
-    button("Add your first product", { kind: "primary", id: "emptyAdd", onclick: () => newProduct() }));
+    h("div", { class: "actions" },
+      canImport() ? button("Import from repository", { kind: "primary", id: "emptyImport", onclick: () => { newProduct(); sel?.startImport?.(); } }) : null,
+      button("Add your first product", { kind: canImport() ? "secondary" : "primary", id: "emptyAdd", onclick: () => newProduct() })));
 
   /* ---------- editor ---------- */
   function buildEditor(p) {
@@ -99,6 +104,7 @@ export function mountKnowledge(root, { store, navigate }) {
     set("kLinks", lines(p.socials)); set("kWhat", p.what); set("kWho", p.who); set("kProblem", p.problem); set("kTech", lines(p.techFacts)); set("kApproved", lines(p.approved)); set("kDont", lines(p.dontSay)); set("kShort", p.shortDesc); set("kLong", p.longDesc);
 
     const rows = (p.proof || []).map(x => ({ ...x }));
+    const imported = { source: p.importSource || null, records: Array.isArray(p.provenance) ? p.provenance : [] };   // where imported facts came from (kept apart from the prose)
     const proofHost = h("div", { class: "form" });
     const readyHost = h("div", {});
     const status = h("span", { class: "status", role: "status" }, p._new ? "Not saved yet" : `Saved ${store.where()}`);
@@ -131,6 +137,7 @@ export function mountKnowledge(root, { store, navigate }) {
         name: val("kName"), status: val("kStatus"), oneLiner: val("kOne"), category: val("kCat"), website: val("kWeb"), repo: val("kRepo"), xHandle: normalizeHandle(val("kX")), socials: lines("kLinks"), signoffSkip: [...skip],
         what: val("kWhat"), who: val("kWho"), problem: val("kProblem"), shortDesc: val("kShort"), longDesc: val("kLong"),
         techFacts: lines("kTech"), approved: lines("kApproved"), dontSay: lines("kDont"),
+        ...(imported.source ? { importSource: imported.source, provenance: imported.records } : {}),
         proof: rows.filter(r => r.claim.trim()).map(r => ({ id: r.id, claim: r.claim.trim(), evidence: (r.evidence || "").trim(), type: r.type, strength: r.strength, external: !!r.external })),
       };
     };
@@ -184,6 +191,47 @@ export function mountKnowledge(root, { store, navigate }) {
         r.external && !(r.evidence || "").trim() ? chip("warn", "Needs evidence") : null);
     }
 
+    /* import from repository: suggestions are written into these same fields, and nothing is saved or approved until the person says so */
+    const importHost = h("div", {});
+    const importBar = h("div", { class: "import-bar" });
+    const FIELD_REF = { name: "kName", oneLiner: "kOne", what: "kWhat", who: "kWho", problem: "kProblem", longDesc: "kLong", website: "kWeb", repo: "kRepo", xHandle: "kX", techFacts: "kTech", approved: "kApproved", dontSay: "kDont", socials: "kLinks" };
+    const poke = ref => { autosize(ref.input); ref.input.dispatchEvent(new Event("input", { bubbles: true })); };
+    const adapter = {
+      set(field, value) { const ref = refs[FIELD_REF[field]]; ref.input.value = value; poke(ref); },
+      addLine(field, text) { const ref = refs[FIELD_REF[field]], cur = ref.input.value.replace(/\s+$/, ""); ref.input.value = cur ? `${cur}\n${text}` : text; poke(ref); },
+      addProof(row) { rows.push(row); markDirty(); renderProof(); return row; },
+    };
+    const removeLine = r => {
+      if (r.field === "proof") { const i = rows.findIndex(x => x.id === r.proofId || norm(x.claim) === norm(r.text)); if (i >= 0) rows.splice(i, 1); markDirty(); renderProof(); return; }
+      const ref = refs[FIELD_REF[{ techFact: "techFacts", approved: "approved", dontSay: "dontSay", social: "socials" }[r.field]]];
+      ref.input.value = ref.input.value.split("\n").filter(l => norm(l) !== norm(r.text)).join("\n"); poke(ref);
+    };
+    const moveProofInternal = id => { const row = rows.find(x => x.id === id); if (row) { row.external = false; markDirty(); renderProof(); } };
+    function paintImportBar() {
+      clear(importBar);
+      if (!canImport()) return;
+      const src = imported.source;
+      importBar.append(
+        button(src ? "Refresh from repository" : "Import from repository", { kind: src ? "secondary" : "primary", id: "kImport", onclick: () => startImport() }),
+        h("span", { class: "hint" }, src
+          ? `Imported from ${src.host === "upload" ? "an uploaded project" : `${src.owner}/${src.repo} @ ${String(src.commit).slice(0, 7)}`}. Refreshing shows what changed and never overwrites your edits or approvals.`
+          : "Let Cold read a repository or ZIP and draft this profile. You review everything first."));
+    }
+    async function startImport() {
+      if (!canImport()) return;
+      const src = imported.source, refresh = !!src;
+      const result = await importDialog({ api: platform.api, previous: refresh ? imported.records.map(r => ({ key: r.key, evidence: r.evidence })) : undefined, source: src });
+      if (!result) { importBar.querySelector("button")?.focus(); return; }
+      clear(importHost);
+      const panel = mountReview({
+        result, refresh, getProduct: read, adapter, records: imported.records, removeLine, moveProofInternal,
+        setRecords: r => { imported.records = r; }, setSource: () => { imported.source = sourceOf(result); paintImportBar(); },
+        onChange: () => { markDirty(); renderSignoffPick(); },
+        onClose: () => { clear(importHost); importBar.querySelector("button")?.focus(); },
+      });
+      importHost.append(panel); panel.scrollIntoView?.({ block: "start" }); panel.focus();
+    }
+
     // Extension: one level of collapsible sections so the panel stays short. Elsewhere: plain sections, as before.
     const compact = S.surface === "extension";
     const sect = (id, title, open, ...kids) => compact
@@ -198,6 +246,7 @@ export function mountKnowledge(root, { store, navigate }) {
 
     const el = h("form", { class: "peditor", id: "kForm", novalidate: true, autocomplete: "off", dataset: { id: p.id } },
       h("h2", { class: "sr-only" }, "Edit product"),
+      importBar, importHost,
       readyHost,
       compact ? summaryEl : null,
       sect("about", "About this product", true, refs.kName, refs.kOne, refs.kWhat, refs.kWho, refs.kProblem),
@@ -212,8 +261,9 @@ export function mountKnowledge(root, { store, navigate }) {
         button("Write an email with this", { kind: "ghost", id: "kCompose", onclick: () => { if (sel?.dirty) toast("Unsaved edits aren't used in drafts until you save."); navigate("compose", { productId: p.id }); } }),
         status, button("Delete", { kind: "ghost danger", id: "kDelete", onclick: () => remove(p) })));
 
-    el.addEventListener("input", e => { if (e.target.closest(".proof")) return; markDirty(); if ([refs.kWeb, refs.kX, refs.kRepo, refs.kLinks, refs.kName].some(c => c.input === e.target)) renderSignoffPick(); });
-    renderSignoffPick();
+    el.addEventListener("keydown", e => { if (e.key === "Enter" && e.target.tagName === "INPUT" && e.target.closest(".import-review")) e.preventDefault(); });   // Enter in a suggestion must not save the product
+    el.addEventListener("input", e => { if (e.target.closest(".proof") || e.target.closest(".import-review")) return; markDirty(); if ([refs.kWeb, refs.kX, refs.kRepo, refs.kLinks, refs.kName].some(c => c.input === e.target)) renderSignoffPick(); });
+    renderSignoffPick(); paintImportBar();
     el.addEventListener("submit", async ev => {
       ev.preventDefault();
       const rec = read();
@@ -232,7 +282,7 @@ export function mountKnowledge(root, { store, navigate }) {
 
     renderProof(); renderReady(); if (compact) paintSummary();
     [refs.kWhat, refs.kWho, refs.kProblem].forEach(c => c.input.addEventListener("input", () => autosize(c.input)));
-    return { id: p.id, isNew: !!p._new, dirty: false, el, setStatus: t => { status.textContent = t; }, focus: focusField };
+    return { id: p.id, isNew: !!p._new, dirty: false, el, setStatus: t => { status.textContent = t; }, focus: focusField, startImport };
   }
 
   async function remove(p) {

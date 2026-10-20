@@ -203,6 +203,69 @@ async function peopleRoute(req, res, op) {
   send(res, 200, out);   // a miss, a refusal or a failed lookup is a normal outcome the UI explains; it carries no token and no raw provider data
 }
 
+// ---- Import product knowledge from a repository (lib/productImport.js) ----------------------------------------------
+// Streams newline-delimited JSON: {step}… then {done:true,result} or {error}. The model only ever sees the repository's files,
+// never the user's existing product data (so internal-only proof cannot reach a prompt).
+const IMPORT_ZIP_MAX = 40 * 1024 * 1024;
+
+function readRaw(req, limit) {
+  return new Promise((resolve, reject) => {
+    const chunks = []; let size = 0, over = false;
+    req.on("data", c => { size += c.length; if (size > limit) { over = true; chunks.length = 0; return; } chunks.push(c); });
+    req.on("end", () => (over ? reject(Object.assign(new Error("Request too large"), { status: 413 })) : resolve(Buffer.concat(chunks))));
+    req.on("error", reject);
+  });
+}
+
+/** One model call for the importer. Throws an Error with a readable message. */
+async function completeForImport(prompt, { signal, maxTokens = 2000 } = {}) {
+  const cfg = resolve();
+  if (!cfg.ready) throw Object.assign(new Error(`Missing ${cfg.keySetting}.`), { code: "api_error" });
+  const { url, init } = chatRequest(cfg, { model: cfg.model, prompt, maxTokens: Math.max(maxTokens, MAX_TOKENS) });
+  let r;
+  try { r = await fetch(url, { ...init, signal }); } catch { throw Object.assign(new Error(unreachable(cfg, cfg.model)), { code: "api_error" }); }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw Object.assign(new Error(apiErrorMessage(r.status, data, cfg, cfg.model)), { code: "api_error" });
+  const out = parseChat(cfg, data);
+  if (!out) throw Object.assign(new Error("The provider returned no text. Try again."), { code: "api_error" });
+  return out.text;
+}
+
+async function importRoute(req, res, kind) {
+  const denied = guardGenerate(req);
+  if (denied) return send(res, denied.status, { error: { code: denied.code, message: denied.message } });
+  const src = require("./lib/repoSource"), imp = require("./lib/productImport");
+  let input;
+  try {
+    if (kind === "zip") {
+      // Body: 4-byte big-endian length of a small JSON header, the header, then the ZIP bytes.
+      const buf = await readRaw(req, IMPORT_ZIP_MAX + 256 * 1024);
+      const n = buf.length >= 4 ? buf.readUInt32BE(0) : 0;
+      if (!n || n > 256 * 1024 || 4 + n > buf.length) return send(res, 400, { error: { code: "bad_source", message: "That upload wasn't a project ZIP." } });
+      const meta = JSON.parse(buf.subarray(4, 4 + n).toString("utf8"));
+      input = { zip: buf.subarray(4 + n), name: String(meta.name || ""), previous: meta.previous };
+    } else {
+      const body = JSON.parse(await readBody(req, 512 * 1024));
+      input = { url: String(body.url || ""), previous: body.previous };
+    }
+  } catch (e) {
+    return send(res, e.status || 400, { error: { code: e.status === 413 ? "too_large" : "bad_source", message: e.status === 413 ? "That upload is too large (40 MB limit)." : "Bad request." } });
+  }
+  const ctl = new AbortController();
+  res.on("close", () => { if (!res.writableEnded) ctl.abort(); });
+  res.writeHead(200, { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store", "x-accel-buffering": "no", ...SECURITY_HEADERS });
+  const emit = o => { if (!res.writableEnded) res.write(`${JSON.stringify(o)}\n`); };
+  try {
+    emit({ step: "read" });
+    const source = kind === "zip" ? src.fromZip(input.zip, { name: input.name }) : await src.fetchGithub(input.url, { token: process.env.COLD_GITHUB_TOKEN || process.env.GITHUB_TOKEN || "", signal: ctl.signal });
+    const result = await imp.importKnowledge({ ...source, complete: completeForImport, onStep: s => emit({ step: s }), signal: ctl.signal, previous: input.previous });
+    emit({ done: true, result });
+  } catch (e) {
+    if (!ctl.signal.aborted) emit({ error: { code: e.code || "api_error", message: e.message || "The import failed." } });
+  }
+  res.end();
+}
+
 async function generate(req, res) {
   const denied = guardGenerate(req);
   if (denied) return send(res, denied.status, { error: { code: denied.code, message: denied.message } });
@@ -465,6 +528,8 @@ const server = http.createServer(async (req, res) => {
       catch { return send(res, 503, { error: { message: "Could not load AI Gateway models. The server default is still available." } }); }
     }
     if (req.method === "POST" && url.pathname === "/api/generate") return generate(req, res);
+    if (req.method === "POST" && url.pathname === "/api/import/repo") return importRoute(req, res, "repo");
+    if (req.method === "POST" && url.pathname === "/api/import/zip") return importRoute(req, res, "zip");
     if (req.method === "POST" && url.pathname === "/api/profile") return profileRoute(req, res);
     if (req.method === "POST" && url.pathname === "/api/people/email/find") return peopleRoute(req, res, "find");
     if (req.method === "POST" && url.pathname === "/api/people/email/verify") return peopleRoute(req, res, "verify");

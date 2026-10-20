@@ -211,3 +211,27 @@ label.choice input { margin-top: 4px; }
 .first-run-steps li { border-top: 1px solid var(--line); padding-top: 8px; }
 .first-run-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .first-run-steps .hint { margin: 4px 0; }
+
+/* Import product knowledge */
+.import-bar { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.import-bar .hint { margin: 0; flex: 1 1 260px; }
+.import-dlg { max-width: min(560px, calc(100vw - 32px)); }
+.import-dialog input[type="text"], .import-dialog input[type="file"] { width: 100%; }
+.import-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.import-steps li { color: var(--muted); }
+.import-steps li.now { color: var(--ink); font-weight: 600; }
+.import-steps li.done { color: var(--good); }
+.import-review { border-color: var(--accent); }
+.import-body, .import-group { display: grid; gap: 10px; }
+.import-group h3 { margin: 8px 0 0; }
+.import-card { border: 1px solid var(--line); border-left-width: 4px; border-radius: var(--r); padding: 12px 14px; display: grid; gap: 8px; background: var(--surface); min-width: 0; }
+.import-card.verified { border-left-color: var(--good); }
+.import-card.inferred { border-left-color: var(--accent); }
+.import-card.needs_evidence { border-left-color: var(--warn); }
+.import-card textarea, .import-card input[type="text"] { width: 100%; }
+.import-head { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; }
+.import-done { margin: 0; color: var(--muted); }
+.import-status { color: var(--bad); font-size: var(--fs-sm); }
+.evidence { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 6px; font-size: var(--fs-sm); }
+.evidence blockquote { margin: 4px 0 0; padding: 4px 10px; border-left: 3px solid var(--line); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }

@@ -30,6 +30,40 @@ export function createApi({ fetchImpl = (...a) => globalThis.fetch(...a), getAcc
     if (!r.ok) throw { code: (data.error && data.error.code) || "api_error", message: (data.error && data.error.message) || `The server returned ${r.status}.` };
     return data;
   }
+  /** Import product knowledge from a repository. The server streams newline-delimited JSON: {step}… then {done,result} or {error}. */
+  async function importStream(path, init, { onStep = () => {}, signal } = {}) {
+    let r;
+    try { r = await fetchImpl(path, { ...init, signal }); }
+    catch (e) { if (e && e.name === "AbortError") throw { code: "cancelled" }; throw { code: "network", message: "Couldn't reach the Cold server." }; }
+    if (!r.ok) { const d = await r.json().catch(() => ({})); throw { code: (d.error && d.error.code) || (r.status === 429 ? "rate_limited" : "api_error"), message: (d.error && d.error.message) || `The server returned ${r.status}.` }; }
+    let result = null, failure = null;
+    const line = raw => {
+      if (!raw.trim()) return;
+      let o; try { o = JSON.parse(raw); } catch { return; }
+      if (o.step) onStep(o.step); else if (o.done) result = o.result; else if (o.error) failure = o.error;
+    };
+    try {
+      if (r.body && r.body.getReader) {
+        const reader = r.body.getReader(), dec = new TextDecoder(); let buf = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let i; while ((i = buf.indexOf("\n")) >= 0) { line(buf.slice(0, i)); buf = buf.slice(i + 1); }
+        }
+        line(buf);
+      } else (await r.text()).split("\n").forEach(line);
+    } catch (e) { if (e && e.name === "AbortError") throw { code: "cancelled" }; throw { code: "network", message: "The connection dropped while reading the project." }; }
+    if (failure) throw { code: failure.code || "api_error", message: failure.message || "The import failed." };
+    if (!result) throw { code: "network", message: "The import ended before it finished. Try again." };
+    return result;
+  }
+  const importRepo = (url, { previous, ...o } = {}) => importStream("api/import/repo", { method: "POST", headers: headers(), body: JSON.stringify({ url, previous }) }, o);
+  const importZip = (file, { previous, ...o } = {}) => {
+    const meta = new TextEncoder().encode(JSON.stringify({ name: file.name, previous })), len = new Uint8Array(4);
+    new DataView(len.buffer).setUint32(0, meta.length);
+    return importStream("api/import/zip", { method: "POST", headers: { ...headers(), "content-type": "application/octet-stream" }, body: new Blob([len, meta, file]) }, o);
+  };
   const profile = url => settingsCall("api/profile", { method: "POST", body: JSON.stringify({ url }) });
   // Email lookup (treg). The server holds the token; these send one person's details and get a candidate back, never a saved result.
   const findEmail = input => settingsCall("api/people/email/find", { method: "POST", body: JSON.stringify(input) });
@@ -56,5 +90,5 @@ export function createApi({ fetchImpl = (...a) => globalThis.fetch(...a), getAcc
   }
   sample.json = async (prompt, opts) => parseLooseJson((await sample(prompt, opts)).text);
 
-  return { googleCall: settingsCall, config, models, sample, profile, tweet, findEmail, verifyEmail, getExtension, rotateExtension, setWebOrigins, getSettings, saveSettings, providerModels };
+  return { googleCall: settingsCall, config, models, sample, importRepo, importZip, profile, tweet, findEmail, verifyEmail, getExtension, rotateExtension, setWebOrigins, getSettings, saveSettings, providerModels };
 }

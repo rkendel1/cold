@@ -46,7 +46,7 @@ export async function startApp(rootEl = document.getElementById("app"), { store 
   };
 
   compose = mountCompose(views.compose, { store, platform, navigate });
-  knowledge = mountKnowledge(views.knowledge, { store, navigate });
+  knowledge = mountKnowledge(views.knowledge, { store, navigate, platform });
   const leads = mountLeads(views.leads, { store, navigate, platform });
   const history = mountHistory(views.history, { store, openRecord: rec => { if (rec) compose.open(rec); navigate("compose"); } });
 
