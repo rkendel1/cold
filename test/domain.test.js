@@ -57,6 +57,8 @@ test("prompts keep the generation contract", async () => {
   assert.match(CONTRACT, /at most ONE proof point/);
   assert.match(CONTRACT, /40–80 words/);
   assert.match(CONTRACT, /never manufacture commonality/);
+  assert.match(CONTRACT, /1\. PROBLEM/); assert.match(CONTRACT, /Do not mention the product, the sender or "we" yet/);
+  assert.match(CONTRACT, /Isolate that one problem/); assert.match(CONTRACT, /clickbait/);
   const k = { text: "KNOWLEDGE-TEXT", facts: {} };
   const f = { name: "Sam", role: "CTO", company: "TrialCo", why: "wrote about stalls", goal: "customer" };
   assert.match(recipientBlock(f), /RECIPIENT: Sam, CTO at TrialCo/);
@@ -71,13 +73,16 @@ test("local rules: sentences, meeting asks, banned phrases, subject", async () =
   const { sentenceCount, localChecks, evaluate, checklistVerdict, dontSayTerms } = await load("domain/rules.js");
   assert.equal(sentenceCount("One. Two! Three?"), 3);
   assert.equal(sentenceCount("See acme.com today. Next."), 2);
-  const good = { subject: "trial stalls", what: "Acme Flow turns a signup into a first booked job for plumbers in a day.", why: "You wrote that most trial users stall before inviting a teammate, and we reduced that stall for one design partner.", ask: "Could I get your take on where trials stall for tools like yours?" };
+  const good = { subject: "trial stalls", what: "Most trial users stall before inviting a teammate, and every stalled trial is a plumber who never books a first job.", why: "Acme Flow turns a signup into a first booked job in a day.", ask: "Could I get your take on where trials stall for tools like yours?" };
   const L = localChecks(good, product());
   assert.ok(Object.values(L.r).every(r => r.pass), JSON.stringify(L.r));
   assert.equal(localChecks({ ...good, ask: "Can we hop on a quick call?" }, product()).r[19].pass, false);
   assert.equal(localChecks({ ...good, ask: "Tell me more." }, product()).r[18].pass, false);
   assert.equal(localChecks({ ...good, why: good.why + " It is a generic database." }, product()).r[16].pass, false);
   assert.equal(localChecks({ ...good, subject: "Exciting opportunity!" }, product()).r[20].pass, false);
+  assert.equal(localChecks({ ...good, subject: "quick question" }, product()).r[20].pass, false, "a vague subject says nothing about them or the problem");
+  assert.equal(localChecks({ ...good, what: "We help plumbers book their first job in a day." }, product()).r[1].pass, false, "opening with the sender fails rule 1");
+  assert.equal(localChecks({ ...good, what: "Acme Flow turns a signup into a first booked job." }, product()).r[1].pass, false, "opening with the product fails rule 1");
   assert.deepEqual(dontSayTerms(['Never say "Generic Database"', "avoid cloud/edge"]), ["generic database", "cloud/edge"]);
   const allPass = Array.from({ length: 20 }, (_, i) => ({ rule: i + 1, pass: true }));
   const ev = evaluate({ ...good, checks: allPass }, product());

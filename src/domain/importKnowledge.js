@@ -5,6 +5,7 @@
 // came from is kept as provenance next to the product, separate from the prose the person ends up with.
 import { normalizeHandle } from "./knowledge.js";
 import { uid } from "./ids.js";
+import repoFilter from "../../lib/repo-filter.cjs";
 
 const str = v => (typeof v === "string" ? v : v == null ? "" : String(v));
 export const norm = v => str(v).replace(/\s+/g, " ").trim().toLowerCase();
@@ -118,3 +119,23 @@ export function sourceOf(result) {
 }
 
 export const evidenceLabel = e => `${e.path}${e.end > e.start ? `:${e.start}-${e.end}` : e.start ? `:${e.start}` : ""}`;
+
+/**
+ * Which files of a folder chosen on this computer to read, before reading any of them. `files` are { path, size } with the path
+ * relative to the chosen folder's parent ("project/src/a.js", as the browser reports it). Applies the server's own filters so
+ * node_modules and the like are never read, keeps shallow files (README, manifests, docs) first, and stops at the size and count
+ * caps. Returns { name, picked, skipped, capped }.
+ */
+export function pickFolderFiles(files) {
+  const list = [...(files || [])].map(f => ({ ...f, path: str(f.path).replace(/\\/g, "/") })).filter(f => f.path);
+  const name = list.length ? list[0].path.split("/")[0] : "";
+  const inner = f => (name && f.path.startsWith(`${name}/`) ? f.path.slice(name.length + 1) : f.path);
+  const ok = list.filter(f => repoFilter.keep(inner(f), Number(f.size) || 0));
+  ok.sort((a, b) => a.path.split("/").length - b.path.split("/").length || (a.path < b.path ? -1 : 1));
+  const picked = []; let total = 0, capped = false;
+  for (const f of ok) {
+    if (picked.length >= repoFilter.MAX_FILES || total + (Number(f.size) || 0) > repoFilter.MAX_ARCHIVE) { capped = true; break; }
+    picked.push(f); total += Number(f.size) || 0;
+  }
+  return { name, picked, skipped: list.length - ok.length, capped };
+}

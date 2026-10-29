@@ -75,7 +75,7 @@ export function mountKnowledge(root, { store, navigate, platform = null }) {
   const emptyState = () => h("div", { class: "empty" }, h("h2", {}, "Add what you're selling"),
     h("p", {}, "Start with two things: the product's name and what it does in one plain sentence. That's enough for a first draft. Add proof, audience and wording rules whenever you like."),
     h("div", { class: "actions" },
-      canImport() ? button("Import from repository", { kind: "primary", id: "emptyImport", onclick: () => { newProduct(); sel?.startImport?.(); } }) : null,
+      canImport() ? button("Import from repository or folder", { kind: "primary", id: "emptyImport", onclick: () => { newProduct(); sel?.startImport?.(); } }) : null,
       button("Add your first product", { kind: canImport() ? "secondary" : "primary", id: "emptyAdd", onclick: () => newProduct() })));
 
   /* ---------- editor ---------- */
@@ -85,9 +85,9 @@ export function mountKnowledge(root, { store, navigate, platform = null }) {
     const mk = (key, props) => (refs[key] = field({ id: key, ...props }));
     mk("kName", { label: "Product name", required: true, control: textInput({ value: p.name }) });
     mk("kOne", { label: "One-line description", control: textInput({ value: p.oneLiner }) });
-    mk("kWhat", { label: "What it does", required: true, hint: "Sentence 1 of every email is built from this. Write it the way you'd say it out loud.", control: textArea({ rows: 2 }) });
+    mk("kWhat", { label: "What it does", required: true, hint: "Sentence 2 of every email (how you solve their problem) is built from this. Write it the way you'd say it out loud.", control: textArea({ rows: 2 }) });
     mk("kWho", { label: "Who it's for", hint: "Lets a draft say why it fits this particular person.", control: textArea({ rows: 2 }) });
-    mk("kProblem", { label: "Problem it solves", hint: "Gives the \"why it matters\" sentence something real to build on.", control: textArea({ rows: 2 }) });
+    mk("kProblem", { label: "Problem it solves", hint: "Every email opens with this, not with the product. Name the cost people pay today (time, money, risk), specifically.", control: textArea({ rows: 2 }) });
     mk("kTech", { label: "Technical facts", hint: "One per line. Anything here may be used as a fact in a draft.", control: textArea({ rows: 3 }) });
     mk("kApproved", { label: "Approved language", hint: "Phrasings you like, one per line. The draft prefers these.", control: textArea({ rows: 3 }) });
     mk("kDont", { label: "Prohibited claims and phrases", hint: "One per line. Put exact phrases in \"double quotes\" and Cold also checks drafts for them automatically.", control: textArea({ rows: 3 }) });
@@ -212,9 +212,9 @@ export function mountKnowledge(root, { store, navigate, platform = null }) {
       if (!canImport()) return;
       const src = imported.source;
       importBar.append(
-        button(src ? "Refresh from repository" : "Import from repository", { kind: src ? "secondary" : "primary", id: "kImport", onclick: () => startImport() }),
+        button(src ? "Refresh from repository" : "Import from repository or folder", { kind: src ? "secondary" : "primary", id: "kImport", onclick: () => startImport() }),
         h("span", { class: "hint" }, src
-          ? `Imported from ${src.host === "upload" ? "an uploaded project" : `${src.owner}/${src.repo} @ ${String(src.commit).slice(0, 7)}`}. Refreshing shows what changed and never overwrites your edits or approvals.`
+          ? `Imported from ${src.host === "upload" ? "an uploaded project" : src.host === "folder" ? `the folder “${src.repo}” on this computer` : `${src.owner}/${src.repo} @ ${String(src.commit).slice(0, 7)}`}. Refreshing shows what changed and never overwrites your edits or approvals.`
           : "Let Cold read a repository or ZIP and draft this profile. You review everything first."));
     }
     async function startImport() {

@@ -2,7 +2,7 @@
 
 A focused cold-email generator. Give it five facts; it gives you an email worth sending.
 
-**Knowledge base → recipient relevance → one goal → three sentences → explicit ask.**
+**Knowledge base → recipient relevance → their one problem → how you solve it → explicit ask.**
 
 > **Status: pre-1.0, not approved for general release.** What works, on which surface, and what must happen before broader adoption is assessed in the [product audit](docs/audit/README.md). New here? Start with [docs/getting-started.md](docs/getting-started.md). All documentation is indexed in [docs/README.md](docs/README.md).
 
@@ -10,9 +10,9 @@ A focused cold-email generator. Give it five facts; it gives you an email worth 
 
 ## What it does
 
-- **Knowledge**: products with plain-English description, audience, problem, proof points (claim, evidence, type, strength, use-externally flag), technical facts, approved language, and do-not-say rules.
+- **Knowledge**: products (typed in, or imported from a GitHub repository, a project folder on your computer, or a ZIP) with plain-English description, audience, problem, proof points (claim, evidence, type, strength, use-externally flag), technical facts, approved language, and do-not-say rules.
 - **Compose**: recipient name, role, company, why them, goal (advice, investment, introduction, customer conversation, partnership, other), and anything specific to convey.
-- **Generate**: two stages. A draft (relevance classification, knowledge retrieval, three sentences), then an editor pass that checks the draft against 20 rules and rewrites it. Cold then runs a deterministic **"Check before you send"** that flags numbers and names in the draft that are not in the text you supplied, and any reuse of internal-only proof. It compares words only: it cannot verify that a claim is true. The model's own claim-to-source list is shown separately with a word-overlap status.
+- **Generate**: two stages. A draft (relevance classification, the one problem this person likely has, knowledge retrieval, three sentences: their problem framed as a hidden cost, how you solve it, one question; the subject ties to them and that problem), then an editor pass that checks the draft against 20 rules and rewrites it. Cold then runs a deterministic **"Check before you send"** that flags numbers and names in the draft that are not in the text you supplied, and any reuse of internal-only proof. It compares words only: it cannot verify that a claim is true. The model's own claim-to-source list is shown separately with a word-overlap status.
 - **Quality**: a 0–100 *style checklist* from the 20 rules (about half are the model's own report, labelled as such; it is not a prediction of replies). Length, read time, sentence count, stock openers, marketing language, do-not-say phrases, explicit ask, meeting requests and subject line are checked locally and update live as you edit. "Improve" reruns the editor on a specific weakness.
 - **History**: every generated email is saved as a draft. Copy it, mark it sent, record a reply, reopen and edit. "Sent" and "reply" are your own records: Cold sends nothing and cannot see replies.
 - **Leads**: import a spreadsheet saved as CSV (with a column mapper and your own extra fields), manage the list, and press Write on a person. See [Leads](#leads-a-list-of-people-to-write-to).

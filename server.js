@@ -244,6 +244,10 @@ async function importRoute(req, res, kind) {
       if (!n || n > 256 * 1024 || 4 + n > buf.length) return send(res, 400, { error: { code: "bad_source", message: "That upload wasn't a project ZIP." } });
       const meta = JSON.parse(buf.subarray(4, 4 + n).toString("utf8"));
       input = { zip: buf.subarray(4 + n), name: String(meta.name || ""), previous: meta.previous };
+    } else if (kind === "folder") {
+      // Body: { name, files: [{ path, text }], previous }, read from a folder the person chose in the browser or desktop app.
+      const body = JSON.parse(await readBody(req, IMPORT_ZIP_MAX * 1.25));
+      input = { files: body.files, name: String(body.name || ""), previous: body.previous };
     } else {
       const body = JSON.parse(await readBody(req, 512 * 1024));
       input = { url: String(body.url || ""), previous: body.previous };
@@ -257,7 +261,7 @@ async function importRoute(req, res, kind) {
   const emit = o => { if (!res.writableEnded) res.write(`${JSON.stringify(o)}\n`); };
   try {
     emit({ step: "read" });
-    const source = kind === "zip" ? src.fromZip(input.zip, { name: input.name }) : await src.fetchGithub(input.url, { token: process.env.COLD_GITHUB_TOKEN || process.env.GITHUB_TOKEN || "", signal: ctl.signal });
+    const source = kind === "zip" ? src.fromZip(input.zip, { name: input.name }) : kind === "folder" ? src.fromFolder(input.files, { name: input.name }) : await src.fetchGithub(input.url, { token: process.env.COLD_GITHUB_TOKEN || process.env.GITHUB_TOKEN || "", signal: ctl.signal });
     const result = await imp.importKnowledge({ ...source, complete: completeForImport, onStep: s => emit({ step: s }), signal: ctl.signal, previous: input.previous });
     emit({ done: true, result });
   } catch (e) {
@@ -530,6 +534,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && url.pathname === "/api/generate") return generate(req, res);
     if (req.method === "POST" && url.pathname === "/api/import/repo") return importRoute(req, res, "repo");
     if (req.method === "POST" && url.pathname === "/api/import/zip") return importRoute(req, res, "zip");
+    if (req.method === "POST" && url.pathname === "/api/import/folder") return importRoute(req, res, "folder");
     if (req.method === "POST" && url.pathname === "/api/profile") return profileRoute(req, res);
     if (req.method === "POST" && url.pathname === "/api/people/email/find") return peopleRoute(req, res, "find");
     if (req.method === "POST" && url.pathname === "/api/people/email/verify") return peopleRoute(req, res, "verify");

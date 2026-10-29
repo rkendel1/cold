@@ -91,11 +91,11 @@ test("second check: several opportunities are checked in the same single call", 
 });
 
 const REC = { subject: "edge jobs", what: "Acme Edge runs scheduled batch jobs on edge servers.", why: "You wrote about moving batch workloads to the edge.", ask: "Could I get your take on how you schedule them?", goal: "advice", recipient: { why: "Wrote about moving batch workloads to the edge" } };
-const GOOD = { opens_with_what_you_do: A("yes"), reason_specific: A("specific"), invented_fact: A("no"), commonality: A("no"), proof_count: A("one"), ask_kind: A("advice"), jargon: A("no") };
+const GOOD = { opens_with_problem: A("yes"), subject_matches: A("yes"), reason_specific: A("specific"), invented_fact: A("no"), commonality: A("no"), proof_count: A("one"), ask_kind: A("advice"), jargon: A("no") };
 
 test("draft second check: independent typed review; concerns need a sure model; nothing about the draft or its score changes", async () => {
   await load(); const run = async (answers, rec = REC) => jev.checkDraft({ sample: model({ answers }).sample, rec, product: PRODUCTS[0] });
-  const ok = await run(GOOD); assert.deepEqual(ok.map(r => r.status), Array(7).fill("ok"));
+  const ok = await run(GOOD); assert.deepEqual(ok.map(r => r.status), Array(8).fill("ok"));
   const rows = await run({ ...GOOD, invented_fact: A("yes", "high", "runs scheduled batch jobs on edge servers"), reason_specific: A("generic", "medium"), ask_kind: A("investment"), jargon: A("yes", "low") });
   const by = Object.fromEntries(rows.map(r => [r.rule, r]));
   assert.deepEqual([by[15].status, by[11].status, by[17].status, by[8].status], ["concern", "concern", "concern", "unchecked"]);

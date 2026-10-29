@@ -35,7 +35,7 @@ export function mountCompose(root, { store, platform, navigate }) {
     goalOther: field({ id: "goalOther", label: "Describe what you want from them", required: true, control: textInput({}), className: "goal-other" }),
     convey: field({ id: "rConvey", label: "Anything specific to get across?", hint: "A point you want in the draft. Cold treats it as a fact you supplied.", control: textArea({ rows: 2 }) }),
     pName: field({ id: "pName", label: "Product or offer name", required: true, control: textInput({}) }),
-    pWhat: field({ id: "pWhat", label: "What it does, in one plain sentence", required: true, hint: "Sentence 1 of the draft is built from this. It's saved to Knowledge, so you only enter it once.", control: textArea({ rows: 2 }) }),
+    pWhat: field({ id: "pWhat", label: "What it does, in one plain sentence", required: true, hint: "Sentence 2 of the draft (how you solve their problem) is built from this. It's saved to Knowledge, so you only enter it once.", control: textArea({ rows: 2 }) }),
   };
   const formatRadios = Object.entries(FORMAT_CHOICES).map(([k, v]) => h("label", {}, h("input", { type: "radio", name: "format", value: k, id: `fmt-${k}` }), v.label));
   const goalRadios = Object.entries(GOALS).map(([k, g]) => h("label", {}, h("input", { type: "radio", name: "goal", value: k, id: `goal-${k}` }), g.label));

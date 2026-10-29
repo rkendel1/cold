@@ -2,7 +2,7 @@
 // Nothing here saves or approves anything. Accepting a suggestion writes it into the editor's fields; the person still presses Save.
 import { h, clear, autosize } from "../components/dom.js";
 import { chip, button, notice, announce } from "../components/ui.js";
-import { planReview, planRefresh, applySuggestion, FIELD_LABELS, STATUS_LABELS, evidenceLabel } from "../domain/importKnowledge.js";
+import { planReview, planRefresh, applySuggestion, pickFolderFiles, FIELD_LABELS, STATUS_LABELS, evidenceLabel } from "../domain/importKnowledge.js";
 
 const STEPS = [["read", "Reading your project…"], ["understand", "Understanding what it does…"], ["check", "Checking technical claims…"], ["prepare", "Preparing your product profile…"]];
 const CHIP = { verified: "good", inferred: "accent", needs_evidence: "warn", not_found: "neutral" };
@@ -23,18 +23,24 @@ const failure = e => {
 export function importDialog({ api, previous, source = null }) {
   return new Promise(resolve => {
     const refresh = !!previous;
-    const fromZip = source && source.host === "upload";
-    const url = h("input", { type: "text", id: "impUrl", autocomplete: "off", placeholder: "https://github.com/owner/name", value: !fromZip && source && source.url ? source.url : "", "aria-describedby": "impUrlHint" });
+    const fromZip = source && source.host === "upload", fromFolder = source && source.host === "folder";
+    const url = h("input", { type: "text", id: "impUrl", autocomplete: "off", placeholder: "https://github.com/owner/name", value: !fromZip && !fromFolder && source && source.url ? source.url : "", "aria-describedby": "impUrlHint" });
+    const folder = h("input", { type: "file", id: "impFolder", "aria-describedby": "impFolderHint" });
+    folder.webkitdirectory = true; folder.multiple = true;   // a folder picker in Chrome, Edge, Firefox, Safari and the desktop app
     const zip = h("input", { type: "file", id: "impZip", accept: ".zip,application/zip" });
+    folder.addEventListener("change", () => { if (folder.files && folder.files.length) zip.value = ""; });
+    zip.addEventListener("change", () => { if (zip.files && zip.files.length) folder.value = ""; });
     const err = h("p", { class: "field-error", id: "impErr", role: "alert", hidden: true });
     const goBtn = h("button", { type: "submit", class: "btn primary", value: "go" }, refresh ? "Refresh" : "Read repository");
     const skipBtn = h("button", { type: "button", class: "btn ghost", id: "impSkip" }, refresh ? "Cancel" : "Skip and enter it manually");
     const form = h("form", { class: "dialog-body import-dialog", novalidate: true },
-      h("h2", { id: "dlg-title" }, refresh ? "Refresh from repository" : "Import from repository"),
+      h("h2", { id: "dlg-title" }, refresh ? "Refresh from repository" : "Import from repository or folder"),
       h("p", { class: "hint" }, refresh
         ? "Cold re-reads the project and shows what changed. Your wording and your approvals stay exactly as they are until you choose otherwise."
-        : "Point Cold at the project and it will draft the product profile from what it finds: README, docs, manifests, tests and examples. You review everything before it's added. Nothing is approved for emails automatically."),
+        : "Point Cold at the project, on GitHub or in a folder on this computer, and it will draft the product profile from what it finds: README, docs, manifests, tests and examples. You review everything before it's added. Nothing is approved for emails automatically."),
       h("div", { class: "field" }, h("label", { for: "impUrl" }, "GitHub repository address"), h("p", { class: "hint", id: "impUrlHint" }, "A public repository. Cold reads one exact commit and records which."), url),
+      h("div", { class: "field" }, h("label", { for: "impFolder" }, fromFolder ? "Or choose the project folder again" : "Or choose a project folder on this computer"),
+        h("p", { class: "hint", id: "impFolderHint" }, "Works for private and unpublished projects. Cold reads text files only and skips node_modules, build output and .git. Your browser may ask you to confirm the upload."), folder),
       h("div", { class: "field" }, h("label", { for: "impZip" }, fromZip ? "Or upload the project ZIP again" : "Or upload a ZIP of the project"), h("p", { class: "hint" }, "Works for private projects. Up to 40 MB. Cold reads the ZIP in memory and keeps nothing."), zip),
       err,
       h("div", { class: "dialog-actions" }, skipBtn, goBtn));
@@ -61,14 +67,16 @@ export function importDialog({ api, previous, source = null }) {
     form.addEventListener("submit", async ev => {
       ev.preventDefault();
       const file = zip.files && zip.files[0], address = url.value.trim();
-      if (!file && !address) { err.textContent = "Paste a repository address or choose a ZIP file."; err.hidden = false; url.focus(); return; }
+      const dir = folder.files && folder.files.length ? pickFolderFiles([...folder.files].map(f => ({ path: f.webkitRelativePath || f.name, size: f.size, file: f }))) : null;
+      if (!dir && !file && !address) { err.textContent = "Paste a repository address, choose a project folder or choose a ZIP file."; err.hidden = false; url.focus(); return; }
+      if (dir && !dir.picked.length) { err.textContent = "That folder has no readable project files (README, docs, source, manifests)."; err.hidden = false; folder.focus(); return; }
       if (file && !/\.zip$/i.test(file.name)) { err.textContent = "Choose a .zip file."; err.hidden = false; return; }
       const saved = [...form.childNodes];
       const paint = working(refresh ? "Refreshing…" : "Importing…");
       ctl = new AbortController();
       try {
         const o = { previous, signal: ctl.signal, onStep: s => { paint(s); announce(STEPS.find(x => x[0] === s)?.[1] || ""); } };
-        const result = file ? await api.importZip(file, o) : await api.importRepo(address, o);
+        const result = dir ? await api.importFolder(dir.name, await readFolder(dir.picked), o) : file ? await api.importZip(file, o) : await api.importRepo(address, o);
         finish(result);
       } catch (e) {
         if (done || (e && e.code === "cancelled")) return;
@@ -81,6 +89,13 @@ export function importDialog({ api, previous, source = null }) {
     if (typeof dlg.showModal === "function") dlg.showModal(); else dlg.setAttribute("open", "");
     url.focus();
   });
+}
+
+/** Read the chosen files as text. A file the browser can't read (moved, permission) is skipped, as an unreadable archive entry is. */
+async function readFolder(picked) {
+  const out = [];
+  for (const f of picked) { try { out.push({ path: f.path, text: await f.file.text() }); } catch {} }
+  return out;
 }
 
 /* ---------- review ---------- */
@@ -112,7 +127,7 @@ export function mountReview({ result, getProduct, adapter, records, setRecords, 
   const root = h("section", { class: "import-review card", "aria-labelledby": "imp-title", tabindex: "-1" });
   let recs = records;
   const commit = result.source.commit || "";
-  const where = result.source.host === "upload" ? `uploaded project ${result.source.repo ? `“${result.source.repo}”` : ""}`.trim() : `${result.source.owner}/${result.source.repo} @ ${commit.slice(0, 7)}`;
+  const where = result.source.host === "upload" ? `uploaded project ${result.source.repo ? `“${result.source.repo}”` : ""}`.trim() : result.source.host === "folder" ? `folder ${result.source.repo ? `“${result.source.repo}”` : "on this computer"}` : `${result.source.owner}/${result.source.repo} @ ${commit.slice(0, 7)}`;
   const accepted = () => { setSource(); setRecords(recs); onChange(); };
 
   let plan = planReview(getProduct(), result);

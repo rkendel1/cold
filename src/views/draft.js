@@ -102,7 +102,7 @@ export function createDraftPane({ store, handlers, platform = null }) {
   function emptyState() {
     return h("div", { class: "empty" },
       h("h2", {}, "Your draft will appear here"),
-      h("p", {}, "Cold writes a subject and three sentences: what you do, why it matters to this person, and one clear question. It uses only the facts you have saved and the reason you give. Nothing is sent for you."),
+      h("p", {}, "Cold writes a subject tied to them and three sentences: the one problem they likely have, how you solve it, and one clear question. It uses only the facts you have saved and the reason you give. Nothing is sent for you."),
       h("ol", { class: "steps" },
         h("li", {}, "Say who you're writing to and why they should care."),
         h("li", {}, "Choose what you want from them, and what you're offering."),
@@ -214,7 +214,7 @@ export function createDraftPane({ store, handlers, platform = null }) {
         h("div", { class: "status-wrap" }, h("label", { class: "hint", for: "curStatus" }, "Status (you set this)"), statusSelect(rec))),
       h("div", { class: "sentence to-field" }, h("label", { for: "eTo" }, "To ", h("span", { class: "opt" }, "Optional")), h("p", { class: "hint", id: "eToHint" }, "Leave it blank and your email app opens the draft with the To line empty."), toIn, toMsg),
       h("div", { class: "sentence" }, h("label", { for: "eSubject" }, "Subject"), f.subject),
-      sentence("what", "Sentence 1: what you do", f.what), sentence("why", "Sentence 2: why it matters to them", f.why), sentence("ask", "Sentence 3: the ask", f.ask),
+      sentence("what", "Sentence 1: their problem", f.what), sentence("why", "Sentence 2: how you solve it", f.why), sentence("ask", "Sentence 3: the ask", f.ask),
       h("div", { class: "actions" }, signoff, signBtn), metrics,
       h("div", { class: "actions" },
         button("Copy email", { kind: "primary", id: "copyEmail", onclick: async () => { if (await copy(emailText(rec, store.signoffFor(rec)), "Email")) handedOff("copy"); } }),

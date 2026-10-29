@@ -64,6 +64,8 @@ export function createApi({ fetchImpl = (...a) => globalThis.fetch(...a), getAcc
     new DataView(len.buffer).setUint32(0, meta.length);
     return importStream("api/import/zip", { method: "POST", headers: { ...headers(), "content-type": "application/octet-stream" }, body: new Blob([len, meta, file]) }, o);
   };
+  // A folder on this computer, already read in the browser: [{ path, text }]. The server re-applies its own file filters.
+  const importFolder = (name, files, { previous, ...o } = {}) => importStream("api/import/folder", { method: "POST", headers: headers(), body: JSON.stringify({ name, files, previous }) }, o);
   const profile = url => settingsCall("api/profile", { method: "POST", body: JSON.stringify({ url }) });
   // Email lookup (treg). The server holds the token; these send one person's details and get a candidate back, never a saved result.
   const findEmail = input => settingsCall("api/people/email/find", { method: "POST", body: JSON.stringify(input) });
@@ -90,5 +92,5 @@ export function createApi({ fetchImpl = (...a) => globalThis.fetch(...a), getAcc
   }
   sample.json = async (prompt, opts) => parseLooseJson((await sample(prompt, opts)).text);
 
-  return { googleCall: settingsCall, config, models, sample, importRepo, importZip, profile, tweet, findEmail, verifyEmail, getExtension, rotateExtension, setWebOrigins, getSettings, saveSettings, providerModels };
+  return { googleCall: settingsCall, config, models, sample, importRepo, importZip, importFolder, profile, tweet, findEmail, verifyEmail, getExtension, rotateExtension, setWebOrigins, getSettings, saveSettings, providerModels };
 }
