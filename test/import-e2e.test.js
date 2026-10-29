@@ -3,6 +3,8 @@
 const { test, before, after, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
+const fs = require("node:fs");
+const os = require("node:os");
 const env = require("./helpers/env");
 const { makeZip } = require("./helpers/archives");
 
@@ -167,4 +169,25 @@ test("a model failure shows a readable error in the dialog and keeps the dialog 
   await page.click("#impSkip");
   assert.equal(await page.locator("dialog.import-dlg").count(), 0);
   await t.close();
+});
+
+test("a project folder on this computer can be chosen instead of a repository address", { skip: SKIP }, async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cold-folder-")), proj = path.join(dir, "replayly");
+  for (const [rel, text] of Object.entries({ "README.md": README, "src/index.js": SRC, "test/replay.test.js": TEST, "package.json": PKG, "node_modules/junk/index.js": "SHOULD NOT BE READ" })) {
+    fs.mkdirSync(path.dirname(path.join(proj, rel)), { recursive: true }); fs.writeFileSync(path.join(proj, rel), text);
+  }
+  const t = await open(); const { page } = t;
+  await page.click("#emptyImport");
+  await page.waitForSelector("#impFolder");
+  assert.equal(await page.$eval("#impFolder", el => el.webkitdirectory), true, "the input is a folder picker");
+  const sent = page.waitForRequest(r => r.url().endsWith("/api/import/folder"));
+  await page.setInputFiles("#impFolder", proj);
+  await page.click("dialog.import-dlg button[value=go]");
+  const body = JSON.parse((await sent).postData());
+  assert.equal(body.name, "replayly");
+  assert.ok(!body.files.some(f => /node_modules/.test(f.path)), "ignored folders are never read or sent");
+  await page.waitForSelector(".import-review", { timeout: 20000 });
+  assert.match(await page.textContent(".import-review"), /folder “replayly”/);
+  assert.match(await card(page, "Technical fact: verified").textContent(), /Verified/);
+  await t.close(); fs.rmSync(dir, { recursive: true, force: true });
 });

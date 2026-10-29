@@ -24,9 +24,9 @@ a hosted model, or the Cold desktop app's model. It is `src/domain/decide.js` (t
    **more cautious**: lower a confidence (not supported, no fit, a competitor or media, dated) or add a note. They never raise a confidence, add an
    opportunity, or hide one. If nothing was found, no call is made. If the check can't run, the card says the results weren't double-checked.
    Page text goes only where the evaluator's already went (the same model, under the same on-this-computer rule).
-2. **A drafted email ("Second check (optional)" in the draft's review area).** On request only: seven questions about the draft against your
-   product facts (external-use proof only) and your reason for writing: opens with what you do, reason specific to them, invented facts, manufactured
-   commonality, number of proof points, whether the ask matches the goal you chose, plain English. Each row says OK, *worth a look* or *not checked*. A concern
+2. **A drafted email ("Second check (optional)" in the draft's review area).** On request only: eight questions about the draft against your
+   product facts (external-use proof only) and your reason for writing: opens with their problem (not the product), reason specific to them, invented
+   facts, manufactured commonality, whether the subject matches the email, number of proof points, whether the ask matches the goal you chose, plain English. Each row says OK, *worth a look* or *not checked*. A concern
    needs the model to be at least medium-sure and, for "invented fact" or "commonality", a real quote from the draft. It does not change the style
    score, edit the draft or save anything, and it goes stale (and says so) when you edit.
 

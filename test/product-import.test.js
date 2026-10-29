@@ -1,6 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { parseGithubUrl, fetchGithub, fromZip, readTarGz } = require('../lib/repoSource');
+const { parseGithubUrl, fetchGithub, fromZip, fromFolder, readTarGz } = require('../lib/repoSource');
 const { importKnowledge, locate, classify, judge, recheck, parseJson } = require('../lib/productImport');
 
 const { makeZip, makeTarGz } = require('./helpers/archives');
@@ -58,6 +58,33 @@ test('archives: tar.gz and zip are read in memory, wrapper stripped, junk skippe
   assert.match(z.identity.commit, /^zip-sha256:/);
   assert.equal(z.identity.host, 'upload');
   assert.throws(() => fromZip(Buffer.from('not a zip at all, nope nope nope')), /ZIP/);
+});
+
+test('a local folder: the server re-applies the archive filters and identifies it by content', () => {
+  const list = [
+    { path: 'proj/README.md', text: '# Proj' }, { path: 'proj/src/a.js', text: 'a' },
+    { path: 'proj/node_modules/x/index.js', text: 'x' }, { path: 'proj/.git/config', text: 'c' }, { path: 'proj/../etc/passwd', text: 'p' },
+    { path: 'proj/bin.dat', text: 'a\0b' }, { path: 'proj/b.js', text: 7 },
+  ];
+  const a = fromFolder(list, { name: 'proj' });
+  assert.deepEqual(a.files.map(f => f.path).sort(), ['README.md', 'src/a.js']);
+  assert.equal(a.identity.host, 'folder'); assert.equal(a.identity.repo, 'proj'); assert.match(a.identity.commit, /^folder-sha256:[0-9a-f]{16}$/);
+  assert.equal(fromFolder([...list].reverse(), { name: 'proj' }).identity.commit, a.identity.commit, 'order does not change the identity');
+  assert.notEqual(fromFolder([{ path: 'proj/README.md', text: '# Changed' }], { name: 'proj' }).identity.commit, a.identity.commit);
+  assert.throws(() => fromFolder([{ path: 'proj/node_modules/a.js', text: 'x' }]), e => e.code === 'bad_source');
+  assert.throws(() => fromFolder('nope'), e => e.code === 'bad_source');
+});
+
+test('a local folder: the browser skips ignored files before reading them, shallow files first', async () => {
+  const { pickFolderFiles } = await import('../src/domain/importKnowledge.js');
+  const r = pickFolderFiles([
+    { path: 'proj/src/deep/a.js', size: 10 }, { path: 'proj/README.md', size: 10 }, { path: 'proj/node_modules/x/i.js', size: 10 },
+    { path: 'proj/logo.png', size: 10 }, { path: 'proj/big.txt', size: 500 * 1024 },
+  ]);
+  assert.equal(r.name, 'proj'); assert.deepEqual(r.picked.map(f => f.path), ['proj/README.md', 'proj/src/deep/a.js']);
+  assert.equal(r.skipped, 3); assert.equal(r.capped, false);
+  const many = pickFolderFiles(Array.from({ length: 200 }, (_, i) => ({ path: `p/f${i}.md`, size: 300 * 1024 })));
+  assert.ok(many.capped); assert.ok(many.picked.reduce((n, f) => n + f.size, 0) <= 40 * 1024 * 1024);
 });
 
 test('fetchGithub pins the commit SHA before downloading that exact revision', async () => {

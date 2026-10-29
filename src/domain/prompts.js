@@ -53,18 +53,21 @@ Reply with only this JSON:
 }
 
 export const CONTRACT = `THE CONTRACT
+- The problem is the point, not the product. People pay more attention to a cost they are already paying than to a gain they might get, so the email reveals ONE specific problem (a hidden cost this person is likely paying) that now feels hard to ignore. Isolate that one problem: never list several problems or several features.
 - The body is exactly three sentences, then the sign-off (added separately; do not write one).
-  1. WHAT: plain-English description of what the product does, so the opening explains what the sender does. Never open with pleasantries ("Hope you're doing well", "I wanted to reach out", "I've been following your work", "My name is", "Hi Sarah").
-  2. WHY: why it matters to this specific person, built on the strongest why-them signal, carrying at most ONE proof point.
+  1. PROBLEM: the one specific problem or hidden cost this person likely faces, in their terms, built from [PROBLEM] and the strongest why-them signal. Make the cost concrete (time, money, risk, missed work) and specific enough to be believable. Do not mention the product, the sender or "we" yet. Never open with pleasantries ("Hope you're doing well", "I wanted to reach out", "I've been following your work", "My name is", "Hi Sarah").
+  2. HOW: in plain English, what the product does about that one problem ([WHAT]), carrying at most ONE proof point. Give before asking: the problem framing and this sentence should hand them something useful even if they never reply.
   3. ASK: exactly what the sender wants, as one direct question. Never ask for a meeting, call, chat, demo or calendar time; let them choose the next step.
 - 40–80 words across the three sentences. Never sacrifice clarity for word count.
+- Specific beats general: a concrete detail about their work or a concrete cost is more believable than a broad claim. Never exaggerate the cost or invent a number.
 - Plain English. No jargon unless the recipient's own field uses it. No corporate, marketing or AI-sounding language (revolutionize, seamless, leverage, cutting-edge, unlock, game-changer, delve, "I hope this finds you well"). Voice: direct, conversational, confident, understated — what you'd say standing next to them.
-- Subject: 1–6 words, typed by a human, lowercase is fine (e.g. "portable execution", "quick question", "one thing about Acme"). Never "Exciting opportunity", "Partnership opportunity", "Introducing X", "Following up", "AI-powered…".
+- Subject: 1–6 words, typed by a human, lowercase is fine. Tie it to something real about them and to the problem the email is about (e.g. "acme's release backlog", "manual invoice matching"), so it reads like you already know something about them. It must relate to the body; a subject the body doesn't pay off is clickbait. Never clever or vague ("quick question", "thoughts?"), never "Exciting opportunity", "Partnership opportunity", "Introducing X", "Following up", "AI-powered…".
 
 TRUTH RULES
 - Use only facts in KNOWLEDGE and RECIPIENT. Never invent customers, revenue, users, partnerships, investors, capabilities, product functionality, relationships or commonalities.
 - Every factual claim about the product must trace to a KNOWLEDGE id ([WHAT], [WHO], [PROBLEM], [P#], [T#], [A#]); claims about the recipient trace to [RECIPIENT] or [CONVEY].
 - Honor every DO NOT SAY rule.
+- The problem in sentence 1 is framed as something people in the recipient's position run into ("teams shipping weekly often…"), not asserted as a fact about them, unless RECIPIENT or CONVEY states it. Never invent a cost, number or incident.
 - Proof selection: relevance to this person beats hierarchy. When equally relevant: customer > revenue/growth > launch > adoption > technical > institution > background; prefer High strength. If nothing fits, use no proof.
 
 WHY-THEM RANKING (strongest first): 1 direct shared problem, 2 direct product/customer overlap, 3 shared technical domain, 4 shared customer/market, 5 shared professional connection, 6 shared event/community, 7 geographic connection, 8 weak biographical connection. Use only what the sender supplied; never manufacture commonality.`;
@@ -79,13 +82,14 @@ ${k.text}
 
 ${recipientBlock(f)}
 
-Step 1: classify the why-them signal using the ranking. Step 2: pick only the knowledge items that matter for this person. Step 3: write the three sentences.
+Step 1: classify the why-them signal using the ranking. Step 2: name the ONE problem (hidden cost) this person most likely has that the product solves, using only KNOWLEDGE and RECIPIENT. Step 3: pick only the knowledge items that matter for that problem. Step 4: write the subject and the three sentences.
 
 Reply with only this JSON:
 {"relevance":{"signal":"the connection in a few words","rank":1,"category":"Direct shared problem","strength":"strong|medium|weak"},
+ "problem":"the one problem / hidden cost, in a few words",
  "retrieved":[{"id":"P1","why":"why this fact matters for this person"}],
  "proof_id":"P1 or null",
- "subject":"...","what":"sentence 1","why":"sentence 2","ask":"sentence 3"}`;
+ "subject":"...","what":"sentence 1 (problem)","why":"sentence 2 (how)","ask":"sentence 3 (ask)"}`;
 }
 
 export function editorPrompt(k, f, d, focus) {
@@ -104,8 +108,8 @@ ${recipientBlock(f)}
 
 DRAFT
 Subject: ${d.subject}
-1 (WHAT): ${d.what}
-2 (WHY): ${d.why}
+1 (PROBLEM): ${d.what}
+2 (HOW): ${d.why}
 3 (ASK): ${d.ask}
 
 Reply with only this JSON:

@@ -34,9 +34,9 @@ export function readiness(p) {
   const items = [];
   const add = (level, id, label, why, done) => items.push({ level, id, label, why, done });
   add("blocking", "kName", "Product name", "Named in the draft and the history.", !!str(p?.name).trim());
-  add("blocking", "kWhat", "What it does", "Sentence 1 of every email is built from this.", !!str(p?.what).trim());
+  add("blocking", "kWhat", "What it does", "Sentence 2 of every email is built from this.", !!str(p?.what).trim());
   add("advised", "kWho", "Who it's for", "Lets the draft say why it fits this person.", !!str(p?.who).trim());
-  add("advised", "kProblem", "Problem it solves", "Gives sentence 2 something real to build on.", !!str(p?.problem).trim());
+  add("advised", "kProblem", "Problem it solves", "Every email opens with the problem, not the product.", !!str(p?.problem).trim());
   add("advised", "kAddProof", "One proof point approved for external use", "Without it the draft makes no proof claim at all.", externalProof(p).length > 0);
   const weakProof = externalProof(p).filter(x => !str(x.evidence).trim());
   if (weakProof.length) add("advised", "kProof", "Evidence for approved proof", "Proof without evidence is stated modestly.", false);

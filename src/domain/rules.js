@@ -1,5 +1,5 @@
 // Local rule engine. Pure functions: no DOM, no storage.
-import { RULES, MARKETING, OPENERS, MEETING, BAD_SUBJECT } from "./constants.js";
+import { RULES, MARKETING, OPENERS, MEETING, BAD_SUBJECT, PRODUCT_FIRST, VAGUE_SUBJECT } from "./constants.js";
 
 export const words = t => (String(t || "").trim().match(/\S+/g) || []).length;
 
@@ -24,13 +24,15 @@ export function localChecks(e, product) {
   const body = [e.what, e.why, e.ask].join(" "), low = body.toLowerCase();
   const wc = words(body), secs = Math.round(wc / 238 * 60);
   const r = {};
+  const first = String(e.what || "").trim(), name = String(product?.name || "").trim().toLowerCase();
+  r[1] = PRODUCT_FIRST.test(first) || (name.length > 1 && first.toLowerCase().startsWith(name)) ? { pass: false, note: "Opens with you or the product. Start with the problem they have." } : { pass: true };
   const sc = [e.what, e.why, e.ask].map(sentenceCount);
   const total = sc.reduce((a, b) => a + b, 0);
   r[4] = total === 3 && sc.every(n => n === 1) ? { pass: true } : { pass: false, note: `Body has ${total} sentence${total === 1 ? "" : "s"}; each line should be one sentence.` };
   r[5] = wc >= 40 && wc <= 80 ? { pass: true } : { pass: false, note: wc < 40 ? `${wc} words. A little thin; make sure it's still clear.` : `${wc} words. Cut to 80 or fewer.` };
   r[6] = secs <= 60 ? { pass: true } : { pass: false, note: `About ${secs} seconds to read.` };
   const op = OPENERS.find(re => re.test(String(e.what || "").slice(0, 90)));
-  r[7] = op ? { pass: false, note: "Opens with a stock phrase. Start with what you do." } : { pass: true };
+  r[7] = op ? { pass: false, note: "Opens with a stock phrase. Start with the problem they have." } : { pass: true };
   const mk = MARKETING.filter(m => low.includes(m));
   r[9] = mk.length ? { pass: false, note: `Marketing phrasing: ${mk.map(m => `"${m}"`).join(", ")}` } : { pass: true };
   const ds = dontSayTerms(product?.dontSay).filter(t => low.includes(t) || String(e.subject || "").toLowerCase().includes(t));
@@ -39,7 +41,7 @@ export function localChecks(e, product) {
   r[18] = /\?["”’)]*$/.test(ask) ? { pass: true } : { pass: false, note: "The ask isn't phrased as a question." };
   r[19] = MEETING.test(e.why + " " + e.ask) ? { pass: false, note: "Asks for a meeting, call or time. Let them pick the next step." } : { pass: true };
   const sw = words(e.subject);
-  r[20] = !sw ? { pass: false, note: "Add a subject." } : sw > 6 ? { pass: false, note: `Subject is ${sw} words. Keep it to 6 or fewer.` } : BAD_SUBJECT.test(e.subject) ? { pass: false, note: "Subject reads like marketing." } : { pass: true };
+  r[20] = !sw ? { pass: false, note: "Add a subject." } : sw > 6 ? { pass: false, note: `Subject is ${sw} words. Keep it to 6 or fewer.` } : BAD_SUBJECT.test(e.subject) ? { pass: false, note: "Subject reads like marketing." } : VAGUE_SUBJECT.test(e.subject) ? { pass: false, note: "Subject is vague. Tie it to them and the problem the email is about." } : { pass: true };
   return { r, wc, secs, total };
 }
 

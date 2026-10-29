@@ -1,10 +1,10 @@
 # Import product knowledge
 
-Point Cold at a GitHub repository (or upload a ZIP) and it drafts the product profile from what the project actually contains. Everything lands in the normal product editor as **suggestions**. Nothing is added, saved or approved for emails until you choose it.
+Point Cold at a GitHub repository, a project folder on your computer, or a ZIP, and it drafts the product profile from what the project actually contains. Everything lands in the normal product editor as **suggestions**. Nothing is added, saved or approved for emails until you choose it.
 
 ## What you see
 
-Knowledge → **Import from repository** (or on the empty screen). Paste a public GitHub address or choose a ZIP (up to 40 MB; works for private projects). Cold shows its progress, then a review panel above the editor:
+Knowledge → **Import from repository or folder** (or on the empty screen). Paste a public GitHub address, **choose a project folder on this computer**, or choose a ZIP (up to 40 MB). A folder or ZIP works for private and unpublished projects. Cold shows its progress, then a review panel above the editor:
 
 | Label | Meaning |
 | --- | --- |
@@ -25,7 +25,7 @@ Per suggestion you can edit the wording, **Use this / Add**, **Replace current**
 
 ## Provenance
 
-Accepted items keep a record on the product (`importSource`, `provenance`): repository, commit SHA (or a content hash for ZIPs), file and line range, excerpt, status and extraction time. It is kept apart from the prose and is never sent to the model.
+Accepted items keep a record on the product (`importSource`, `provenance`): repository, commit SHA (or a content hash for ZIPs and local folders), file and line range, excerpt, status and extraction time. It is kept apart from the prose and is never sent to the model.
 
 ## Refresh from repository
 
@@ -35,6 +35,7 @@ Re-reads the project and re-checks each earlier excerpt against the new files (n
 
 - Runs on the Cold server (web, desktop, local install), using the configured model provider. Not available in the Chrome extension.
 - `COLD_GITHUB_TOKEN` (or `GITHUB_TOKEN`) is optional: it raises GitHub's rate limit and allows private repositories the token can read. Without it, upload a ZIP for private code.
+- A chosen folder is read by the browser (or the desktop app). Cold skips `node_modules`, build output, `.git`, lock files and binaries *before* reading anything, sends only the remaining text files (up to 40 MB, 6000 files, 400 KB each, shallow files such as the README first), and the server re-applies the same filters (`lib/repo-filter.cjs`). Nothing is kept after the import. To refresh, choose the folder again.
 - Only `github.com` repositories are fetched; the commit is resolved to a SHA first and that exact archive is read in memory.
 
 ## Known limits

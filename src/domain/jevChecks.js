@@ -73,10 +73,11 @@ export async function verifyResult({ sample, signal, page, result, products }) {
 
 // ---- 2. an independent review of a drafted email ----------------------------------------------------------------------------------
 export const DRAFT_QUESTIONS = [
-  { rule: 1, label: "Opens with what you do", q: yesno("opens_with_what_you_do", "Sentence 1 of the DRAFT says, in plain terms, what the sender's product does."), ok: a => a.answer === "yes" },
-  { rule: 11, label: "Reason is specific to them", q: score("reason_specific", "How specific to this person is the reason given in sentence 2 of the DRAFT?", ["generic", "somewhat specific", "specific"]), ok: a => a.index >= 1 },
+  { rule: 1, label: "Opens with their problem", q: yesno("opens_with_problem", "Sentence 1 of the DRAFT names a specific problem or cost the recipient faces, rather than describing the sender or the product."), ok: a => a.answer === "yes" },
+  { rule: 11, label: "Reason is specific to them", q: score("reason_specific", "How specific to this person is the problem and reason given in sentences 1 and 2 of the DRAFT?", ["generic", "somewhat specific", "specific"]), ok: a => a.index >= 1 },
   { rule: 15, label: "No invented facts", q: yesno("invented_fact", "The DRAFT states a customer, number, partner, result or capability that does NOT appear in PRODUCT FACTS or WHY THIS PERSON.", { grounded: ["yes"] }), ok: a => a.answer === "no" },
   { rule: 12, label: "No manufactured commonality", q: yesno("commonality", "The DRAFT claims a shared connection, experience or interest with the recipient that is not in WHY THIS PERSON.", { grounded: ["yes"] }), ok: a => a.answer === "no" },
+  { rule: 20, label: "Subject matches the email", q: yesno("subject_matches", "The DRAFT's subject refers to the same problem or situation the body is about (not clickbait)."), ok: a => a.answer === "yes" },
   { rule: 13, label: "At most one proof point", q: choice("proof_count", "How many separate proof points (customers, metrics, results) does the DRAFT cite?", ["none", "one", "several"]), ok: a => a.answer !== "several" },
   { rule: 17, label: "The ask matches the goal you chose", q: choice("ask_kind", "What does the last sentence of the DRAFT ask for?", ["advice", "investment", "introduction", "customer", "partnership", "other", "no ask"]), ok: (a, rec) => a.answer !== "no ask" && (!rec.goal || rec.goal === "other" || a.answer === rec.goal) },
   { rule: 8, label: "Plain English", q: yesno("jargon", "The DRAFT uses technical terms a busy non-specialist would not know."), ok: a => a.answer === "no" },
